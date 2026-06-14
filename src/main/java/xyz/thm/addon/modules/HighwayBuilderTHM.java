@@ -5,6 +5,7 @@
 
 package xyz.thm.addon.modules;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
@@ -33,7 +34,6 @@ import meteordevelopment.meteorclient.utils.misc.HorizontalDirection;
 import meteordevelopment.meteorclient.utils.misc.MBlockPos;
 import meteordevelopment.meteorclient.utils.player.*;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
-import xyz.thm.addon.utils.RenderUtilsTHM;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
@@ -84,12 +84,8 @@ import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.accessor.StuckEatingRetryBridge;
 import xyz.thm.addon.accessor.StuckEatingRetryResult;
 import xyz.thm.addon.system.THMSystem;
-import xyz.thm.addon.utils.InventoryManager;
-import xyz.thm.addon.utils.PacketPlaceUtils;
-import xyz.thm.addon.utils.ServerStatusHandler;
+import xyz.thm.addon.utils.*;
 import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
-import xyz.thm.addon.utils.THMUtils;
-import xyz.thm.addon.utils.ThmMembers;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -114,8 +110,6 @@ import java.util.*;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
-
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import static xyz.thm.addon.utils.THMUtils.*;
 import static xyz.thm.addon.utils.password.*;
@@ -3281,7 +3275,7 @@ public class HighwayBuilderTHM extends Module {
         if (!isExecutionAllowedOnCurrentServer(getCommittedServerState())) return;
 
         String msg = event.getMessage().getString();
-        
+
         // Weird ahh fix to it never accepting
         if (msg.contains(KITBOT_NAME + " wants to teleport to you")) {
             ChatUtils.sendPlayerMsg("/tpy " + KITBOT_NAME);

@@ -19,7 +19,9 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.metadata.ModMetadata;
+import net.minecraft.SharedConstants;
 import net.minecraft.item.Items;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 import org.slf4j.Logger;
 import xyz.thm.addon.commands.Center;
 import xyz.thm.addon.commands.DesyncCommand;
@@ -31,7 +33,6 @@ import xyz.thm.addon.modules.*;
 import xyz.thm.addon.system.THMTab;
 import xyz.thm.addon.utils.*;
 
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -81,10 +82,11 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
 
         record ModOption(String modId, String displayName, String url) {}
         record RequiredMod(String groupName, String downloadUrl, ModOption... options) {}
+        String Version = SharedConstants.getGameVersion().name();
 
         List<RequiredMod> required = List.of(
             new RequiredMod("Baritone",
-                "https://meteorclient.com/api/downloadBaritone?version=1.21.11",
+                "https://meteorclient.com/api/downloadBaritone?version=" + Version,
                 new ModOption("baritone-meteor", "Baritone Meteor Fork (Recommended)", null),
                 new ModOption("baritone", "Baritone (Original)", null)
             )
@@ -168,7 +170,6 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new ModuleManager());
         Modules.get().add(new AxisViewer());
         Modules.get().add(new DiscordNotifs());
-        addOptionalModule("xyz.thm.addon.modules.WebhookEncrypt");
         Modules.get().add(new AntiDrop());
         Modules.get().add(new ScaffoldTHM());
         Modules.get().add(new Nuker());
@@ -198,6 +199,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         addOptionalModule("xyz.thm.addon.modules.SpearTargetPlus");
         addOptionalModule("xyz.thm.addon.modules.BoatNoclipPlus");
         addOptionalModule("xyz.thm.addon.modules.MCMapSender");
+        addOptionalModule("xyz.thm.addon.modules.WebhookEncrypt");
         Modules.get().add(new FlightBypass());
         Modules.get().add(new KitbotFrontend());
         addOptionalModule("xyz.thm.addon.modules.WebmapModule");
