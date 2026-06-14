@@ -84,7 +84,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
 
         List<RequiredMod> required = List.of(
             new RequiredMod("Baritone",
-                "https://github.com/Leonn170709/THM-Addons/raw/refs/heads/1.21.11/docs/SuperDuperFreeFileHost/baritone-meteor-1.21.11.jar",
+                "https://meteorclient.com/api/downloadBaritone?version=1.21.11",
                 new ModOption("baritone-meteor", "Baritone Meteor Fork (Recommended)", null),
                 new ModOption("baritone", "Baritone (Original)", null)
             )
