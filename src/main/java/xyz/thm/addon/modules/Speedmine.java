@@ -295,6 +295,8 @@ public class Speedmine extends Module {
     private int originalSlot = -1;
     private int swapBackTicks = 0;
     private Swap pendingSwapType = Swap.SILENT;
+    private int bpsCount = 0;
+    private long bpsWindowStart = 0;
     private int damageSwappedToSlot = -1;
     private int damageOriginalSlot = -1;
     private InventoryManager inventoryManager;
@@ -338,6 +340,8 @@ public class Speedmine extends Module {
         swapBackTicks = 0;
         damageSwappedToSlot = -1;
         damageOriginalSlot = -1;
+        bpsCount = 0;
+        bpsWindowStart = 0;
         lastAutoMineBlock = null;
         lastAutoMineTime = 0;
         lastAntiCrawlBlock = null;
@@ -362,6 +366,8 @@ public class Speedmine extends Module {
         swapBackTicks = 0;
         damageSwappedToSlot = -1;
         damageOriginalSlot = -1;
+        bpsCount = 0;
+        bpsWindowStart = 0;
         lastAutoMineBlock = null;
         lastAutoMineTime = 0;
         lastAntiCrawlBlock = null;
@@ -381,6 +387,8 @@ public class Speedmine extends Module {
         swapBackTicks = 0;
         damageSwappedToSlot = -1;
         damageOriginalSlot = -1;
+        bpsCount = 0;
+        bpsWindowStart = 0;
         lastAutoMineBlock = null;
         lastAutoMineTime = 0;
         lastAntiCrawlBlock = null;
@@ -559,11 +567,20 @@ public class Speedmine extends Module {
             event.cancel();
             return;
         }
-        // Instantly breakable with the currently held tool — cancel and send START+STOP directly
-        // to avoid vanilla's blockBreakingCooldown gate silently swallowing the break.
-        float delta = blockState.calcBlockBreakingDelta(mc.player, mc.world, event.blockPos);
+        // Instantly breakable with best hotbar tool — silent-swap, send START+STOP directly,
+        // bypass packet-mine queue and vanilla's blockBreakingCooldown gate.
+        float delta = calcBlockBreakingDelta(blockState, mc.world, event.blockPos);
         if (delta >= 1.0f) {
             event.cancel();
+            int bestSlot = getBestTool(blockState);
+            int currentSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
+            if (bestSlot != -1 && bestSlot != currentSlot) {
+                if (swappedToSlot == -1) originalSlot = currentSlot;
+                swapTo(bestSlot);
+                swappedToSlot = bestSlot;
+                pendingSwapType = swapConfig.get();
+                swapBackTicks = swapBackTicksConfig.get();
+            }
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, event.blockPos, event.direction));
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(
@@ -619,6 +636,14 @@ public class Speedmine extends Module {
         for (MiningData data : miningQueue) {
             if (data.hasAttemptedBreak() && data.getPos().equals(packet.getPos())) {
                 data.setAttemptedBreak(false);
+                bpsCount++;
+                long now = System.currentTimeMillis();
+                if (bpsWindowStart == 0) bpsWindowStart = now;
+                if (now - bpsWindowStart >= 1000) {
+                    warning("[Speedmine] BPS: " + bpsCount);
+                    bpsCount = 0;
+                    bpsWindowStart = now;
+                }
             }
         }
     }
