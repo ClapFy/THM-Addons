@@ -124,14 +124,6 @@ public class Speedmine extends Module {
         .visible(() -> modeConfig.get() == SpeedmineMode.DAMAGE)
         .build()
     );
-    private final Setting<Integer> swapBackTicksConfig = sgGeneral.add(new IntSetting.Builder()
-        .name("swap-back-ticks")
-        .description("Ticks to wait before swapping back to the original slot after mining")
-        .defaultValue(1)
-        .min(1)
-        .sliderRange(1, 20)
-        .build()
-    );
     private final Setting<Boolean> rotateConfig = sgGeneral.add(new BoolSetting.Builder()
         .name("rotate")
         .description("Rotates when mining the block")
@@ -291,10 +283,6 @@ public class Speedmine extends Module {
     private long lastAntiCrawlTime = 0;
     private static final long AUTO_MINE_DELAY_MS = 250;
     private static final long ANTI_CRAWL_DELAY_MS = 100;
-    private int swappedToSlot = -1;
-    private int originalSlot = -1;
-    private int swapBackTicks = 0;
-    private Swap pendingSwapType = Swap.SILENT;
     private int bpsCount = 0;
     private long bpsWindowStart = 0;
     private int damageSwappedToSlot = -1;
@@ -335,9 +323,6 @@ public class Speedmine extends Module {
         if (swapConfig.get() == Swap.SILENT) {
             inventoryManager = InventoryManager.getInstance();
         }
-        swappedToSlot = -1;
-        originalSlot = -1;
-        swapBackTicks = 0;
         damageSwappedToSlot = -1;
         damageOriginalSlot = -1;
         bpsCount = 0;
@@ -361,9 +346,6 @@ public class Speedmine extends Module {
             inventoryManager.syncToClient();
         }
         damageSwapBack();
-        swappedToSlot = -1;
-        originalSlot = -1;
-        swapBackTicks = 0;
         damageSwappedToSlot = -1;
         damageOriginalSlot = -1;
         bpsCount = 0;
@@ -382,9 +364,6 @@ public class Speedmine extends Module {
         }
         fadeList.clear();
         damageSwapBack();
-        swappedToSlot = -1;
-        originalSlot = -1;
-        swapBackTicks = 0;
         damageSwappedToSlot = -1;
         damageOriginalSlot = -1;
         bpsCount = 0;
@@ -400,14 +379,6 @@ public class Speedmine extends Module {
     public void onPlayerTick(final TickEvent.Pre event) {
         if (mc.player.isCreative() || mc.player.isSpectator()) {
             return;
-        }
-        if (swapBackTicks > 0) {
-            swapBackTicks--;
-            if (swapBackTicks == 0 && swappedToSlot != -1 && originalSlot != -1) {
-                swapBack(originalSlot);
-                swappedToSlot = -1;
-                originalSlot = -1;
-            }
         }
         if (autoMineKey.get().isPressed() && mc.currentScreen == null) {
             if (!autoMineTogglePressed) {
@@ -567,25 +538,20 @@ public class Speedmine extends Module {
             event.cancel();
             return;
         }
-        // Instantly breakable with best hotbar tool — silent-swap, send START+STOP directly,
-        // bypass packet-mine queue and vanilla's blockBreakingCooldown gate.
+        // Instantly breakable with best hotbar tool — inline swap, START+STOP, swap back immediately.
         float delta = calcBlockBreakingDelta(blockState, mc.world, event.blockPos);
         if (delta >= 1.0f) {
             event.cancel();
             int bestSlot = getBestTool(blockState);
             int currentSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
-            if (bestSlot != -1 && bestSlot != currentSlot) {
-                if (swappedToSlot == -1) originalSlot = currentSlot;
-                swapTo(bestSlot);
-                swappedToSlot = bestSlot;
-                pendingSwapType = swapConfig.get();
-                swapBackTicks = swapBackTicksConfig.get();
-            }
+            boolean needsSwap = bestSlot != -1 && bestSlot != currentSlot && swapConfig.get() != Swap.OFF;
+            if (needsSwap) swapForBreak(bestSlot, currentSlot);
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, event.blockPos, event.direction));
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, event.blockPos, event.direction));
             mc.player.swingHand(Hand.MAIN_HAND);
+            if (needsSwap) swapBackForBreak(currentSlot);
             return;
         }
         event.cancel();
@@ -659,10 +625,12 @@ public class Speedmine extends Module {
                 if (clientState.getFluidState().isStill() || !clientState.getFluidState().isEmpty()) continue;
                 if (clientState.getHardness(mc.world, data.getPos()) == -1.0f) continue;
                 if (data.hasAttemptedBreak()) {
-                    // Keep the tool swap alive until the server confirms the break.
-                    swapBackTicks = swapBackTicksConfig.get();
-                    // Send a fresh START+STOP each frame — a bare STOP without a preceding
-                    // START is silently ignored by most server-side block-break trackers.
+                    // Inline swap → START+STOP → swap back, all in the same packet burst.
+                    // No timer: server sees correct tool, break, original tool, all in order.
+                    int bestSlot = data.getSlot();
+                    int currentSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
+                    boolean needsSwap = bestSlot != -1 && bestSlot != currentSlot && swapConfig.get() != Swap.OFF;
+                    if (needsSwap) swapForBreak(bestSlot, currentSlot);
                     mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(
                         PlayerActionC2SPacket.Action.START_DESTROY_BLOCK,
                         data.getPos(), data.getDirection()));
@@ -670,6 +638,7 @@ public class Speedmine extends Module {
                         PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK,
                         data.getPos(), data.getDirection()));
                     mc.getNetworkHandler().sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
+                    if (needsSwap) swapBackForBreak(currentSlot);
                 }
             }
         }
@@ -875,54 +844,38 @@ public class Speedmine extends Module {
         }
         if (rotateConfig.get()) {
             float[] rotations = getRotationsTo(mc.player.getEyePos(), data.getPos().toCenterPos());
-            if (grimConfig.get()) {
-                Rotations.rotate(rotations[0], rotations[1]);
-            } else {
-                Rotations.rotate(rotations[0], rotations[1]);
-            }
+            Rotations.rotate(rotations[0], rotations[1]);
         }
         int bestSlot = data.getSlot();
         int currentSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
-        boolean needsSwap = bestSlot != -1 && bestSlot != currentSlot;
-        if (needsSwap && swappedToSlot == -1) {
-            originalSlot = currentSlot;
-        }
-        if (needsSwap) {
-            swapTo(bestSlot);
-            swappedToSlot = bestSlot;
-            pendingSwapType = swapConfig.get();
-            swapBackTicks = swapBackTicksConfig.get();
-        } else if (swappedToSlot != -1) {
-            swapBackTicks = swapBackTicksConfig.get();
-        }
+        boolean needsSwap = bestSlot != -1 && bestSlot != currentSlot && swapConfig.get() != Swap.OFF;
+        if (needsSwap) swapForBreak(bestSlot, currentSlot);
         stopMiningInternal(data);
+        if (needsSwap) swapBackForBreak(currentSlot);
         lastBreak = System.currentTimeMillis();
     }
-    private void swapTo(int slot) {
+    // Swap to bestSlot server-side (and client-side for NORMAL), send break packets, swap back — all inline.
+    private void swapForBreak(int bestSlot, int originalSlot) {
         switch (swapConfig.get()) {
             case NORMAL -> {
-                ((PlayerInventoryAccessor) mc.player.getInventory()).setSelectedSlot(slot);
-                mc.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(slot));
+                ((PlayerInventoryAccessor) mc.player.getInventory()).setSelectedSlot(bestSlot);
+                mc.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(bestSlot));
             }
             case SILENT -> {
-                if (inventoryManager == null) {
-                    inventoryManager = InventoryManager.getInstance();
-                }
-                inventoryManager.setSlot(slot);
+                if (inventoryManager == null) inventoryManager = InventoryManager.getInstance();
+                inventoryManager.setSlotForced(bestSlot);
             }
         }
     }
-    private void swapBack(int originalSlot) {
-        switch (pendingSwapType) {
+    private void swapBackForBreak(int originalSlot) {
+        switch (swapConfig.get()) {
             case NORMAL -> {
                 ((PlayerInventoryAccessor) mc.player.getInventory()).setSelectedSlot(originalSlot);
                 mc.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(originalSlot));
             }
             case SILENT -> {
-                if (inventoryManager == null) {
-                    inventoryManager = InventoryManager.getInstance();
-                }
-                inventoryManager.syncToClient();
+                if (inventoryManager == null) inventoryManager = InventoryManager.getInstance();
+                inventoryManager.setSlotForced(originalSlot);
             }
         }
     }
