@@ -8197,6 +8197,8 @@ public class HighwayBuilderTHM extends Module {
 
             @Override
             protected void tick(HighwayBuilderTHM b) {
+                b.input.stop();
+
                 if (timer > 0) {
                     timer--;
                     return;
