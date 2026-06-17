@@ -21,11 +21,20 @@ public final class PacketPlaceUtils {
         if (!offhand && (hotbarSlot < 0 || hotbarSlot > 8)) return false;
 
         Direction side = BlockUtils.getPlaceSide(pos);
-        BlockPos neighbour = side == null ? pos : pos.offset(side);
-        Direction hitSide = side == null ? Direction.UP : side.getOpposite();
-        Vec3d hitPos = Vec3d.ofCenter(pos);
+        BlockPos neighbour;
+        Direction hitSide;
+        Vec3d hitPos;
         if (side != null) {
-            hitPos = hitPos.add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
+            neighbour = pos.offset(side);
+            hitSide = side.getOpposite();
+            hitPos = Vec3d.ofCenter(pos).add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
+        } else {
+            // Air place: target pos itself (air/replaceable → server places at pos).
+            // Use DOWN instead of UP so that in the rare desync case where the server
+            // already has a block at pos, it falls to pos.down() rather than pos.up().
+            neighbour = pos;
+            hitSide = Direction.DOWN;
+            hitPos = Vec3d.ofCenter(pos);
         }
 
         Hand hand = offhand ? Hand.OFF_HAND : Hand.MAIN_HAND;
@@ -75,11 +84,20 @@ public final class PacketPlaceUtils {
 
         Direction side = BlockUtils.getPlaceSide(pos);
         if (side == null && !airPlace) return false;
-        BlockPos neighbour = side == null ? pos : pos.offset(side);
-        Direction hitSide = side == null ? Direction.UP : side.getOpposite();
-        Vec3d hitPos = Vec3d.ofCenter(pos);
+        BlockPos neighbour;
+        Direction hitSide;
+        Vec3d hitPos;
         if (side != null) {
-            hitPos = hitPos.add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
+            neighbour = pos.offset(side);
+            hitSide = side.getOpposite();
+            hitPos = Vec3d.ofCenter(pos).add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
+        } else {
+            // Air place: target pos itself (air/replaceable → server places at pos).
+            // Use DOWN instead of UP so that in the rare desync case where the server
+            // already has a block at pos, it falls to pos.down() rather than pos.up().
+            neighbour = pos;
+            hitSide = Direction.DOWN;
+            hitPos = Vec3d.ofCenter(pos);
         }
 
         Hand hand = item.isOffhand() ? Hand.OFF_HAND : Hand.MAIN_HAND;
