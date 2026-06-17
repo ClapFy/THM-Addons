@@ -13,11 +13,20 @@ import xyz.thm.addon.utils.KitbotChatRouter;
 public class THMSystem extends System<THMSystem> {
     public final Settings settings = new Settings();
 
+    private final SettingGroup sgGeneral = settings.createGroup("General");
     private final SettingGroup sgPrefix = settings.createGroup("Hash");
     private final SettingGroup sgProfiles = settings.createGroup("Highway Profiles");
     private final SettingGroup sgPvp = settings.createGroup("PVP");
     private final SettingGroup sgRender = settings.createGroup("THM Rendering");
     private final SettingGroup sgKitbot = settings.createGroup("KitBot");
+
+    // General Settings
+    public final Setting<Boolean> screenshotToClipboard = sgGeneral.add(new BoolSetting.Builder()
+        .name("screenshot-to-clipboard")
+        .description("Automatically copies screenshots to the clipboard when taken.")
+        .defaultValue(true)
+        .build()
+    );
 
     // Hash Settings
     private final Setting<String> hash = sgPrefix.add(new StringSetting.Builder()
