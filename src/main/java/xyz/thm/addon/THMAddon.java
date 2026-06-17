@@ -196,14 +196,8 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new SignRender());
         Modules.get().add(new AfkLogout());
         Modules.get().add(new FriendsSyncModule());
-        addOptionalModule("xyz.thm.addon.modules.SpearTargetPlus");
-        addOptionalModule("xyz.thm.addon.modules.BoatNoclipPlus");
-        addOptionalModule("xyz.thm.addon.modules.MCMapSender");
-        addOptionalModule("xyz.thm.addon.modules.WebhookEncrypt");
         Modules.get().add(new FlightBypass());
         Modules.get().add(new KitbotFrontend());
-        addOptionalModule("xyz.thm.addon.modules.WebmapModule");
-        //addOptionalModule("xyz.thm.addon.modules.ElytraUAV"); // Still WIP and may be excluded from release jars.
         if (BaritoneUtils.IS_AVAILABLE) {
             LOG.info("Baritone detected. Enabling Baritone-dependent THM modules.");
             Modules.get().add(new THMHwyMonitor());
