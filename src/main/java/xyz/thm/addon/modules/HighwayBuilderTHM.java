@@ -91,11 +91,7 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.lang.reflect.Field;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -112,7 +108,7 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 import static xyz.thm.addon.utils.THMUtils.*;
-import static xyz.thm.addon.utils.password.*;
+import static xyz.thm.addon.utils.APIUtils.*;
 
 @SuppressWarnings("ConstantConditions")
 public class HighwayBuilderTHM extends Module {
@@ -924,8 +920,8 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
     private final Setting<String> encryptedWebhook = sgStatistics.add(new StringSetting.Builder()
-        .name("encrypted-webhook")
-        .description("Webhook URL used to receive statistics. Plain URLs are supported directly.")
+        .name("webhook")
+        .description("Webhook URL used to receive statistics.")
         .defaultValue("MyWebhookInHere")
         .visible(() -> printStatistics.get() && sendStatisticsWebhhok.get())
         .build()
@@ -1293,168 +1289,13 @@ public class HighwayBuilderTHM extends Module {
         runInMainMenu = true;
     }
 
-    // AES-256 encryption with SHA-256 key derivation
-    private String decryptWebhook(String encryptedWebhook) {
-        try {
-            String password = getPassword();
-            // Derive a 256-bit (32 byte) key from the password using SHA-256
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] keyBytes = digest.digest(password.getBytes(StandardCharsets.UTF_8));
-
-            // Add proper Base64 padding for encrypted webhook if needed
-            String padded = encryptedWebhook;
-            int padding = padded.length() % 4;
-            if (padding > 0) {
-                padded += "=".repeat(4 - padding);
-            }
-
-            byte[] encryptedBytes = Base64.getDecoder().decode(padded);
-
-            // Create AES-256 cipher
-            SecretKeySpec secretKey = new SecretKeySpec(keyBytes, 0, keyBytes.length, "AES");
-            Cipher cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.DECRYPT_MODE, secretKey);
-
-            byte[] decrypted = cipher.doFinal(encryptedBytes);
-            return new String(decrypted, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            // If decryption fails, treat the webhook as unencrypted
-            THMAddon.LOG.warn("Failed to decrypt webhook, treating as unencrypted: " + e.getMessage());
-            return encryptedWebhook;
-        }
-    }
-
     private String resolveWebhookUrl(String configuredWebhook) {
         if (configuredWebhook == null) return null;
         String raw = configuredWebhook.trim();
         if (raw.isEmpty()) return null;
         if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
-
-        String decrypted = decryptWebhook(raw);
-        if (decrypted == null) return null;
-        String candidate = decrypted.trim();
-        if (candidate.startsWith("http://") || candidate.startsWith("https://")) return candidate;
         THMAddon.LOG.warn("Invalid webhook URL format (must start with http/https).");
         return null;
-    }
-
-    // AES-256 encryption with SHA-256 key derivation
-    private String decryptAPI(String encryptedapi, String password) {
-        try {
-            // Derive a 256-bit (32 byte) key from the password using SHA-256
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] keyBytes = digest.digest(password.getBytes(StandardCharsets.UTF_8));
-
-            // Add proper Base64 padding for encrypted data if needed
-            String padded = encryptedapi;
-            int padding = padded.length() % 4;
-            if (padding > 0) {
-                padded += "=".repeat(4 - padding);
-            }
-
-            byte[] encryptedBytes = Base64.getDecoder().decode(padded);
-
-            // Create AES-256 cipher
-            SecretKeySpec secretKey = new SecretKeySpec(keyBytes, 0, keyBytes.length, "AES");
-            Cipher cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.DECRYPT_MODE, secretKey);
-
-            byte[] decrypted = cipher.doFinal(encryptedBytes);
-            String result = new String(decrypted, StandardCharsets.UTF_8);
-
-            // Validate result looks like a URL
-            if (!result.startsWith("http://") && !result.startsWith("https://")) {
-                THMAddon.LOG.warn("Decrypted API URL invalid - wrong password or corrupted data");
-                return null;
-            }
-
-            return result;
-        } catch (Exception e) {
-            THMAddon.LOG.warn("Failed to decrypt API: " + e.getMessage());
-            return null;
-        }
-    }
-
-    private void sendToWebhook(String webhookUrl, String message) {
-        new Thread(() -> {
-            try {
-                @SuppressWarnings("deprecation") URL url = new URL(webhookUrl);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setDoOutput(true);
-
-                // Create JSON payload for Discord webhook
-                String json = "{\"content\": \"" + message.replace("\"", "\\\"") + "\"}";
-
-                try (OutputStream os = conn.getOutputStream()) {
-                    byte[] input = json.getBytes(StandardCharsets.UTF_8);
-                    os.write(input, 0, input.length);
-                }
-
-                int responseCode = conn.getResponseCode();
-                if (responseCode == 204 || responseCode == 200) {
-                    info("Successfully sent statistics to webhook!");
-                } else {
-                    THMAddon.LOG.warn("Webhook response code: " + responseCode);
-                    warning("Failed to send to Webhook");
-                }
-
-                conn.disconnect();
-            } catch (Exception e) {
-                THMAddon.LOG.warn("Failed to send to webhook: " + e.getMessage());
-            }
-        }).start();
-    }
-    private void sendToAPI(String message, String password, String EncryptedAPI, String logType) {
-        new Thread(() -> {
-            HttpURLConnection conn = null;
-            try {
-                // Decrypt the API URL first
-                String api = decryptAPI(EncryptedAPI, password);
-
-                // Check if decryption succeeded
-                if (api == null) {
-                    THMAddon.LOG.warn("Failed to decrypt API URL - check your encryption key");
-                    return;
-                }
-
-                @SuppressWarnings("deprecation") URL url = new URL(api);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setDoOutput(true);
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-
-                String json = "{\"content\": \"" + message.replace("\"", "\\\"") + "\"}";
-
-                try (OutputStream os = conn.getOutputStream()) {
-                    byte[] input = json.getBytes(StandardCharsets.UTF_8);
-                    os.write(input, 0, input.length);
-                    os.flush();
-                }
-
-                int responseCode = conn.getResponseCode();
-
-                try (InputStream is = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
-                    if (is != null) {
-                        is.readAllBytes();
-                    }
-                }
-
-                if (responseCode == 204 || responseCode == 200) {
-                    info("Successfully sent %s to API!", logType);
-                } else {
-                    THMAddon.LOG.warn("API response code: " + responseCode);
-                    warning("Failed to send to API");
-                }
-            } catch (Exception e) {
-                warning("Failed to send to API");
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
-        }).start();
     }
 
     private void sendStatusLog() {
@@ -1485,7 +1326,7 @@ public class HighwayBuilderTHM extends Module {
             generateTimestamp()
         );
 
-        sendToAPI(statusMessage, getPassword(), getAPIStatus(), "status");
+        sendStatus(statusMessage);
     }
 
     private ServerState getCommittedServerState() {
@@ -5808,7 +5649,7 @@ public class HighwayBuilderTHM extends Module {
                             report.blocksBroken(),
                             report.blocksPlaced()
                         );
-                        sendToWebhook(webhookUrl, statsMessage);
+                        APIUtils.sendToWebhook(webhookUrl, statsMessage);
                         working = committed;
                     }
                 } else warning("Statistics NOT sent to webhook! Distance too small: (highlight)%.0f", distance);
@@ -5847,7 +5688,7 @@ public class HighwayBuilderTHM extends Module {
                                 generateTimestamp(),
                                 isOnMainHighway()
                             );
-                            sendToAPI(statsMessageapi, getPassword(), getAPIHighway(), "statistics");
+                            sendStatistics(statsMessageapi);
                             working = committed;
                         }
                     }

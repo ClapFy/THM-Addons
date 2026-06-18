@@ -1,21 +1,10 @@
 package xyz.thm.addon.utils;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.entity.player.PlayerEntity;
-import xyz.thm.addon.THMAddon;
 
-import javax.crypto.Cipher;
-import javax.crypto.spec.SecretKeySpec;
-import java.net.HttpURLConnection;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.*;
 
-import static xyz.thm.addon.utils.password.*;
 
 public final class ThmMembers {
     public static final class Member {
@@ -34,9 +23,6 @@ public final class ThmMembers {
         }
     }
 
-    private static final String API_URL = getAPIMemberHud();
-    private static final String API_HIGHWAY_STATUS_URL = getAPIHighwayStatus();
-
     private static List<Member> cachedMembers = null;
     private static Map<String, Member> cachedByMcName = null;
     private static boolean fetchInProgress = false;
@@ -49,90 +35,6 @@ public final class ThmMembers {
     private static boolean highwayStatusPollingStarted = false;
 
     private ThmMembers() {
-    }
-
-    private static String decryptAPI(String encryptedapi, String password) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] keyBytes = digest.digest(password.getBytes(StandardCharsets.UTF_8));
-
-            String padded = encryptedapi;
-            int padding = padded.length() % 4;
-            if (padding > 0) {
-                padded += "=".repeat(4 - padding);
-            }
-
-            byte[] encryptedBytes = Base64.getDecoder().decode(padded);
-
-            SecretKeySpec secretKey = new SecretKeySpec(keyBytes, 0, keyBytes.length, "AES");
-            Cipher cipher = Cipher.getInstance("AES");
-            cipher.init(Cipher.DECRYPT_MODE, secretKey);
-
-            byte[] decrypted = cipher.doFinal(encryptedBytes);
-            String result = new String(decrypted, StandardCharsets.UTF_8);
-
-            if (!result.startsWith("http://") && !result.startsWith("https://")) {
-                THMAddon.LOG.warn("Decrypted API URL invalid - wrong password or corrupted data");
-                return null;
-            }
-
-            return result;
-        } catch (Exception e) {
-            THMAddon.LOG.warn("Failed to decrypt API: " + e.getMessage());
-            return null;
-        }
-    }
-
-    private static List<Member> fetchMembersFromApi() {
-        try {
-            String apiUrl = decryptAPI(API_URL, getPassword());
-            if (apiUrl == null) return null;
-
-            HttpURLConnection connection = (HttpURLConnection) new URI(apiUrl).toURL().openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(5000);
-            connection.setReadTimeout(5000);
-
-            if (connection.getResponseCode() != 200) {
-                THMAddon.LOG.error("Failed to fetch members from API. Response code: {}", connection.getResponseCode());
-                return null;
-            }
-            THMAddon.LOG.info("Fetched Members");
-
-            StringBuilder response = new StringBuilder();
-            try (Scanner scanner = new Scanner(connection.getInputStream())) {
-                while (scanner.hasNextLine()) {
-                    response.append(scanner.nextLine());
-                }
-            }
-
-            Gson gson = new Gson();
-            JsonArray jsonArray = gson.fromJson(response.toString(), JsonArray.class);
-            List<Member> members = new ArrayList<>();
-
-            for (int i = 0; i < jsonArray.size(); i++) {
-                JsonObject jsonObject = jsonArray.get(i).getAsJsonObject();
-
-                JsonArray usernamesArray = jsonObject.getAsJsonArray("usernames");
-                String[] usernames = new String[usernamesArray.size()];
-                for (int j = 0; j < usernamesArray.size(); j++) {
-                    usernames[j] = usernamesArray.get(j).getAsString();
-                }
-
-                String rank = jsonObject.get("rank").getAsString();
-                String rankId = jsonObject.has("rankId") ? jsonObject.getAsJsonPrimitive("rankId").getAsString() : "";
-                String branch = jsonObject.has("branch") ? jsonObject.getAsJsonPrimitive("branch").getAsString() : "";
-
-                String displayName = usernames.length > 0 ? usernames[0] : "Unknown";
-                members.add(new Member(displayName, usernames, rank, rankId, branch));
-            }
-
-            connection.disconnect();
-            return members;
-        } catch (Exception e) {
-            THMAddon.LOG.warn("Error fetching members from API: {}", e.getMessage());
-        }
-        return null;
     }
 
     private static void refreshIfNeeded() {
@@ -155,7 +57,7 @@ public final class ThmMembers {
     private static void runFetchLoop(boolean force) {
         long delayMs = 2000;
         while (true) {
-            List<Member> members = fetchMembersFromApi();
+            List<Member> members = APIUtils.fetchMembersFromApi();
             if (members != null) {
                 synchronized (ThmMembers.class) {
                     updateCache(members);
@@ -305,59 +207,6 @@ public final class ThmMembers {
         startHighwayStatusPollingIfNeeded();
     }
 
-    private static Map<String, String> fetchHighwayStatusFromApi() {
-        try {
-            String apiUrl = decryptAPI(API_HIGHWAY_STATUS_URL, getPassword());
-            if (apiUrl == null) return null;
-
-            HttpURLConnection connection = (HttpURLConnection) new URI(apiUrl).toURL().openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(5000);
-            connection.setReadTimeout(5000);
-
-            if (connection.getResponseCode() != 200) {
-                THMAddon.LOG.error("Failed to fetch highway status from API. Response code: {}", connection.getResponseCode());
-                return null;
-            }
-
-            StringBuilder response = new StringBuilder();
-            try (Scanner scanner = new Scanner(connection.getInputStream())) {
-                while (scanner.hasNextLine()) {
-                    response.append(scanner.nextLine());
-                }
-            }
-
-            Gson gson = new Gson();
-            JsonObject root = gson.fromJson(response.toString(), JsonObject.class);
-            Map<String, String> highwayByName = new HashMap<>();
-            Map<String, Long> newestTimestampByName = new HashMap<>();
-
-            if (root != null) {
-                for (Map.Entry<String, com.google.gson.JsonElement> entry : root.entrySet()) {
-                    String highway = entry.getKey();
-                    JsonObject value = entry.getValue().getAsJsonObject();
-                    if (value == null || !value.has("username")) continue;
-
-                    String username = normalizeMcName(value.get("username").getAsString());
-                    if (username == null) continue;
-
-                    long timestamp = value.has("timestamp") ? value.get("timestamp").getAsLong() : Long.MIN_VALUE;
-                    Long existingTimestamp = newestTimestampByName.get(username);
-                    if (existingTimestamp == null || timestamp >= existingTimestamp) {
-                        newestTimestampByName.put(username, timestamp);
-                        highwayByName.put(username, highway);
-                    }
-                }
-            }
-
-            connection.disconnect();
-            return highwayByName;
-        } catch (Exception e) {
-            THMAddon.LOG.warn("Error fetching highway status from API: {}", e.getMessage());
-            return null;
-        }
-    }
-
     private static void startHighwayStatusPollingIfNeeded() {
         synchronized (ThmMembers.class) {
             if (highwayStatusPollingStarted) return;
@@ -366,7 +215,7 @@ public final class ThmMembers {
 
         Thread thread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
-                Map<String, String> fetched = fetchHighwayStatusFromApi();
+                Map<String, String> fetched = APIUtils.fetchHighwayStatusFromApi();
                 if (fetched != null) {
                     synchronized (ThmMembers.class) {
                         cachedHighwayByMcName = fetched;
