@@ -30,6 +30,8 @@ public class ScreenshotClipboardMixin {
         System.setProperty("java.awt.headless", "false");
     }
 
+    private static final boolean IS_MAC = System.getProperty("os.name", "").toLowerCase().contains("mac");
+
     // InputStream representation so native apps (Discord, browsers) receive raw PNG bytes.
     private static final DataFlavor PNG_FLAVOR = new DataFlavor("image/png", "PNG Image");
 
@@ -41,17 +43,36 @@ public class ScreenshotClipboardMixin {
 
         new Thread(() -> {
             try {
-                BufferedImage buffered = ImageIO.read(file);
-                if (buffered == null) {
-                    THMAddon.LOG.warn("[THM] Could not read screenshot file for clipboard");
-                    return;
+                if (IS_MAC) {
+                    copyToClipboardMac(file);
+                } else {
+                    copyToClipboardAWT(file);
                 }
-                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new TransferableImage(buffered), null);
                 ChatUtils.info("Successfully copied screenshot to clipboard");
             } catch (Exception e) {
                 THMAddon.LOG.warn("[THM] Failed to copy screenshot to clipboard", e);
             }
         }).start();
+    }
+
+    // macOS: use osascript to write PNG bytes directly into NSPasteboard.
+    // Java AWT clipboard does not reliably bridge to NSPasteboard for images on macOS.
+    private static void copyToClipboardMac(File file) throws IOException, InterruptedException {
+        String script = "set the clipboard to (read (POSIX file \"" + file.getAbsolutePath() + "\") as «class PNGf»)";
+        Process proc = Runtime.getRuntime().exec(new String[]{"osascript", "-e", script});
+        int exit = proc.waitFor();
+        if (exit != 0) {
+            throw new IOException("osascript exited with code " + exit);
+        }
+    }
+
+    private static void copyToClipboardAWT(File file) throws IOException {
+        BufferedImage buffered = ImageIO.read(file);
+        if (buffered == null) {
+            THMAddon.LOG.warn("[THM] Could not read screenshot file for clipboard");
+            return;
+        }
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new TransferableImage(buffered), null);
     }
 
     private record TransferableImage(BufferedImage image) implements Transferable {
@@ -69,7 +90,6 @@ public class ScreenshotClipboardMixin {
         public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException, IOException {
             if (DataFlavor.imageFlavor.equals(flavor)) return image;
             if (PNG_FLAVOR.equals(flavor)) {
-                // Encode to raw PNG bytes; PNG_FLAVOR expects an InputStream
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 ImageIO.write(image, "png", out);
                 return new ByteArrayInputStream(out.toByteArray());
