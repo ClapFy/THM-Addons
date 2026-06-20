@@ -19,7 +19,9 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.metadata.ModMetadata;
+import net.minecraft.SharedConstants;
 import net.minecraft.item.Items;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 import org.slf4j.Logger;
 import xyz.thm.addon.commands.Center;
 import xyz.thm.addon.commands.DesyncCommand;
@@ -32,6 +34,10 @@ import xyz.thm.addon.system.THMTab;
 import xyz.thm.addon.utils.*;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class THMAddon extends MeteorAddon implements ClientModInitializer {
     public static final String MOD_ID = "thm-addon";
@@ -56,23 +62,107 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
     }
     @Override
     public void onInitializeClient() {
-        PayloadTypeRegistry.playC2S().register(JoinPayload.ID, JoinPayload.CODEC);
-        ClientPlayConnectionEvents.JOIN.register((listener, sender, client) -> {
-            if (!THMUtils.isNot6B6T()) {
-                sender.sendPacket(new JoinPayload());
-                LOG.info("Join payload sent.");} else {
-                LOG.info("Join payload not sent.");
-            }
-        });
+        if (!FabricLoader.getInstance().isModLoaded("anarchymod")) {
+            PayloadTypeRegistry.playC2S().register(JoinPayload.ID, JoinPayload.CODEC);
+            ClientPlayConnectionEvents.JOIN.register((listener, sender, client) -> {
+                if (!THMUtils.isNot6B6T()) {
+                    sender.sendPacket(new JoinPayload());
+                    LOG.info("Join payload sent.");
+                } else {
+                    LOG.info("Join payload not sent.");
+                }
+            });
+        }
     }
 
     @Override
     public void onInitialize() {
         LOG.info("Initializing THM Addon");
+        FabricLoader loader = FabricLoader.getInstance();
+
+        record ModOption(String modId, String displayName, String url) {}
+        record RequiredMod(String groupName, String downloadUrl, ModOption... options) {}
+        String Version = SharedConstants.getGameVersion().name();
+
+        List<RequiredMod> required = List.of(
+            new RequiredMod("Baritone",
+                "https://meteorclient.com/api/downloadBaritone?version=" + Version,
+                new ModOption("baritone-meteor", "Baritone Meteor Fork (Recommended)", null),
+                new ModOption("baritone", "Baritone (Original)", null)
+            )
+            // Add more RequiredMod entries here as needed
+        );
+
+        List<RequiredMod> missing = new ArrayList<>();
+        for (RequiredMod req : required) {
+            boolean anyLoaded = Arrays.stream(req.options())
+                .anyMatch(opt -> loader.isModLoaded(opt.modId()));
+            if (!anyLoaded) missing.add(req);
+        }
+
+        if (!missing.isEmpty()) {
+            StringBuilder msg = new StringBuilder("THM Addon is missing required dependencies:\n\n");
+            List<String> downloadUrls = new ArrayList<>();
+
+            for (RequiredMod req : missing) {
+                if (req.options().length == 1) {
+                    msg.append("- ").append(req.options()[0].displayName()).append("\n\n");
+                } else {
+                    msg.append(req.groupName()).append(" - install one of:\n");
+                    for (ModOption opt : req.options()) {
+                        msg.append("  - ").append(opt.displayName()).append("\n");
+                    }
+                    msg.append("\n");
+                }
+
+                // Only add download URL if the group has one declared
+                if (req.downloadUrl() != null && !req.downloadUrl().isEmpty()) {
+                    downloadUrls.add(req.downloadUrl());
+                }
+            }
+
+            boolean hasDownload = !downloadUrls.isEmpty();
+            msg.append(hasDownload
+                ? "Click OK to open the download page, or Cancel to just close."
+                : "The game will now close.");
+
+            String depList = missing.stream().map(RequiredMod::groupName).collect(Collectors.joining(", "));
+            LOG.error("[THM Addon] Missing dependencies: {}", depList);
+
+            boolean openDownload = TinyFileDialogs.tinyfd_messageBox(
+                "THM Addon - Missing Dependencies",
+                msg.toString(),
+                hasDownload ? "okcancel" : "ok",
+                "error",
+                true
+            );
+
+            if (hasDownload && openDownload) {
+                for (String url : downloadUrls) {
+                    try {
+                        String os = System.getProperty("os.name").toLowerCase();
+                        ProcessBuilder pb;
+                        if (os.contains("win")) {
+                            pb = new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url);
+                        } else if (os.contains("mac")) {
+                            pb = new ProcessBuilder("open", url);
+                        } else {
+                            pb = new ProcessBuilder("xdg-open", url);
+                        }
+                        pb.start();
+                    } catch (Exception e) {
+                        LOG.error("Failed to open URL: {}", url, e);
+                    }
+                }
+            }
+
+            System.exit(1);
+        }
 
         MOD_META = FabricLoader.getInstance().getModContainer(MOD_ID).orElseThrow().getMetadata();
         ServerStatusHandler.getInstance();
         ServerReconnectService.getInstance();
+        KitbotAvailabilityTracker.getInstance();
         KitbotChatRouter.getInstance();
         ThmMembers.initialize();
 
@@ -81,13 +171,11 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new ModuleManager());
         Modules.get().add(new AxisViewer());
         Modules.get().add(new DiscordNotifs());
-        addOptionalModule("xyz.thm.addon.modules.WebhookEncrypt");
         Modules.get().add(new AntiDrop());
         Modules.get().add(new ScaffoldTHM());
         Modules.get().add(new Nuker());
         Modules.get().add(new PaketLimiter());
         Modules.get().add(new PacketLoggerTHM());
-        Modules.get().add(new OffhandManager());
         Modules.get().add(new HotbarManager());
         Modules.get().add(new UnfocusedFpsLimiter());
         Modules.get().add(new AntiConcrete());
@@ -107,13 +195,9 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new ElytraRoute());
         Modules.get().add(new SignRender());
         Modules.get().add(new AfkLogout());
-        addOptionalModule("xyz.thm.addon.modules.SpearTargetPlus");
-        addOptionalModule("xyz.thm.addon.modules.BoatNoclipPlus");
-        addOptionalModule("xyz.thm.addon.modules.MCMapSender");
+        Modules.get().add(new FriendsSyncModule());
         Modules.get().add(new FlightBypass());
         Modules.get().add(new KitbotFrontend());
-        addOptionalModule("xyz.thm.addon.modules.WebmapModule");
-        //addOptionalModule("xyz.thm.addon.modules.ElytraUAV"); // Still WIP and may be excluded from release jars.
         if (BaritoneUtils.IS_AVAILABLE) {
             LOG.info("Baritone detected. Enabling Baritone-dependent THM modules.");
             Modules.get().add(new THMHwyMonitor());
@@ -178,8 +262,27 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
 
     @Override
     public GithubRepo getRepo() {
-        return new GithubRepo("Leonn170709", "THM-Addons");
+        String branch = FabricLoader
+            .getInstance()
+            .getModContainer("thm-addon")
+            .get().getMetadata()
+            .getCustomValue("github:branch")
+            .getAsString();
+        return new GithubRepo("Leonn170709", "THM-Addons", branch.isEmpty() ? "master" : branch.trim(), null);
     }
+
+    @Override
+    public String getCommit() {
+        String commit = FabricLoader
+            .getInstance()
+            .getModContainer("thm-addon")
+            .get().getMetadata()
+            .getCustomValue("github:sha")
+            .getAsString();
+        LOG.info("Rejects version: {}", commit);
+        return commit.isEmpty() ? null : commit.trim();
+    }
+
 
     private static void addOptionalModule(String className) {
         try {

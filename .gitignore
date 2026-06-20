@@ -31,6 +31,7 @@ bin/
 # fabric
 
 run/
+secrets.properties
 src/main/java/xyz/thm/addon/modules/WebhookEncrypt.java
 src/main/java/xyz/thm/addon/modules/HighwayBuilder.java
 src/main/java/xyz/thm/addon/utils/password.java
@@ -48,3 +49,12 @@ src/main/java/xyz/thm/addon/modules/MCMapSender.java
 CLAUDE.md
 src/main/java/xyz/thm/addon/modules/SpearTargetPlus.java
 src/main/java/xyz/thm/addon/modules/WebmapModule.java
+secrets.properties.example
+src/main/java/xyz/thm/addon/utils/APIUtils.java
+local-checkpoints.md
+rollback-post-0918-undo-log.md
+src/main/java/xyz/thm/addon/modules/HandshakeHostTest.java
+src/main/java/xyz/thm/addon/mixin/ClientConnectionMixin.java
+src/main/java/xyz/thm/addon/mixin/HandshakeC2SPacketMixin.java
+src/main/java/xyz/thm/addon/mixin/MultiplayerScreenRouteButtonMixin.java
+src/main/java/xyz/thm/addon/mixin/TitleScreenFastestRouteButtonMixin.java

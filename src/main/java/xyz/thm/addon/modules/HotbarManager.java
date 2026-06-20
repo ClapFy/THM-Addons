@@ -11,9 +11,11 @@ import meteordevelopment.meteorclient.utils.world.TickRate;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
+import net.minecraft.nbt.NbtCompound;
 import xyz.thm.addon.THMAddon;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class HotbarManager extends Module {
@@ -49,7 +51,7 @@ public class HotbarManager extends Module {
         return reset;
     }
 
-    private final List<Setting<Item>> itemSettings = new ArrayList<>();
+    private final List<Setting<List<Item>>> itemSettings = new ArrayList<>();
     private final Item[] defaultItems = {
         Items.AIR,          // Slot 1
         Items.AIR,          // Slot 2
@@ -69,10 +71,11 @@ public class HotbarManager extends Module {
         final SettingGroup sgHotbar = settings.createGroup("Hotbar");
 
         for (int i = 0; i < 9; i++) {
-            Setting<Item> setting = sgHotbar.add(new ItemSetting.Builder()
+            Setting<List<Item>> setting = sgHotbar.add(new ClearableSlotSetting.Builder()
                 .name("slot-" + (i + 1))
                 .description("The item to store in slot " + (i + 1) + ".")
                 .defaultValue(defaultItems[i])
+                .filter(item -> item != Items.AIR)
                 .build()
             );
             itemSettings.add(setting);
@@ -86,12 +89,13 @@ public class HotbarManager extends Module {
 
     public boolean managesSlot(int hotbarSlot) {
         if (hotbarSlot < 0 || hotbarSlot >= itemSettings.size()) return false;
-        return itemSettings.get(hotbarSlot).get() != Items.AIR;
+        return getManagedItem(hotbarSlot) != Items.AIR;
     }
 
     public Item getManagedItem(int hotbarSlot) {
         if (hotbarSlot < 0 || hotbarSlot >= itemSettings.size()) return Items.AIR;
-        return itemSettings.get(hotbarSlot).get();
+        List<Item> items = itemSettings.get(hotbarSlot).get();
+        return items.isEmpty() ? Items.AIR : items.get(0);
     }
 
     @EventHandler
@@ -104,7 +108,7 @@ public class HotbarManager extends Module {
             if (ticksLeft > 0.0) return;
             highestSlot = Math.max(highestSlot, i);
 
-            Item targetItem = itemSettings.get(i).get();
+            Item targetItem = getManagedItem(i);
             if (targetItem == Items.AIR) continue;
 
             Item slotItem = mc.player.getInventory().getStack(i).getItem();
@@ -119,5 +123,63 @@ public class HotbarManager extends Module {
         }
 
         if (highestSlot == 8 && toggle.get()) toggle();
+    }
+
+    private static class ClearableSlotSetting extends ItemListSetting {
+        public ClearableSlotSetting(String name, String description, List<Item> defaultValue, IVisible visible, java.util.function.Predicate<Item> filter) {
+            super(name, description, defaultValue, null, null, visible, filter, false);
+        }
+
+        @Override
+        public void onChanged() {
+            clampToOneItem();
+            super.onChanged();
+        }
+
+        @Override
+        public List<Item> load(NbtCompound tag) {
+            if (tag.getListOrEmpty("value").isEmpty()) {
+                get().clear();
+                List<Item> legacyItems = parseImpl(tag.getString("value", ""));
+                if (!legacyItems.isEmpty()) get().add(legacyItems.get(0));
+                return get();
+            }
+
+            return super.load(tag);
+        }
+
+        private void clampToOneItem() {
+            List<Item> items = get();
+            items.removeIf(item -> item == null || item == Items.AIR);
+            if (items.size() > 1) items.subList(1, items.size()).clear();
+        }
+
+        private static class Builder extends SettingBuilder<Builder, List<Item>, ClearableSlotSetting> {
+            private java.util.function.Predicate<Item> filter;
+
+            public Builder() {
+                super(new ArrayList<>());
+            }
+
+            public Builder defaultValue(Item... defaults) {
+                defaultValue = new ArrayList<>();
+                if (defaults != null) {
+                    Arrays.stream(defaults)
+                        .filter(item -> item != null && item != Items.AIR)
+                        .forEach(defaultValue::add);
+                }
+                return this;
+            }
+
+            public Builder filter(java.util.function.Predicate<Item> filter) {
+                this.filter = filter;
+                return this;
+            }
+
+            @Override
+            public ClearableSlotSetting build() {
+                return new ClearableSlotSetting(name, description, defaultValue, visible, filter);
+            }
+        }
     }
 }

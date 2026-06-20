@@ -8,6 +8,7 @@ import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.meteor.ActiveModulesChangedEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.pathing.BaritoneUtils;
@@ -24,6 +25,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.DisconnectedScreen;
 import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.util.ScreenshotRecorder;
+import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.chunk.ChunkStatus;
@@ -39,6 +41,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static xyz.thm.addon.utils.THMUtils.getSaveName;
 
@@ -52,6 +55,10 @@ public class THMHwyMonitor extends Module {
     private static final int YAW_SET_DELAY_TICKS = 10;
     private static final int BARITONE_PATH_STARTUP_TICKS = 10;
     private static final int BARITONE_PATH_TIMEOUT_TICKS = 20 * 20;
+    private static final int BARITONE_RECOVERY_MAX_START_ATTEMPTS = 5;
+    private static final int BARITONE_RECOVERY_RETRY_DELAY_TICKS = 20;
+    private static final int BARITONE_STOP_SETTLE_TICKS = 2;
+    private static final int BLOCKED_CENTER_STALL_TICKS = 5 * 20;
     private static final long ALIGNMENT_GATE_TIMEOUT_MS = 10_000L;
     private static final int POST_REJOIN_AXIS_PROBE_DISTANCE = 20;
     private static final int POST_REJOIN_AXIS_NEAR_PROBE_DISTANCE = 8;
@@ -86,6 +93,12 @@ public class THMHwyMonitor extends Module {
     private static final int RUBBERBAND_EVENT_WINDOW_TICKS = 90 * 20;
     private static final int RUBBERBAND_EVENT_TRIGGER_COUNT = 3;
     private static final int RUBBERBAND_RECONNECT_DELAY_SECONDS = 60;
+    private static final int FORWARD_CORRECTION_FAST_WINDOW_TICKS = 10 * 20;
+    private static final int FORWARD_CORRECTION_FAST_TRIGGER_COUNT = 120;
+    private static final int FORWARD_CORRECTION_FAST_MIN_WATCH_TICKS = 3 * 20;
+    private static final int FORWARD_CORRECTION_SLOW_WINDOW_TICKS = 20 * 20;
+    private static final int FORWARD_CORRECTION_SLOW_TRIGGER_COUNT = 60;
+    private static final int FORWARD_CORRECTION_SLOW_MIN_STALLED_TICKS = 10 * 20;
     private static final double GHOSTBLOCK_CONFIRMED_PROGRESS_BLOCKS = 0.75;
     private static final double RUBBERBAND_BACKTRACK_BLOCKS = 1.5;
 
@@ -142,7 +155,7 @@ public class THMHwyMonitor extends Module {
 
     private final Setting<Boolean> recoverForwardStalls = sgGeneral.add(new BoolSetting.Builder()
         .name("recover-forward-stalls")
-        .description("Runs Highway Monitor recovery if HighwayBuilder stays stuck in Forward without meaningful forward progress, including a forced 2-block backstep.")
+        .description("Runs Highway Monitor recovery if HighwayBuilder stays stuck in Forward or Center, including a forced 2-block backstep.")
         .defaultValue(true)
         .visible(autoRecover::get)
         .build()
@@ -150,7 +163,7 @@ public class THMHwyMonitor extends Module {
 
     private final Setting<Integer> forwardStallTimeoutSeconds = sgGeneral.add(new IntSetting.Builder()
         .name("forward-stall-timeout-seconds")
-        .description("Seconds of no meaningful forward progress in HighwayBuilder Forward before the forced stall escape begins.")
+        .description("Seconds of no meaningful HighwayBuilder Forward progress or Center transition before the forced stall escape begins.")
         .defaultValue(120)
         .range(15, 900)
         .sliderRange(30, 300)
@@ -205,6 +218,8 @@ public class THMHwyMonitor extends Module {
     private int recoveryTicks;
     private int baritoneStartupTicks;
     private int baritoneTimeoutTicks;
+    private int baritoneRecoveryStartAttempts;
+    private boolean baritoneStopCommandTried;
     private RecoveryPhase recoveryPhase = RecoveryPhase.None;
     private RecoveryCause recoveryCause = RecoveryCause.None;
     private boolean recoveryModulesPaused;
@@ -280,6 +295,9 @@ public class THMHwyMonitor extends Module {
     private double ghostblockLastProjectedCoordinate;
     private boolean ghostblockHasLastProjectedCoordinate;
     private final List<Integer> ghostblockRubberbandEventTicks = new ArrayList<>();
+    private final List<Integer> ghostblockCorrectionPacketTicks = new ArrayList<>();
+    private final AtomicInteger pendingForwardCorrectionPackets = new AtomicInteger();
+    private volatile boolean forwardCorrectionPacketWatchArmed;
 
     private record AxisProbeResult(
         boolean allSamplesLoaded,
@@ -344,6 +362,21 @@ public class THMHwyMonitor extends Module {
 
     public static void signalRestartHardFailFromHighwayBuilder() {
         RESTART_HARD_FAIL_SIGNAL.set(true);
+    }
+
+    public void prepareForAutoLogTerminalLogout(String reason) {
+        String safeReason = reason == null || reason.isBlank() ? "unknown" : reason;
+        abortActiveRecoveryForNonRestartHardFail();
+        clearHighwayBuilderReconnectModuleRestoreSnapshot("autolog-terminal-logout:" + safeReason);
+        clearRestartAutomationState("autolog-terminal-logout:" + safeReason, true, true);
+        clearRestartDisconnectEvidence();
+        unresolvedMainServerDisconnectCandidate = false;
+        deferRestartScreenshotUntilReconnect = false;
+        deferredRestartScreenshotAfterReconnectPending = false;
+        pendingDisconnectScreenEvidenceCheck = false;
+        pendingDisconnectScreenEvidenceUntilMs = 0L;
+        nonRestartHardFailArmed = true;
+        signalNonRestartHardFailFromHighwayBuilder();
     }
 
     private static boolean consumeNonRestartHardFailSignal() {
@@ -462,6 +495,8 @@ public class THMHwyMonitor extends Module {
         recoveryTicks = 0;
         baritoneStartupTicks = 0;
         baritoneTimeoutTicks = 0;
+        baritoneRecoveryStartAttempts = 0;
+        baritoneStopCommandTried = false;
         recoveryPhase = RecoveryPhase.None;
         recoveryModulesPaused = false;
         recoveryPausedModules.clear();
@@ -511,6 +546,8 @@ public class THMHwyMonitor extends Module {
         recoveryTicks = 0;
         baritoneStartupTicks = 0;
         baritoneTimeoutTicks = 0;
+        baritoneRecoveryStartAttempts = 0;
+        baritoneStopCommandTried = false;
         recoveryPhase = RecoveryPhase.None;
         resumePausedModulesAfterRecovery();
         trackedSegment = null;
@@ -695,6 +732,12 @@ public class THMHwyMonitor extends Module {
         refreshTimerSpeedSnapshotFromCurrentState("activeModulesChanged");
     }
 
+    @EventHandler
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (!(event.packet instanceof PlayerPositionLookS2CPacket)) return;
+        queueForwardCorrectionPacket();
+    }
+
     @EventHandler(priority = 1000)
     private void onTickCaptureYawBeforeOtherModules(TickEvent.Pre event) {
         if (mc == null || mc.player == null) return;
@@ -860,9 +903,23 @@ public class THMHwyMonitor extends Module {
         if (!unresolvedMainServerDisconnectCandidate) return;
         unresolvedMainServerDisconnectCandidate = false;
 
-        info("Unclassified disconnect detected (%s) while THM HighwayBuilder was active. Treating as restart recovery.", source);
-        deferRestartScreenshotUntilReconnect = true;
-        handleRestartDetectionTrigger();
+        String rawReason = readDisconnectedScreenReasonLower();
+        if (reconnectAutomationEnabled()) {
+            info(
+                "Connection to server dropped; awaiting reconnect. source=%s rawReason=%s",
+                source,
+                rawReason == null || rawReason.isBlank() ? "unavailable" : rawReason
+            );
+            deferRestartScreenshotUntilReconnect = true;
+            handleRestartDetectionTrigger();
+            return;
+        }
+
+        warning(
+            "Connection to server dropped. Please reconnect and restart HighwayBuilder to continue. source=%s rawReason=%s",
+            source,
+            rawReason == null || rawReason.isBlank() ? "unavailable" : rawReason
+        );
     }
 
     private void maybeTakeDeferredRestartScreenshotAfterReconnect(String source) {
@@ -1148,16 +1205,19 @@ public class THMHwyMonitor extends Module {
             return;
         }
 
-        if (builder.shouldSuppressThmHwyMonitorMisalignmentRecovery()) {
+        if (builder.isTpsThrottlePaused()) {
             resetForwardProgressWatch();
+            resetRubberbandGhostblockWatch();
             clearPendingAlignmentGateRequest();
             return;
         }
 
         RecoveryCause recoveryCause = updateStallWatch(builder);
         boolean stallRecoveryArmed = recoveryCause != RecoveryCause.None;
+        boolean centerStallRecovery = recoveryCause == RecoveryCause.CenterStall;
 
-        if (!stallRecoveryArmed && builder.shouldSuppressThmHwyMonitorMisalignmentRecovery()) {
+        if (builder.shouldSuppressThmHwyMonitorRecovery(centerStallRecovery)) {
+            if (!builder.isInCenterState()) resetForwardProgressWatch();
             clearPendingAlignmentGateRequest();
             return;
         }
@@ -1196,7 +1256,14 @@ public class THMHwyMonitor extends Module {
                 return;
             }
 
-            if (builder.shouldSuppressThmHwyMonitorMisalignmentRecovery()) {
+            if (builder.isTpsThrottlePaused()) {
+                resetForwardProgressWatch();
+                resetRubberbandGhostblockWatch();
+                clearPendingAlignmentGateRequest();
+                return;
+            }
+
+            if (builder.shouldSuppressThmHwyMonitorRecovery(false)) {
                 resetForwardProgressWatch();
                 clearPendingAlignmentGateRequest();
                 return;
@@ -1401,6 +1468,8 @@ public class THMHwyMonitor extends Module {
         }
         recoveryYawBeforeMove = recoveryDirectionYaw;
         recoveryTicks = RECOVERY_DELAY_TICKS;
+        baritoneRecoveryStartAttempts = 0;
+        baritoneStopCommandTried = false;
         recoveryPhase = RecoveryPhase.WaitBeforeCorrection;
         int stalledTicksSnapshot = stallWatchTicks;
         resetForwardProgressWatch();
@@ -1410,6 +1479,17 @@ public class THMHwyMonitor extends Module {
             String escapeLabel = localEscapeOnly ? "local 2-block stall escape" : "stall correction";
             info("Paused recovery modules (THM HighwayBuilder / Timer / Speed) on %s after %.1fs stalled in %s. Starting %s in 2.0s.",
                 recoveryLabel, stalledSeconds, stallRecoveryLabel(recoveryCause), escapeLabel);
+            if (recoveryCause == RecoveryCause.CenterStall && builder.isCenterTeleportBlockedForMonitorRecovery()) {
+                BlockPos blockedTarget = builder.getCenterTeleportBlockedTargetForMonitorRecovery();
+                info(
+                    "Center teleport blocked for %.1fs before recovery (reason=%s%s).",
+                    builder.getCenterTeleportBlockedTicksForMonitorRecovery() / 20.0,
+                    builder.getCenterTeleportBlockedReasonForMonitorRecovery(),
+                    blockedTarget == null
+                        ? ""
+                        : String.format(Locale.ROOT, ", target=(%d,%d,%d)", blockedTarget.getX(), blockedTarget.getY(), blockedTarget.getZ())
+                );
+            }
         } else {
             info("Paused recovery modules (THM HighwayBuilder / Timer / Speed) on %s %s (off by %.2f%s). Starting Baritone correction in 2.0s.",
                 target.highway(), target.direction(), target.distance(), yOffset);
@@ -1417,7 +1497,7 @@ public class THMHwyMonitor extends Module {
     }
 
     private RecoveryCause updateStallWatch(HighwayBuilderTHM builder) {
-        if (!recoverForwardStalls.get() || mc.player == null || builder == null || !builder.isActive()) {
+        if (!recoverForwardStalls.get() || mc.player == null || builder == null || !builder.isActive() || builder.isTpsThrottlePaused()) {
             resetForwardProgressWatch();
             return RecoveryCause.None;
         }
@@ -1429,6 +1509,7 @@ public class THMHwyMonitor extends Module {
         }
 
         if (builder.isInCenterState()) {
+            boolean blockedCenterTeleport = builder.isCenterTeleportBlockedForMonitorRecovery();
             if (stallWatchMode != StallWatchMode.Center || stallWatchDirection != direction) {
                 stallWatchMode = StallWatchMode.Center;
                 stallWatchDirection = direction;
@@ -1440,6 +1521,11 @@ public class THMHwyMonitor extends Module {
             int increment = Math.max(checkInterval.get(), 1);
             if (stallWatchTicks <= Integer.MAX_VALUE - increment) stallWatchTicks += increment;
             else stallWatchTicks = Integer.MAX_VALUE;
+
+            if (blockedCenterTeleport && builder.getCenterTeleportBlockedTicksForMonitorRecovery() >= BLOCKED_CENTER_STALL_TICKS) {
+                return RecoveryCause.CenterStall;
+            }
+
             return stallWatchTicks >= forwardStallTimeoutSeconds.get() * 20 ? RecoveryCause.CenterStall : RecoveryCause.None;
         }
 
@@ -1470,7 +1556,7 @@ public class THMHwyMonitor extends Module {
     }
 
     private boolean isForwardProgressWatchArmed(HighwayBuilderTHM builder) {
-        if (stallWatchMode != StallWatchMode.Forward || !recoverForwardStalls.get() || builder == null || !builder.isActive() || !builder.isInForwardState()) {
+        if (stallWatchMode != StallWatchMode.Forward || !recoverForwardStalls.get() || builder == null || !builder.isActive() || builder.isTpsThrottlePaused() || !builder.isInForwardState()) {
             return false;
         }
 
@@ -1495,6 +1581,31 @@ public class THMHwyMonitor extends Module {
         return recoveryCause == RecoveryCause.CenterStall ? "Center" : "Forward";
     }
 
+    private void queueForwardCorrectionPacket() {
+        if (!forwardCorrectionPacketWatchArmed) return;
+        pendingForwardCorrectionPackets.incrementAndGet();
+    }
+
+    private void armForwardCorrectionPacketWatch() {
+        forwardCorrectionPacketWatchArmed = true;
+    }
+
+    private void disarmForwardCorrectionPacketWatch() {
+        forwardCorrectionPacketWatchArmed = false;
+        discardPendingForwardCorrectionPackets();
+    }
+
+    private void discardPendingForwardCorrectionPackets() {
+        pendingForwardCorrectionPackets.getAndSet(0);
+    }
+
+    private void drainPendingForwardCorrectionPackets() {
+        int pendingPackets = pendingForwardCorrectionPackets.getAndSet(0);
+        for (int i = 0; i < pendingPackets; i++) {
+            ghostblockCorrectionPacketTicks.add(ghostblockObservationTicks);
+        }
+    }
+
     private static double projectedForwardCoordinate(double x, double z, HorizontalDirection direction) {
         double magnitude = Math.hypot(direction.offsetX, direction.offsetZ);
         if (magnitude <= 0.0) return 0.0;
@@ -1513,10 +1624,16 @@ public class THMHwyMonitor extends Module {
         }
 
         if (recoveryPhase != RecoveryPhase.None || cooldownTicks > 0) {
+            disarmForwardCorrectionPacketWatch();
             return GhostblockReconnectTrigger.None;
         }
 
         if (mc.player == null || mc.world == null || builder == null || !builder.isActive()) {
+            resetRubberbandGhostblockWatch();
+            return GhostblockReconnectTrigger.None;
+        }
+
+        if (builder.isTpsThrottlePaused()) {
             resetRubberbandGhostblockWatch();
             return GhostblockReconnectTrigger.None;
         }
@@ -1538,6 +1655,8 @@ public class THMHwyMonitor extends Module {
             return GhostblockReconnectTrigger.None;
         }
 
+        armForwardCorrectionPacketWatch();
+
         ghostblockObservationTicks++;
         ghostblockNoConfirmedProgressTicks++;
         if (ghostblockCandidateActive) ghostblockCandidateTicks++;
@@ -1552,6 +1671,12 @@ public class THMHwyMonitor extends Module {
             ghostblockTickSamplingActive = true;
             ghostblockRecentPeakCoordinate = Math.max(ghostblockRecentPeakCoordinate, projected);
             ghostblockHasLastProjectedCoordinate = false;
+        }
+
+        drainPendingForwardCorrectionPackets();
+        pruneForwardCorrectionPackets();
+        if (shouldTriggerForwardCorrectionRecovery()) {
+            return GhostblockReconnectTrigger.Rubberband;
         }
 
         if (ghostblockTickSamplingActive) {
@@ -1587,6 +1712,9 @@ public class THMHwyMonitor extends Module {
         ghostblockLastProjectedCoordinate = projected;
         ghostblockHasLastProjectedCoordinate = true;
         ghostblockRubberbandEventTicks.clear();
+        ghostblockCorrectionPacketTicks.clear();
+        discardPendingForwardCorrectionPackets();
+        armForwardCorrectionPacketWatch();
     }
 
     private void sampleGhostblockConfirmedProgress(double projected) {
@@ -1617,6 +1745,8 @@ public class THMHwyMonitor extends Module {
         ghostblockTickSamplingActive = false;
         ghostblockHasLastProjectedCoordinate = false;
         ghostblockRubberbandEventTicks.clear();
+        ghostblockCorrectionPacketTicks.clear();
+        discardPendingForwardCorrectionPackets();
     }
 
     private void sampleRubberbandMovement(double projected) {
@@ -1646,6 +1776,35 @@ public class THMHwyMonitor extends Module {
         ghostblockRubberbandEventTicks.removeIf(tick -> tick < oldestAllowedTick);
     }
 
+    private void pruneForwardCorrectionPackets() {
+        int oldestAllowedTick = ghostblockObservationTicks - FORWARD_CORRECTION_SLOW_WINDOW_TICKS;
+        ghostblockCorrectionPacketTicks.removeIf(tick -> tick < oldestAllowedTick);
+    }
+
+    private boolean shouldTriggerForwardCorrectionRecovery() {
+        if (ghostblockNoConfirmedProgressTicks <= 0) return false;
+
+        if (
+            ghostblockObservationTicks >= FORWARD_CORRECTION_FAST_MIN_WATCH_TICKS
+                && ghostblockNoConfirmedProgressTicks >= FORWARD_CORRECTION_FAST_MIN_WATCH_TICKS
+                && countForwardCorrectionPackets(FORWARD_CORRECTION_FAST_WINDOW_TICKS) >= FORWARD_CORRECTION_FAST_TRIGGER_COUNT
+        ) {
+            return true;
+        }
+
+        return ghostblockNoConfirmedProgressTicks >= FORWARD_CORRECTION_SLOW_MIN_STALLED_TICKS
+            && countForwardCorrectionPackets(FORWARD_CORRECTION_SLOW_WINDOW_TICKS) >= FORWARD_CORRECTION_SLOW_TRIGGER_COUNT;
+    }
+
+    private int countForwardCorrectionPackets(int windowTicks) {
+        int oldestAllowedTick = ghostblockObservationTicks - windowTicks;
+        int count = 0;
+        for (int tick : ghostblockCorrectionPacketTicks) {
+            if (tick >= oldestAllowedTick) count++;
+        }
+        return count;
+    }
+
     private void resetRubberbandGhostblockWatch() {
         ghostblockWatchActive = false;
         ghostblockWatchDirection = null;
@@ -1661,6 +1820,8 @@ public class THMHwyMonitor extends Module {
         ghostblockLastProjectedCoordinate = 0.0;
         ghostblockHasLastProjectedCoordinate = false;
         ghostblockRubberbandEventTicks.clear();
+        ghostblockCorrectionPacketTicks.clear();
+        disarmForwardCorrectionPacketWatch();
     }
 
     private boolean isReconnectRecoveryWorkActive() {
@@ -1675,6 +1836,10 @@ public class THMHwyMonitor extends Module {
 
     private boolean tryBeginRubberbandGhostblockReconnect(HighwayBuilderTHM builder, GhostblockReconnectTrigger trigger) {
         if (trigger == GhostblockReconnectTrigger.None || builder == null) return false;
+        if (builder.isTpsThrottlePaused()) {
+            resetRubberbandGhostblockWatch();
+            return false;
+        }
 
         String triggerLabel = trigger == GhostblockReconnectTrigger.Rubberband ? "rubberband" : "ghostblock";
         if (!reconnectAutomationEnabled()) {
@@ -1998,33 +2163,75 @@ public class THMHwyMonitor extends Module {
             }
 
             if (!BaritoneUtils.IS_AVAILABLE) {
-                if (tryPerformLocalStallEscape("Baritone is not available for forward-stall recovery.")) return;
-                warning("Baritone is not available. Cannot perform Baritone-based recovery.");
-                recoveryPhase = RecoveryPhase.WaitBeforeResume;
-                recoveryTicks = RECOVERY_DELAY_TICKS;
+                failBaritoneRecovery("Baritone is not available");
                 return;
             }
 
-            IBaritone baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+            if (!preparePendingRecoveryTargetForBaritoneAttempt()) return;
+
+            IBaritone baritone = getPrimaryBaritoneForRecovery();
             if (baritone == null) {
-                if (tryPerformLocalStallEscape("Unable to acquire a primary Baritone instance for forward-stall recovery.")) return;
-                warning("Unable to acquire primary Baritone instance for recovery.");
-                recoveryPhase = RecoveryPhase.WaitBeforeResume;
-                recoveryTicks = RECOVERY_DELAY_TICKS;
+                scheduleBaritoneRecoveryRetry("Unable to acquire primary Baritone instance");
                 return;
             }
 
-            baritone.getPathingBehavior().cancelEverything();
-            baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(
-                pendingCorrectionTarget.goalX(),
-                pendingCorrectionTarget.goalY(),
-                pendingCorrectionTarget.goalZ()
-            ));
+            if (!beginBaritoneStopPhase(baritone)) return;
+            return;
+        }
+
+        if (recoveryPhase == RecoveryPhase.BaritoneStopping) {
+            if (pendingCorrectionTarget == null || mc.player == null) {
+                resetRecoveryState();
+                cooldownTicks = recoveryCooldown.get();
+                return;
+            }
+
+            if (recoveryTicks > 0) {
+                recoveryTicks--;
+                return;
+            }
+
+            IBaritone baritone = getPrimaryBaritoneForRecovery();
+            if (baritone == null) {
+                scheduleBaritoneRecoveryRetry("Primary Baritone instance disappeared during stop phase");
+                return;
+            }
+
+            if (!isBaritoneStoppedForRecovery(baritone)) {
+                if (!baritoneStopCommandTried) {
+                    baritoneStopCommandTried = true;
+                    executeBaritoneStopCommand(baritone);
+                    recoveryTicks = 1;
+                    return;
+                }
+
+                scheduleBaritoneRecoveryRetry("Baritone did not settle after stop");
+                return;
+            }
+
+            if (!preparePendingRecoveryTargetForBaritoneAttempt()) return;
+
+            try {
+                baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(
+                    pendingCorrectionTarget.goalX(),
+                    pendingCorrectionTarget.goalY(),
+                    pendingCorrectionTarget.goalZ()
+                ));
+            } catch (Throwable t) {
+                scheduleBaritoneRecoveryRetry("Baritone failed to start path: " + t.getClass().getSimpleName());
+                return;
+            }
 
             baritoneStartupTicks = BARITONE_PATH_STARTUP_TICKS;
             baritoneTimeoutTicks = BARITONE_PATH_TIMEOUT_TICKS;
             recoveryPhase = RecoveryPhase.BaritoneWalking;
-            info("Baritone recovery path started to (%d, %d, %d).", pendingCorrectionTarget.goalX(), pendingCorrectionTarget.goalY(), pendingCorrectionTarget.goalZ());
+            info("Baritone recovery path attempt %d/%d started to (%d, %d, %d).",
+                baritoneRecoveryStartAttempts,
+                BARITONE_RECOVERY_MAX_START_ATTEMPTS,
+                pendingCorrectionTarget.goalX(),
+                pendingCorrectionTarget.goalY(),
+                pendingCorrectionTarget.goalZ()
+            );
             return;
         }
 
@@ -2035,12 +2242,9 @@ public class THMHwyMonitor extends Module {
                 return;
             }
 
-            IBaritone baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+            IBaritone baritone = getPrimaryBaritoneForRecovery();
             if (baritone == null) {
-                if (tryPerformLocalStallEscape("Baritone became unavailable during forward-stall recovery.")) return;
-                warning("Baritone instance became unavailable during recovery.");
-                recoveryPhase = RecoveryPhase.WaitBeforeResume;
-                recoveryTicks = RECOVERY_DELAY_TICKS;
+                scheduleBaritoneRecoveryRetry("Baritone became unavailable during recovery");
                 return;
             }
 
@@ -2048,9 +2252,7 @@ public class THMHwyMonitor extends Module {
                 if (baritoneTimeoutTicks > 0) baritoneTimeoutTicks--;
                 if (baritoneTimeoutTicks == 0) {
                     baritone.getPathingBehavior().cancelEverything();
-                    warning("Baritone recovery timed out.");
-                    recoveryPhase = RecoveryPhase.WaitBeforeResume;
-                    recoveryTicks = RECOVERY_DELAY_TICKS;
+                    scheduleBaritoneRecoveryRetry("Baritone recovery timed out");
                 }
                 return;
             }
@@ -2064,7 +2266,8 @@ public class THMHwyMonitor extends Module {
             if (distanceToGoal <= 0.85) {
                 info("Baritone arrived at recovery goal. Setting yaw in 0.5s.");
             } else {
-                warning("Baritone stopped before recovery goal (%.2f blocks away).", distanceToGoal);
+                scheduleBaritoneRecoveryRetry(String.format(Locale.ROOT, "Baritone stopped before recovery goal (%.2f blocks away)", distanceToGoal));
+                return;
             }
 
             recoveryPhase = RecoveryPhase.WaitBeforeYaw;
@@ -2100,6 +2303,122 @@ public class THMHwyMonitor extends Module {
         }
     }
 
+    private boolean beginBaritoneStopPhase(IBaritone baritone) {
+        if (baritoneRecoveryStartAttempts >= BARITONE_RECOVERY_MAX_START_ATTEMPTS) {
+            failBaritoneRecovery("Baritone recovery exhausted start attempts");
+            return false;
+        }
+
+        baritoneRecoveryStartAttempts++;
+        baritoneStopCommandTried = false;
+        stopBaritoneForRecovery(baritone);
+        recoveryPhase = RecoveryPhase.BaritoneStopping;
+        recoveryTicks = BARITONE_STOP_SETTLE_TICKS;
+        info("Stopping Baritone before recovery attempt %d/%d.", baritoneRecoveryStartAttempts, BARITONE_RECOVERY_MAX_START_ATTEMPTS);
+        return true;
+    }
+
+    private IBaritone getPrimaryBaritoneForRecovery() {
+        if (!BaritoneUtils.IS_AVAILABLE) return null;
+        try {
+            return BaritoneAPI.getProvider().getPrimaryBaritone();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private void stopBaritoneForRecovery(IBaritone baritone) {
+        if (baritone == null) return;
+        try {
+            baritone.getPathingBehavior().cancelEverything();
+        } catch (Throwable ignored) {
+        }
+        try {
+            baritone.getCustomGoalProcess().setGoal(null);
+        } catch (Throwable ignored) {
+        }
+        try {
+            baritone.getInputOverrideHandler().clearAllKeys();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private boolean isBaritoneStoppedForRecovery(IBaritone baritone) {
+        if (baritone == null) return false;
+        try {
+            boolean pathClear = !baritone.getPathingBehavior().isPathing() && !baritone.getPathingBehavior().hasPath();
+            boolean goalClear = baritone.getCustomGoalProcess().getGoal() == null;
+            return pathClear && goalClear;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private void executeBaritoneStopCommand(IBaritone baritone) {
+        if (baritone == null) return;
+        try {
+            baritone.getCommandManager().execute("stop");
+            info("Baritone recovery used command-manager stop fallback.");
+        } catch (Throwable t) {
+            warning("Baritone recovery stop fallback failed (%s).", t.getClass().getSimpleName());
+        }
+    }
+
+    private boolean preparePendingRecoveryTargetForBaritoneAttempt() {
+        if (recoveryCause != RecoveryCause.CenterStall) return true;
+
+        RecoveryTarget refreshed = createLocalStallEscapeTarget(recoveryBuilder, null);
+        if (refreshed == null) {
+            triggerMonitorSafeBuilderHardFail(recoveryBuilder, "Center stall recovery could not recompute a local 2-block escape target.");
+            return false;
+        }
+
+        if (!isSafeLocalStallEscapeTarget(refreshed)) {
+            triggerMonitorSafeBuilderHardFail(recoveryBuilder, "Center stall recovery could not perform the 2-block backstep because the recomputed destination was blocked or unsafe.");
+            return false;
+        }
+
+        pendingLocalStallEscapeTarget = refreshed;
+        pendingCorrectionTarget = refreshed;
+        return true;
+    }
+
+    private void scheduleBaritoneRecoveryRetry(String reason) {
+        if (baritoneRecoveryStartAttempts >= BARITONE_RECOVERY_MAX_START_ATTEMPTS) {
+            failBaritoneRecovery(reason);
+            return;
+        }
+
+        warning(
+            "%s. Retrying Baritone recovery in %.1fs (%d/%d attempts used).",
+            reason,
+            BARITONE_RECOVERY_RETRY_DELAY_TICKS / 20.0,
+            baritoneRecoveryStartAttempts,
+            BARITONE_RECOVERY_MAX_START_ATTEMPTS
+        );
+        baritoneStartupTicks = 0;
+        baritoneTimeoutTicks = 0;
+        baritoneStopCommandTried = false;
+        recoveryPhase = RecoveryPhase.WaitBeforeCorrection;
+        recoveryTicks = BARITONE_RECOVERY_RETRY_DELAY_TICKS;
+    }
+
+    private void failBaritoneRecovery(String reason) {
+        if (isStallRecoveryCause(recoveryCause)) {
+            triggerMonitorSafeBuilderHardFail(
+                recoveryBuilder,
+                "%s stall recovery failed: %s.",
+                stallRecoveryLabel(recoveryCause),
+                reason
+            );
+            return;
+        }
+
+        warning("Baritone recovery failed: %s.", reason);
+        recoveryPhase = RecoveryPhase.WaitBeforeResume;
+        recoveryTicks = RECOVERY_DELAY_TICKS;
+    }
+
     private void resetRecoveryState() {
         recoveryBuilder = null;
         pendingCorrectionTarget = null;
@@ -2107,6 +2426,8 @@ public class THMHwyMonitor extends Module {
         recoveryTicks = 0;
         baritoneStartupTicks = 0;
         baritoneTimeoutTicks = 0;
+        baritoneRecoveryStartAttempts = 0;
+        baritoneStopCommandTried = false;
         recoveryPhase = RecoveryPhase.None;
         recoveryCause = RecoveryCause.None;
         recoveryYawBeforeMove = Float.NaN;
@@ -2163,7 +2484,9 @@ public class THMHwyMonitor extends Module {
 
         recoveryPausedModules.add(module);
         if (module instanceof HighwayBuilderTHM builder) {
-            builder.preserveCenterSpeedBaselineForMonitorRecovery("thm-monitor-pause");
+            if (builder.isLegacyCenterSpeedOwnershipAllowed()) {
+                builder.preserveCenterSpeedBaselineForMonitorRecovery("thm-monitor-pause");
+            }
             builder.disableForMonitorRealignPause();
         } else {
             module.disable();
@@ -2610,34 +2933,6 @@ public class THMHwyMonitor extends Module {
         );
     }
 
-    private boolean tryPerformLocalStallEscape(String reason) {
-        if (!isStallRecoveryCause(recoveryCause)) return false;
-
-        if (pendingLocalStallEscapeTarget == null) {
-            triggerMonitorSafeBuilderHardFail(recoveryBuilder, stallRecoveryLabel(recoveryCause) + " stall recovery lost its local 2-block escape target.");
-            return true;
-        }
-
-        if (!isSafeLocalStallEscapeTarget(pendingLocalStallEscapeTarget)) {
-            triggerMonitorSafeBuilderHardFail(recoveryBuilder, stallRecoveryLabel(recoveryCause) + " stall recovery could not perform the 2-block backstep because the destination was blocked or unsafe.");
-            return true;
-        }
-
-        if (mc == null || mc.player == null) {
-            resetRecoveryState();
-            cooldownTicks = recoveryCooldown.get();
-            return true;
-        }
-
-        mc.player.setVelocity(0.0, mc.player.getVelocity().y, 0.0);
-        mc.player.setPosition(pendingLocalStallEscapeTarget.targetX(), mc.player.getY(), pendingLocalStallEscapeTarget.targetZ());
-        pendingCorrectionTarget = pendingLocalStallEscapeTarget;
-        recoveryPhase = RecoveryPhase.WaitBeforeYaw;
-        recoveryTicks = YAW_SET_DELAY_TICKS;
-        info("%s Applied local 2-block stall escape. Setting yaw in 0.5s.", reason);
-        return true;
-    }
-
     private boolean isSafeLocalStallEscapeTarget(RecoveryTarget target) {
         if (mc == null || mc.world == null || mc.player == null || target == null) return false;
 
@@ -2742,8 +3037,9 @@ public class THMHwyMonitor extends Module {
             return false;
         }
 
-        if (!builder.resumeFromReconnect(workingDirection, activeReconnectCycleId)) {
-            enterReconnectSafetyStop("HighwayBuilder refused reconnect resume for locked direction.");
+        HighwayBuilderTHM.ReconnectResumeResult resumeResult = builder.resumeFromReconnect(workingDirection, activeReconnectCycleId);
+        if (!resumeResult.success()) {
+            enterReconnectSafetyStop("HighwayBuilder refused reconnect resume: " + resumeResult.reason());
             return false;
         }
 
@@ -2955,6 +3251,9 @@ public class THMHwyMonitor extends Module {
     private void enterReconnectSafetyStop(String reason) {
         HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
         long cycleId = activeReconnectCycleId;
+        Text disconnectText = builder == null
+            ? Text.of("THMHwyMonitor Safety Stop: " + reason)
+            : builder.getReconnectSafetyStopText(reason, cycleId);
 
         if (builder != null) {
             builder.restoreCenterSpeedBaselineForFailedReconnect(cycleId);
@@ -2972,7 +3271,7 @@ public class THMHwyMonitor extends Module {
         clearRestartAutomationStateForTerminalStop("reconnect-safety-stop");
 
         if (hasLiveServerConnection()) {
-            mc.getNetworkHandler().getConnection().disconnect(Text.of("THMHwyMonitor Safety Stop: " + reason));
+            mc.getNetworkHandler().getConnection().disconnect(disconnectText);
             return;
         }
 
@@ -3004,9 +3303,7 @@ public class THMHwyMonitor extends Module {
     private void restorePostJoinModuleStatesIfNeeded() {
         if (activeReconnectCycleId > 0L) return;
         if (!postJoinModuleStateCaptured) return;
-        if (!isSuccessfullyConnectedToServer()) {
-            return;
-        }
+        if (!isSuccessfullyConnectedToServer()) return;
 
         Timer timer = Modules.get().get(Timer.class);
         Speed speed = Modules.get().get(Speed.class);
@@ -3333,6 +3630,7 @@ public class THMHwyMonitor extends Module {
     private enum RecoveryPhase {
         None,
         WaitBeforeCorrection,
+        BaritoneStopping,
         BaritoneWalking,
         WaitBeforeYaw,
         WaitBeforeResume

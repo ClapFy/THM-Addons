@@ -16,6 +16,16 @@ Maintain and extend THM Addons with stable module behavior, clean Meteor integra
 - Preserve existing package layout under `xyz.thm.addon`.
 - Follow current coding style (simple classes, explicit overrides, no unnecessary abstractions).
 - Prefer deterministic behavior over implicit magic.
+- Do not change world interaction mechanics unless Phillip/developer specifically asks for that mechanic change. This includes movement, placement/digging, packet timing/order, server-state gates, recovery, teleport/snap behavior, reconnect handling, lobby handling, and main-server behavior.
+
+## Planning Output
+- Plans should not include a `Testing` or `Test Plan` section unless explicitly requested.
+- Implementation summaries may still mention validation commands that were actually run and their outcome.
+
+## Local Checkpoints
+- Before meaningful code edits, create or update `local-checkpoints.md` in the repo root with a short dated entry describing the task, intended files, and rollback notes.
+- Keep checkpoints lightweight and local. Do not create git commits or tags unless explicitly requested.
+- When the working tree matches git checkout again, ignoring `local-checkpoints.md` itself, `local-checkpoints.md` may be cleared so it stays small.
 
 ## Build & Validation
 - Build:

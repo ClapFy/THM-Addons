@@ -1719,22 +1719,18 @@ public class TunnelMinerModule extends Module {
         AutoGap autoGap = Modules.get().get(AutoGap.class);
         boolean autoGapEating = autoGap != null && autoGap.isActive() && autoGap.isEating();
 
-        OffhandManager offhandManager = Modules.get().get(OffhandManager.class);
-        boolean offhandEating = offhandManager != null && offhandManager.isEating();
-
         boolean playerUsingFood = mc.player != null
             && mc.player.isUsingItem()
             && mc.player.getActiveItem().contains(DataComponentTypes.FOOD);
 
-        boolean pause = autoEatEating || autoGapEating || offhandEating || playerUsingFood;
+        boolean pause = autoEatEating || autoGapEating || playerUsingFood;
         if (pause) {
             watchdogStealthGate = "pause-eating";
             watchdogStealthGateDetails = String.format(
                 Locale.ROOT,
-                "autoEat=%s,autoGap=%s,offhand=%s,usingFood=%s",
+                "autoEat=%s,autoGap=%s,usingFood=%s",
                 autoEatEating,
                 autoGapEating,
-                offhandEating,
                 playerUsingFood
             );
         }

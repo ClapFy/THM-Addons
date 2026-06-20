@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.player.PlayerEntity;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.utils.KitbotAvailabilityTracker;
 import xyz.thm.addon.utils.KitbotChatCommandParser;
 
 import java.util.Locale;
@@ -211,12 +212,32 @@ public class KitbotFrontend extends Module {
         return RUNTIME.getCurrentDetail();
     }
 
+    public static KitbotAvailabilityTracker.AvailabilityStatus getKitbotAvailabilityStatus() {
+        return KitbotAvailabilityTracker.getInstance().getStatus();
+    }
+
+    public static KitbotAvailabilityTracker.Snapshot getKitbotAvailabilitySnapshot() {
+        return KitbotAvailabilityTracker.getInstance().getSnapshot();
+    }
+
+    public static boolean isKitbotAvailableForRestock() {
+        return KitbotAvailabilityTracker.getInstance().isAvailableForRestock();
+    }
+
     public static void addLifecycleListener(LifecycleListener listener) {
         RUNTIME.addListener(listener);
     }
 
     public static void removeLifecycleListener(LifecycleListener listener) {
         RUNTIME.removeListener(listener);
+    }
+
+    public static void addAvailabilityListener(KitbotAvailabilityTracker.Listener listener) {
+        KitbotAvailabilityTracker.getInstance().addListener(listener);
+    }
+
+    public static void removeAvailabilityListener(KitbotAvailabilityTracker.Listener listener) {
+        KitbotAvailabilityTracker.getInstance().removeListener(listener);
     }
 
     private ManagedRequest createManualRequest() {
