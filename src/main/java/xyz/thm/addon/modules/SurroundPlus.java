@@ -107,6 +107,13 @@ public class SurroundPlus extends Module {
         .build()
     );
 
+    private final Setting<Boolean> airplace = sgPlace.add(new BoolSetting.Builder()
+        .name("airplace")
+        .description("Places blocks even when no adjacent solid face exists (sends UP as hit face). Works in both packet and normal mode.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> support = sgPlace.add(new BoolSetting.Builder()
         .name("support")
         .description("Places a block under your feet if open air.")
@@ -385,7 +392,7 @@ public class SurroundPlus extends Module {
 
     private boolean placeBlock(BlockPos pos, FindItemResult item) {
         if (packet.get()) {
-            if (!PacketPlaceUtils.placeBlockPacket(pos, item, rotate.get(), 50)) return false;
+            if (!PacketPlaceUtils.placeBlockPacket(pos, item, rotate.get(), 50, airplace.get())) return false;
             renderMap.put(pos, System.currentTimeMillis());
             packetPlacedAt.put(pos, System.currentTimeMillis());
             return true;
@@ -397,6 +404,16 @@ public class SurroundPlus extends Module {
             packetPlacedAt.put(pos, System.currentTimeMillis());
             return true;
         }
+
+        // Airplace fallback for normal mode: no adjacent face found, send packet directly
+        if (airplace.get() && BlockUtils.getPlaceSide(pos) == null && BlockUtils.canPlace(pos)) {
+            if (PacketPlaceUtils.placeBlockPacket(pos, item, rotate.get(), 50, true)) {
+                renderMap.put(pos, System.currentTimeMillis());
+                packetPlacedAt.put(pos, System.currentTimeMillis());
+                return true;
+            }
+        }
+
         return false;
     }
 
