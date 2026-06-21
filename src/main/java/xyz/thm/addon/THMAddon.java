@@ -162,6 +162,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         MOD_META = FabricLoader.getInstance().getModContainer(MOD_ID).orElseThrow().getMetadata();
         ServerStatusHandler.getInstance();
         ServerReconnectService.getInstance();
+        KitbotAvailabilityTracker.getInstance();
         KitbotChatRouter.getInstance();
         ThmMembers.initialize();
 
@@ -175,7 +176,6 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new Nuker());
         Modules.get().add(new PaketLimiter());
         Modules.get().add(new PacketLoggerTHM());
-        Modules.get().add(new OffhandManager());
         Modules.get().add(new HotbarManager());
         Modules.get().add(new UnfocusedFpsLimiter());
         Modules.get().add(new AntiConcrete());

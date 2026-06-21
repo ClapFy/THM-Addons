@@ -268,6 +268,18 @@ val generateAPIUtils by tasks.registering {
     }
 }
 
+sourceSets {
+    main {
+        java {
+            exclude("xyz/thm/addon/modules/HandshakeHostTest.java")
+            exclude("xyz/thm/addon/mixin/ClientConnectionMixin.java")
+            exclude("xyz/thm/addon/mixin/HandshakeC2SPacketMixin.java")
+            exclude("xyz/thm/addon/mixin/MultiplayerScreenRouteButtonMixin.java")
+            exclude("xyz/thm/addon/mixin/TitleScreenFastestRouteButtonMixin.java")
+        }
+    }
+}
+
 tasks {
     processResources {
         val propertyMap = mapOf(
@@ -301,6 +313,12 @@ tasks {
 
         exclude("xyz/thm/addon/modules/ElytraUAV.class")
         exclude("xyz/thm/addon/modules/ElytraUAV$*.class")
+        exclude("xyz/thm/addon/modules/HandshakeHostTest.class")
+        exclude("xyz/thm/addon/modules/HandshakeHostTest$*.class")
+        exclude("xyz/thm/addon/mixin/ClientConnectionMixin.class")
+        exclude("xyz/thm/addon/mixin/HandshakeC2SPacketMixin.class")
+        exclude("xyz/thm/addon/mixin/MultiplayerScreenRouteButtonMixin.class")
+        exclude("xyz/thm/addon/mixin/TitleScreenFastestRouteButtonMixin.class")
 
         from("LICENSE") {
             rename { "${it}_${inputs.properties["archivesName"]}" }

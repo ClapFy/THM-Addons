@@ -28,6 +28,7 @@
     "accessor.WSectionAccessor",
     "meteor.AnchorAuraMixin",
     "meteor.AutoEatMixin",
+    "meteor.AutoLogMixin",
     "meteor.AutoGapMixin",
     "meteor.BetterTabMixin",
     "meteor.BetterTooltipsMixin",
@@ -46,6 +47,7 @@
     "meteor.NoSlowMixin",
     "meteor.NotifierMixin",
     "meteor.ScaffoldMixin",
+    "meteor.SpeedMixin",
     "meteor.TimerMixin"
   ]
 }

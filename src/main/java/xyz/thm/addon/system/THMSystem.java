@@ -180,7 +180,8 @@ public class THMSystem extends System<THMSystem> {
                 hwBuilder.blocksToPlace.set(java.util.List.of(Blocks.OBSIDIAN));
                 hwBuilder.mineAboveRailings.set(true);
                 hwBuilder.railings.set(true);
-                hwBuilder.kitbotRestockKit.set(HighwayBuilderTHM.KitbotRestockKit.Highway);
+                hwBuilder.kitbotEChestRestockKit.set(HighwayBuilderTHM.KitbotEChestRestockKit.Highway);
+                hwBuilder.kitbotPickaxeRestockKit.set(HighwayBuilderTHM.KitbotPickaxeRestockKit.Highway);
             }
             case HighwayDigging -> {
                 // Save original values before changing
@@ -195,7 +196,7 @@ public class THMSystem extends System<THMSystem> {
                 hwBuilder.height.set(4);
                 hwBuilder.mineAboveRailings.set(true);
                 hwBuilder.railings.set(true);
-                hwBuilder.kitbotRestockKit.set(HighwayBuilderTHM.KitbotRestockKit.Pickaxe);
+                hwBuilder.kitbotPickaxeRestockKit.set(HighwayBuilderTHM.KitbotPickaxeRestockKit.Pickaxe);
             }
         }
         if (toggleModules.get() && !hwBuilder.isActive()) {

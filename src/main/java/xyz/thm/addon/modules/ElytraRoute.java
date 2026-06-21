@@ -2089,7 +2089,6 @@ public class ElytraRoute extends Module {
     private boolean isActivelyEating() {
         return isAutoEatEating()
             || isAutoGapEating()
-            || shouldPauseForOffhandEating()
             || shouldPauseForActiveFoodUse();
     }
 
@@ -2195,11 +2194,6 @@ public class ElytraRoute extends Module {
         if (stack == null || stack.isEmpty()) return false;
         Item item = stack.getItem();
         return item == Items.GOLDEN_APPLE || item == Items.ENCHANTED_GOLDEN_APPLE;
-    }
-
-    private boolean shouldPauseForOffhandEating() {
-        OffhandManager offhandManager = Modules.get().get(OffhandManager.class);
-        return offhandManager != null && offhandManager.isEating();
     }
 
     private boolean shouldPauseForActiveFoodUse() {
