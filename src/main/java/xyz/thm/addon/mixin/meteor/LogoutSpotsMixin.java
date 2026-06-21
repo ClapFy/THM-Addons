@@ -1,6 +1,7 @@
 package xyz.thm.addon.mixin.meteor;
 
 import com.mojang.authlib.GameProfile;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.BoolSetting;
@@ -53,6 +54,11 @@ public abstract class LogoutSpotsMixin {
             .visible(thm$improvedLogoutShape::get)
             .build()
         );
+    }
+
+    @Inject(method = "onRender2D", at = @At("HEAD"), cancellable = true)
+    private void thm$cancelNametag(Render2DEvent event, CallbackInfo ci) {
+        ci.cancel();
     }
 
     @Inject(method = "onDeactivate", at = @At("TAIL"))
