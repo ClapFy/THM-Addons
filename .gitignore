@@ -49,5 +49,4 @@ src/main/java/xyz/thm/addon/modules/MCMapSender.java
 CLAUDE.md
 src/main/java/xyz/thm/addon/modules/SpearTargetPlus.java
 src/main/java/xyz/thm/addon/modules/WebmapModule.java
-secrets.properties.example
 src/main/java/xyz/thm/addon/utils/APIUtils.java
