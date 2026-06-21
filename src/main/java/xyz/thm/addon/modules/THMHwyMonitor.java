@@ -25,6 +25,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.DisconnectedScreen;
 import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.util.ScreenshotRecorder;
+import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
@@ -37,8 +38,10 @@ import xyz.thm.addon.utils.ThmMembers;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -99,6 +102,9 @@ public class THMHwyMonitor extends Module {
     private static final int FORWARD_CORRECTION_SLOW_WINDOW_TICKS = 20 * 20;
     private static final int FORWARD_CORRECTION_SLOW_TRIGGER_COUNT = 60;
     private static final int FORWARD_CORRECTION_SLOW_MIN_STALLED_TICKS = 10 * 20;
+    private static final int FORWARD_PACKET_DESYNC_WINDOW_TICKS = 60;
+    private static final int FORWARD_PACKET_DESYNC_MIN_ACTIONS = 20;
+    private static final int FORWARD_PACKET_DESYNC_MAX_DISTINCT_TARGETS = 16;
     private static final double GHOSTBLOCK_CONFIRMED_PROGRESS_BLOCKS = 0.75;
     private static final double RUBBERBAND_BACKTRACK_BLOCKS = 1.5;
 
@@ -164,9 +170,9 @@ public class THMHwyMonitor extends Module {
     private final Setting<Integer> forwardStallTimeoutSeconds = sgGeneral.add(new IntSetting.Builder()
         .name("forward-stall-timeout-seconds")
         .description("Seconds of no meaningful HighwayBuilder Forward progress or Center transition before the forced stall escape begins.")
-        .defaultValue(120)
-        .range(15, 900)
-        .sliderRange(30, 300)
+        .defaultValue(20)
+        .range(10, 900)
+        .sliderRange(10, 300)
         .visible(() -> autoRecover.get() && recoverForwardStalls.get())
         .build()
     );
@@ -298,6 +304,13 @@ public class THMHwyMonitor extends Module {
     private final List<Integer> ghostblockCorrectionPacketTicks = new ArrayList<>();
     private final AtomicInteger pendingForwardCorrectionPackets = new AtomicInteger();
     private volatile boolean forwardCorrectionPacketWatchArmed;
+    private final List<ForwardDestroyPacketSample> forwardDestroyPacketSamples = new ArrayList<>();
+    private HorizontalDirection forwardPacketDesyncDirection;
+    private boolean forwardPacketDesyncEpisodeActive;
+    private boolean forwardPacketDesyncWiggleUsed;
+    private boolean forwardPacketDesyncAwaitingRetry;
+    private int forwardPacketDesyncEpisodeId;
+    private String forwardPacketDesyncLastSummary = "";
 
     private record AxisProbeResult(
         boolean allSamplesLoaded,
@@ -326,6 +339,22 @@ public class THMHwyMonitor extends Module {
             return direction != null;
         }
     }
+
+    private record ForwardDestroyPacketSample(
+        int tick,
+        BlockPos pos,
+        PlayerActionC2SPacket.Action action
+    ) {}
+
+    private record ForwardPacketDesyncWindow(
+        int actions,
+        int starts,
+        int aborts,
+        int distinctTargets,
+        int firstTick,
+        int lastTick,
+        String summary
+    ) {}
 
     private record HighwaySegment(
         String highway,
@@ -505,6 +534,7 @@ public class THMHwyMonitor extends Module {
         recoveryYawBeforeMove = Float.NaN;
         resetForwardProgressWatch();
         resetRubberbandGhostblockWatch();
+        resetForwardPacketDesyncEpisode("activate");
         clearPendingAlignmentGateRequest();
         clearPostRejoinDirectionGateState();
         resetReconnectAutomationState(true);
@@ -555,6 +585,7 @@ public class THMHwyMonitor extends Module {
         recoveryYawBeforeMove = Float.NaN;
         resetForwardProgressWatch();
         resetRubberbandGhostblockWatch();
+        resetForwardPacketDesyncEpisode("deactivate");
         clearPendingAlignmentGateRequest();
         clearPostRejoinDirectionGateState();
         unregisterReconnectServiceListeners();
@@ -738,6 +769,12 @@ public class THMHwyMonitor extends Module {
         queueForwardCorrectionPacket();
     }
 
+    @EventHandler
+    private void onPacketSend(PacketEvent.Send event) {
+        if (!(event.packet instanceof PlayerActionC2SPacket packet)) return;
+        recordForwardDestroyPacket(packet);
+    }
+
     @EventHandler(priority = 1000)
     private void onTickCaptureYawBeforeOtherModules(TickEvent.Pre event) {
         if (mc == null || mc.player == null) return;
@@ -780,6 +817,7 @@ public class THMHwyMonitor extends Module {
         wasConnectedLastTick = false;
         pendingDisconnectScreenEvidenceCheck = false;
         pendingDisconnectScreenEvidenceUntilMs = 0L;
+        resetForwardPacketDesyncEpisode("game-left");
         abortActiveRecoveryForNonMainServer("game-left");
 
         if (intentionalSafetyDisconnectArmed) {
@@ -1606,6 +1644,155 @@ public class THMHwyMonitor extends Module {
         }
     }
 
+    private void recordForwardDestroyPacket(PlayerActionC2SPacket packet) {
+        PlayerActionC2SPacket.Action action = packet.getAction();
+        if (action != PlayerActionC2SPacket.Action.START_DESTROY_BLOCK
+            && action != PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK) {
+            return;
+        }
+
+        if (mc == null || mc.player == null) return;
+
+        HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
+        if (builder == null || !builder.isActive() || !builder.isInForwardState() || builder.isTpsThrottlePaused()) return;
+
+        HorizontalDirection direction = builder.getWorkingDirection();
+        if (direction == null) return;
+
+        if (forwardPacketDesyncDirection != null && forwardPacketDesyncDirection != direction) {
+            resetForwardPacketDesyncEpisode("direction-change:" + forwardPacketDesyncDirection.name + "->" + direction.name);
+        }
+
+        if (!forwardPacketDesyncEpisodeActive) {
+            forwardPacketDesyncEpisodeActive = true;
+            forwardPacketDesyncDirection = direction;
+            forwardPacketDesyncEpisodeId++;
+            forwardPacketDesyncWiggleUsed = false;
+            forwardPacketDesyncAwaitingRetry = false;
+            forwardPacketDesyncLastSummary = "";
+        }
+
+        int tick = mc.player.age;
+        forwardDestroyPacketSamples.add(new ForwardDestroyPacketSample(tick, packet.getPos().toImmutable(), action));
+        pruneForwardPacketDesyncSamples(tick);
+    }
+
+    private void pruneForwardPacketDesyncSamples(int tick) {
+        int oldestAllowedTick = tick - FORWARD_PACKET_DESYNC_WINDOW_TICKS;
+        forwardDestroyPacketSamples.removeIf(sample -> sample.tick < oldestAllowedTick);
+    }
+
+    private void resetForwardPacketDesyncEpisode(String reason) {
+        boolean logReset = forwardPacketDesyncWiggleUsed
+            || forwardPacketDesyncAwaitingRetry
+            || (forwardPacketDesyncLastSummary != null && !forwardPacketDesyncLastSummary.isBlank());
+        if (logReset) {
+            info(
+                "Forward packet-desync episode reset (%s, episode=%d, wiggleUsed=%s, awaitingRetry=%s, samples=%d, last=%s).",
+                reason,
+                forwardPacketDesyncEpisodeId,
+                forwardPacketDesyncWiggleUsed,
+                forwardPacketDesyncAwaitingRetry,
+                forwardDestroyPacketSamples.size(),
+                forwardPacketDesyncLastSummary == null || forwardPacketDesyncLastSummary.isBlank() ? "none" : forwardPacketDesyncLastSummary
+            );
+        }
+
+        forwardDestroyPacketSamples.clear();
+        forwardPacketDesyncDirection = null;
+        forwardPacketDesyncEpisodeActive = false;
+        forwardPacketDesyncWiggleUsed = false;
+        forwardPacketDesyncAwaitingRetry = false;
+        forwardPacketDesyncLastSummary = "";
+    }
+
+    private void clearForwardPacketDesyncSamples(String reason) {
+        if (!forwardDestroyPacketSamples.isEmpty() && (forwardPacketDesyncWiggleUsed || forwardPacketDesyncAwaitingRetry)) {
+            info(
+                "Forward packet-desync sample window cleared (%s, episode=%d, samples=%d, wiggleUsed=%s, awaitingRetry=%s).",
+                reason,
+                forwardPacketDesyncEpisodeId,
+                forwardDestroyPacketSamples.size(),
+                forwardPacketDesyncWiggleUsed,
+                forwardPacketDesyncAwaitingRetry
+            );
+        }
+        forwardDestroyPacketSamples.clear();
+        forwardPacketDesyncLastSummary = "";
+    }
+
+    private ForwardPacketDesyncWindow currentForwardPacketDesyncWindow() {
+        if (mc == null || mc.player == null) return null;
+        if (forwardDestroyPacketSamples.isEmpty()) return null;
+        pruneForwardPacketDesyncSamples(mc.player.age);
+
+        Map<BlockPos, int[]> countsByPos = new HashMap<>();
+        int starts = 0;
+        int aborts = 0;
+        int firstTick = Integer.MAX_VALUE;
+        int lastTick = Integer.MIN_VALUE;
+
+        for (ForwardDestroyPacketSample sample : forwardDestroyPacketSamples) {
+            firstTick = Math.min(firstTick, sample.tick);
+            lastTick = Math.max(lastTick, sample.tick);
+
+            int[] counts = countsByPos.computeIfAbsent(sample.pos, ignored -> new int[2]);
+            if (sample.action == PlayerActionC2SPacket.Action.START_DESTROY_BLOCK) {
+                starts++;
+                counts[0]++;
+            } else if (sample.action == PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK) {
+                aborts++;
+                counts[1]++;
+            }
+        }
+
+        if (firstTick == Integer.MAX_VALUE) return null;
+        int actions = starts + aborts;
+        StringBuilder targets = new StringBuilder();
+        int written = 0;
+        for (Map.Entry<BlockPos, int[]> entry : countsByPos.entrySet()) {
+            if (written++ > 0) targets.append(';');
+            BlockPos pos = entry.getKey();
+            int[] counts = entry.getValue();
+            targets.append('(')
+                .append(pos.getX()).append(',')
+                .append(pos.getY()).append(',')
+                .append(pos.getZ()).append(")=")
+                .append(counts[0]).append('/')
+                .append(counts[1]);
+        }
+
+        String summary = String.format(
+            Locale.ROOT,
+            "episode=%d actions=%d starts=%d aborts=%d distinct=%d firstTick=%d lastTick=%d noProgressTicks=%d targets=%s",
+            forwardPacketDesyncEpisodeId,
+            actions,
+            starts,
+            aborts,
+            countsByPos.size(),
+            firstTick,
+            lastTick,
+            ghostblockNoConfirmedProgressTicks,
+            targets
+        );
+
+        return new ForwardPacketDesyncWindow(actions, starts, aborts, countsByPos.size(), firstTick, lastTick, summary);
+    }
+
+    private boolean shouldTriggerForwardPacketDesync() {
+        if (!forwardPacketDesyncEpisodeActive) return false;
+        if (forwardPacketDesyncAwaitingRetry) return false;
+        if (ghostblockNoConfirmedProgressTicks < FORWARD_PACKET_DESYNC_WINDOW_TICKS) return false;
+
+        ForwardPacketDesyncWindow window = currentForwardPacketDesyncWindow();
+        if (window == null) return false;
+        if (window.actions() < FORWARD_PACKET_DESYNC_MIN_ACTIONS) return false;
+        if (window.distinctTargets() > FORWARD_PACKET_DESYNC_MAX_DISTINCT_TARGETS) return false;
+
+        forwardPacketDesyncLastSummary = window.summary();
+        return true;
+    }
+
     private static double projectedForwardCoordinate(double x, double z, HorizontalDirection direction) {
         double magnitude = Math.hypot(direction.offsetX, direction.offsetZ);
         if (magnitude <= 0.0) return 0.0;
@@ -1615,21 +1802,25 @@ public class THMHwyMonitor extends Module {
     private GhostblockReconnectTrigger updateRubberbandGhostblockWatch(HighwayBuilderTHM builder) {
         if (!autoRecover.get() || !recoverRubberbandGhostblocks.get()) {
             resetRubberbandGhostblockWatch();
+            resetForwardPacketDesyncEpisode("rubberband-ghostblock-disabled");
             return GhostblockReconnectTrigger.None;
         }
 
         if (isReconnectRecoveryWorkActive()) {
             resetRubberbandGhostblockWatch();
+            resetForwardPacketDesyncEpisode("reconnect-work-active");
             return GhostblockReconnectTrigger.None;
         }
 
         if (recoveryPhase != RecoveryPhase.None || cooldownTicks > 0) {
             disarmForwardCorrectionPacketWatch();
+            if (recoveryPhase != RecoveryPhase.None) resetForwardPacketDesyncEpisode("monitor-recovery-active");
             return GhostblockReconnectTrigger.None;
         }
 
         if (mc.player == null || mc.world == null || builder == null || !builder.isActive()) {
             resetRubberbandGhostblockWatch();
+            resetForwardPacketDesyncEpisode("builder-inactive");
             return GhostblockReconnectTrigger.None;
         }
 
@@ -1646,7 +1837,18 @@ public class THMHwyMonitor extends Module {
         HorizontalDirection direction = builder.getWorkingDirection();
         if (direction == null) {
             resetRubberbandGhostblockWatch();
+            resetForwardPacketDesyncEpisode("direction-null");
             return GhostblockReconnectTrigger.None;
+        }
+
+        if (forwardPacketDesyncDirection != null && forwardPacketDesyncDirection != direction) {
+            resetForwardPacketDesyncEpisode("direction-change:" + forwardPacketDesyncDirection.name + "->" + direction.name);
+        }
+
+        if (forwardPacketDesyncAwaitingRetry) {
+            forwardPacketDesyncAwaitingRetry = false;
+            clearForwardPacketDesyncSamples("returned-to-forward-after-wiggle");
+            info("Forward packet-desync episode %d returned to Forward after wiggle; resuming packet fingerprinting before reconnect fallback.", forwardPacketDesyncEpisodeId);
         }
 
         double projected = projectedForwardCoordinate(mc.player.getX(), mc.player.getZ(), direction);
@@ -1677,6 +1879,10 @@ public class THMHwyMonitor extends Module {
         pruneForwardCorrectionPackets();
         if (shouldTriggerForwardCorrectionRecovery()) {
             return GhostblockReconnectTrigger.Rubberband;
+        }
+
+        if (shouldTriggerForwardPacketDesync()) {
+            return GhostblockReconnectTrigger.PacketDesync;
         }
 
         if (ghostblockTickSamplingActive) {
@@ -1736,6 +1942,7 @@ public class THMHwyMonitor extends Module {
     }
 
     private void confirmGhostblockProgress(double projected) {
+        resetForwardPacketDesyncEpisode("confirmed-forward-progress");
         ghostblockConfirmedBestCoordinate = Math.max(ghostblockConfirmedBestCoordinate, projected);
         ghostblockRecentPeakCoordinate = ghostblockConfirmedBestCoordinate;
         ghostblockNoConfirmedProgressTicks = 0;
@@ -1841,7 +2048,54 @@ public class THMHwyMonitor extends Module {
             return false;
         }
 
-        String triggerLabel = trigger == GhostblockReconnectTrigger.Rubberband ? "rubberband" : "ghostblock";
+        String triggerLabel = switch (trigger) {
+            case Rubberband -> "rubberband";
+            case PacketDesync -> "packet-desync";
+            case LongNoProgress -> "ghostblock";
+            case None -> "none";
+        };
+
+        if (trigger == GhostblockReconnectTrigger.PacketDesync) {
+            ForwardPacketDesyncWindow window = currentForwardPacketDesyncWindow();
+            String summary = window == null
+                ? (forwardPacketDesyncLastSummary == null || forwardPacketDesyncLastSummary.isBlank() ? "unavailable" : forwardPacketDesyncLastSummary)
+                : window.summary();
+            int actions = window == null ? 0 : window.actions();
+            int distinctTargets = window == null ? 0 : window.distinctTargets();
+            HighwayBuilderTHM.DesyncWiggleProbeResult probeResult = builder.tryStartForwardDesyncWiggleProbe(
+                forwardPacketDesyncEpisodeId,
+                summary,
+                actions,
+                distinctTargets,
+                FORWARD_PACKET_DESYNC_WINDOW_TICKS
+            );
+
+            info(
+                "Forward packet-desync monitor handoff result=%s episode=%d wiggleUsed=%s awaitingRetry=%s summary=%s.",
+                probeResult,
+                forwardPacketDesyncEpisodeId,
+                forwardPacketDesyncWiggleUsed,
+                forwardPacketDesyncAwaitingRetry,
+                summary
+            );
+
+            if (probeResult == HighwayBuilderTHM.DesyncWiggleProbeResult.Started) {
+                forwardPacketDesyncWiggleUsed = true;
+                forwardPacketDesyncAwaitingRetry = true;
+                clearForwardPacketDesyncSamples("wiggle-started");
+                return true;
+            }
+
+            if (probeResult == HighwayBuilderTHM.DesyncWiggleProbeResult.AlreadyRunning) {
+                forwardPacketDesyncAwaitingRetry = true;
+                return true;
+            }
+
+            if (probeResult != HighwayBuilderTHM.DesyncWiggleProbeResult.AlreadyUsed) {
+                warning("Forward packet-desync wiggle probe was unavailable; continuing existing reconnect recovery path.");
+            }
+        }
+
         if (!reconnectAutomationEnabled()) {
             warning("Forward %s recovery detected, but THMHwyMonitor auto-reconnect is disabled. Leaving HighwayBuilder running.", triggerLabel);
             resetRubberbandGhostblockWatch();
@@ -1859,9 +2113,12 @@ public class THMHwyMonitor extends Module {
             return false;
         }
 
-        long cycleId = trigger == GhostblockReconnectTrigger.Rubberband
-            ? armReconnectCycleSeconds(RUBBERBAND_RECONNECT_DELAY_SECONDS, "forward-rubberband", true)
-            : armReconnectCycle("forward-ghostblock", true);
+        long cycleId = switch (trigger) {
+            case Rubberband -> armReconnectCycleSeconds(RUBBERBAND_RECONNECT_DELAY_SECONDS, "forward-rubberband", true);
+            case PacketDesync -> armReconnectCycle("forward-packet-desync", true);
+            case LongNoProgress -> armReconnectCycle("forward-ghostblock", true);
+            case None -> armReconnectCycle("forward-unknown", true);
+        };
         reconnectOwner = ReconnectOwner.HighwayBuilder;
         rearmNormalReconnectAfterForwardReconnectResume = true;
 
@@ -1872,6 +2129,7 @@ public class THMHwyMonitor extends Module {
 
         restartRecoveryActive = true;
         resetRubberbandGhostblockWatch();
+        resetForwardPacketDesyncEpisode("monitor-reconnect:" + triggerLabel);
 
         if (!builder.prepareForMonitorReconnectPause(cycleId)) {
             warning("Forward %s recovery aborted: unable to establish HighwayBuilder reconnect baseline.", triggerLabel);
@@ -1910,7 +2168,12 @@ public class THMHwyMonitor extends Module {
 
     private boolean verifyForwardReconnectPreflight(long cycleId, GhostblockReconnectTrigger trigger) {
         ServerReconnectService.ReconnectPreflight preflight = reconnectService().getReconnectPreflight();
-        String triggerLabel = trigger == GhostblockReconnectTrigger.Rubberband ? "rubberband" : "ghostblock";
+        String triggerLabel = switch (trigger) {
+            case Rubberband -> "rubberband";
+            case PacketDesync -> "packet-desync";
+            case LongNoProgress -> "ghostblock";
+            case None -> "unknown";
+        };
 
         if (!preflight.serviceArmed() || preflight.cycleId() != cycleId) {
             warning("Forward %s recovery aborted: reconnect service was not armed for cycle %d.", triggerLabel, cycleId);
@@ -3652,6 +3915,7 @@ public class THMHwyMonitor extends Module {
     private enum GhostblockReconnectTrigger {
         None,
         Rubberband,
+        PacketDesync,
         LongNoProgress
     }
 

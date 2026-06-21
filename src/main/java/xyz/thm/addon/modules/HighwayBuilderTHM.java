@@ -66,7 +66,10 @@ import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.item.*;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
+import net.minecraft.network.packet.s2c.play.EntityPositionSyncS2CPacket;
 import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
+import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.Slot;
@@ -159,6 +162,12 @@ public class HighwayBuilderTHM extends Module {
     private static final int ENCLOSURE_PLACEMENT_CONFIRM_MAX_ATTEMPTS = 3;
     private static final int ENCLOSURE_PLACEMENT_RECENTER_AFTER_ATTEMPTS = 2;
     private static final int ENCLOSURE_PLACEMENT_CONFIRM_WAIT_TICKS = 2;
+    private static final int ENCLOSURE_PLACEMENT_DESYNC_MIN_INTERACT_PACKETS = 2;
+    private static final int DESYNC_WIGGLE_LEFT_TICKS = 4;
+    private static final int DESYNC_WIGGLE_RIGHT_TICKS = 4;
+    private static final int DESYNC_WIGGLE_SETTLE_TICKS = 2;
+    private static final int DESYNC_WIGGLE_TOTAL_TICKS = DESYNC_WIGGLE_LEFT_TICKS + DESYNC_WIGGLE_RIGHT_TICKS + DESYNC_WIGGLE_SETTLE_TICKS;
+    private static final double DESYNC_WIGGLE_SNAP_DISTANCE = 0.5;
     private static final double THM_LATERAL_SPEED = 0.5;
     private static final double THM_CENTER_TELEPORT_SLOWDOWN_DISTANCE = 1.0;
     private static final double THM_CENTER_TELEPORT_SLOWDOWN_MULTIPLIER = 0.5;
@@ -299,6 +308,18 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
+    public enum DesyncWiggleProbeResult {
+        Started,
+        AlreadyRunning,
+        AlreadyUsed,
+        Unavailable
+    }
+
+    private enum DesyncWiggleReason {
+        ForwardPacketDesync,
+        EnclosurePlacementDesync
+    }
+
     private static final class KitbotFootprint {
         private final LinkedHashMap<BlockPos, KitbotStructureBlockType> requiredBlocks = new LinkedHashMap<>();
         private final LinkedHashSet<BlockPos> requiredAir = new LinkedHashSet<>();
@@ -309,6 +330,56 @@ public class HighwayBuilderTHM extends Module {
 
         private void addRequiredAir(BlockPos pos) {
             requiredAir.add(pos.toImmutable());
+        }
+    }
+
+    private static final class DesyncWiggleProbe {
+        private final DesyncWiggleReason reason;
+        private final State startState;
+        private final State resumeState;
+        private final BlockPos targetPos;
+        private final String label;
+        private final String sourceSummary;
+        private final int forwardEpisodeId;
+        private final int packetActions;
+        private final int distinctTargets;
+        private final int windowTicks;
+        private final double startX;
+        private final double startY;
+        private final double startZ;
+        private int tick;
+        private boolean correctionPacketObserved;
+        private String correctionPacketType = "";
+        private int correctionEntityId = Integer.MIN_VALUE;
+
+        private DesyncWiggleProbe(
+            DesyncWiggleReason reason,
+            State startState,
+            State resumeState,
+            BlockPos targetPos,
+            String label,
+            String sourceSummary,
+            int forwardEpisodeId,
+            int packetActions,
+            int distinctTargets,
+            int windowTicks,
+            double startX,
+            double startY,
+            double startZ
+        ) {
+            this.reason = reason;
+            this.startState = startState;
+            this.resumeState = resumeState;
+            this.targetPos = targetPos == null ? null : targetPos.toImmutable();
+            this.label = label == null ? "" : label;
+            this.sourceSummary = sourceSummary == null ? "" : sourceSummary;
+            this.forwardEpisodeId = forwardEpisodeId;
+            this.packetActions = packetActions;
+            this.distinctTargets = distinctTargets;
+            this.windowTicks = windowTicks;
+            this.startX = startX;
+            this.startY = startY;
+            this.startZ = startZ;
         }
     }
 
@@ -1280,6 +1351,13 @@ public class HighwayBuilderTHM extends Module {
     private int pendingEnclosurePlacementAttempts;
     private int pendingEnclosurePlacementConfirmWaitTicks;
     private boolean pendingEnclosurePlacementRecentered;
+    private BlockPos pendingEnclosurePlacementPacketTarget;
+    private int pendingEnclosurePlacementInteractPackets;
+    private int pendingEnclosurePlacementFirstPacketAge;
+    private int pendingEnclosurePlacementLastPacketAge;
+    private BlockPos enclosureDesyncWiggleUsedTarget;
+    private DesyncWiggleProbe desyncWiggleProbe;
+    private int lastForwardDesyncWiggleEpisodeId = Integer.MIN_VALUE;
     private CenterSpeedSnapshot centerSpeedSnapshot;
     private boolean centerSpeedSnapshotOwned;
     private boolean centerSpeedOverrideActive;
@@ -1858,6 +1936,8 @@ public class HighwayBuilderTHM extends Module {
         placeFractionCarry = 0.0;
         resetEnclosurePlaceCredit();
         clearEnclosurePlacementConfirmation();
+        clearDesyncWiggleProbe("module-activate");
+        lastForwardDesyncWiggleEpisodeId = Integer.MIN_VALUE;
 
         restockTask.complete();
         restockWatchdog.reset("module-activate");
@@ -1928,6 +2008,7 @@ public class HighwayBuilderTHM extends Module {
     public void onDeactivate() {
         KitbotFrontend.removeLifecycleListener(kitbotRestockLifecycleListener);
         if (input != null) input.stop();
+        clearDesyncWiggleProbe("module-deactivate");
         clearMainServerResumeGate();
         resetEatingPauseWatchdog();
         releaseActiveDoubleMineRuntime(true);
@@ -1944,6 +2025,7 @@ public class HighwayBuilderTHM extends Module {
         resetTpsThrottleRuntime();
         resetEnclosurePlaceCredit();
         clearEnclosurePlacementConfirmation();
+        lastForwardDesyncWiggleEpisodeId = Integer.MIN_VALUE;
         restockWatchdog.reset("module-deactivate");
         boolean isMonitorPauseDeactivate = monitorPauseDeactivateArmed;
         boolean isReconnectFailureDeactivate = reconnectFailureDeactivateArmed;
@@ -2626,6 +2708,226 @@ public class HighwayBuilderTHM extends Module {
 
     public boolean isInCenterState() {
         return state == State.Center;
+    }
+
+    public boolean isDesyncWiggleProbeActive() {
+        return desyncWiggleProbe != null;
+    }
+
+    public DesyncWiggleProbeResult tryStartForwardDesyncWiggleProbe(int episodeId, String sourceSummary, int packetActions, int distinctTargets, int windowTicks) {
+        if (desyncWiggleProbe != null) return DesyncWiggleProbeResult.AlreadyRunning;
+        if (!isActive() || mc.player == null || mc.world == null || input == null || !isInForwardState() || dir == null || isTpsThrottlePaused()) {
+            return DesyncWiggleProbeResult.Unavailable;
+        }
+        if (lastForwardDesyncWiggleEpisodeId == episodeId) return DesyncWiggleProbeResult.AlreadyUsed;
+
+        lastForwardDesyncWiggleEpisodeId = episodeId;
+        releaseActiveDoubleMineRuntime(true);
+        startDesyncWiggleProbe(
+            DesyncWiggleReason.ForwardPacketDesync,
+            State.Forward,
+            null,
+            "forward-packet-desync",
+            sourceSummary,
+            episodeId,
+            packetActions,
+            distinctTargets,
+            windowTicks
+        );
+        return DesyncWiggleProbeResult.Started;
+    }
+
+    private boolean tryStartEnclosureDesyncWiggleProbe(State placementState, BlockPos target, String label) {
+        if (desyncWiggleProbe != null) return true;
+        if (mc.player == null || mc.world == null || input == null || placementState == null || target == null) return false;
+        BlockPos immutableTarget = target.toImmutable();
+        if (enclosureDesyncWiggleUsedTarget != null && enclosureDesyncWiggleUsedTarget.equals(immutableTarget)) return false;
+
+        enclosureDesyncWiggleUsedTarget = immutableTarget;
+        String sourceSummary = String.format(
+            Locale.ROOT,
+            "state=%s label=%s pendingTarget=%s attempts=%d/%d interactPackets=%d firstPacketAge=%d lastPacketAge=%d recentered=%s confirmWait=%d packetTarget=%s centerTarget=%s player=(%.6f,%.6f,%.6f)",
+            stateName(placementState),
+            label == null ? "" : label,
+            formatBlockPos(immutableTarget),
+            pendingEnclosurePlacementAttempts,
+            ENCLOSURE_PLACEMENT_CONFIRM_MAX_ATTEMPTS,
+            pendingEnclosurePlacementInteractPackets,
+            pendingEnclosurePlacementFirstPacketAge,
+            pendingEnclosurePlacementLastPacketAge,
+            pendingEnclosurePlacementRecentered,
+            pendingEnclosurePlacementConfirmWaitTicks,
+            formatBlockPos(pendingEnclosurePlacementPacketTarget),
+            formatBlockPos(pendingEnclosurePlacementCenterTarget),
+            mc.player.getX(),
+            mc.player.getY(),
+            mc.player.getZ()
+        );
+        startDesyncWiggleProbe(
+            DesyncWiggleReason.EnclosurePlacementDesync,
+            placementState,
+            immutableTarget,
+            label,
+            sourceSummary,
+            -1,
+            pendingEnclosurePlacementInteractPackets,
+            1,
+            0
+        );
+        return true;
+    }
+
+    private void startDesyncWiggleProbe(
+        DesyncWiggleReason reason,
+        State resumeState,
+        BlockPos targetPos,
+        String label,
+        String sourceSummary,
+        int forwardEpisodeId,
+        int packetActions,
+        int distinctTargets,
+        int windowTicks
+    ) {
+        if (mc.player == null) return;
+
+        if (input != null) input.stop();
+        desyncWiggleProbe = new DesyncWiggleProbe(
+            reason,
+            state,
+            resumeState,
+            targetPos,
+            label,
+            sourceSummary,
+            forwardEpisodeId,
+            packetActions,
+            distinctTargets,
+            windowTicks,
+            mc.player.getX(),
+            mc.player.getY(),
+            mc.player.getZ()
+        );
+        logDesyncWiggleProbe("start", desyncWiggleProbe, "probe started");
+    }
+
+    private boolean tickDesyncWiggleProbe() {
+        DesyncWiggleProbe probe = desyncWiggleProbe;
+        if (probe == null) return false;
+
+        if (mc.player == null || input == null) {
+            clearDesyncWiggleProbe("missing-player-or-input");
+            return true;
+        }
+
+        input.stop();
+        String phase;
+        if (probe.tick < DESYNC_WIGGLE_LEFT_TICKS) {
+            input.left(true);
+            phase = "left";
+        } else if (probe.tick < DESYNC_WIGGLE_LEFT_TICKS + DESYNC_WIGGLE_RIGHT_TICKS) {
+            input.right(true);
+            phase = "right";
+        } else {
+            phase = "settle";
+        }
+
+        logDesyncWiggleProbe("tick", probe, "phase=" + phase);
+        probe.tick++;
+
+        if (probe.tick >= DESYNC_WIGGLE_TOTAL_TICKS) {
+            finishDesyncWiggleProbe(probe);
+        }
+
+        return true;
+    }
+
+    private void finishDesyncWiggleProbe(DesyncWiggleProbe probe) {
+        if (input != null) input.stop();
+
+        double endX = mc.player == null ? Double.NaN : mc.player.getX();
+        double endY = mc.player == null ? Double.NaN : mc.player.getY();
+        double endZ = mc.player == null ? Double.NaN : mc.player.getZ();
+        double horizontalDelta = Double.isFinite(endX) && Double.isFinite(endZ)
+            ? Math.hypot(endX - probe.startX, endZ - probe.startZ)
+            : Double.NaN;
+        boolean positionJumpEvidence = Double.isFinite(horizontalDelta) && horizontalDelta >= DESYNC_WIGGLE_SNAP_DISTANCE;
+
+        logDesyncWiggleProbe(
+            "finish",
+            probe,
+            String.format(
+                Locale.ROOT,
+                "end=(%.6f,%.6f,%.6f) horizontalDelta=%.6f correctionPacket=%s correctionType=%s correctionEntityId=%d positionJumpEvidence=%s returnState=%s",
+                endX,
+                endY,
+                endZ,
+                horizontalDelta,
+                probe.correctionPacketObserved,
+                probe.correctionPacketType,
+                probe.correctionEntityId,
+                positionJumpEvidence,
+                stateName(probe.resumeState)
+            )
+        );
+
+        desyncWiggleProbe = null;
+
+        if (probe.reason == DesyncWiggleReason.ForwardPacketDesync && isActive()) {
+            setState(State.Center, State.Forward);
+        }
+    }
+
+    private void clearDesyncWiggleProbe(String reason) {
+        DesyncWiggleProbe probe = desyncWiggleProbe;
+        if (input != null) input.stop();
+        if (probe != null) logDesyncWiggleProbe("clear", probe, reason);
+        desyncWiggleProbe = null;
+    }
+
+    private void noteDesyncWiggleCorrectionPacket(String packetType, int entityId) {
+        DesyncWiggleProbe probe = desyncWiggleProbe;
+        if (probe == null) return;
+        probe.correctionPacketObserved = true;
+        probe.correctionPacketType = packetType == null ? "" : packetType;
+        probe.correctionEntityId = entityId;
+        logDesyncWiggleProbe("correction-packet", probe, "packet=" + probe.correctionPacketType + " entityId=" + entityId);
+    }
+
+    private void logDesyncWiggleProbe(String phase, DesyncWiggleProbe probe, String detail) {
+        if (probe == null) return;
+
+        String line = String.format(
+            Locale.ROOT,
+            "HB desync-wiggle phase=%s reason=%s tick=%d/%d startState=%s currentState=%s resumeState=%s target=%s label=%s episode=%d packetActions=%d distinctTargets=%d windowTicks=%d start=(%.6f,%.6f,%.6f) current=%s correctionPacket=%s correctionType=%s correctionEntityId=%d source=%s detail=%s",
+            phase,
+            probe.reason,
+            probe.tick,
+            DESYNC_WIGGLE_TOTAL_TICKS,
+            stateName(probe.startState),
+            stateName(state),
+            stateName(probe.resumeState),
+            formatBlockPos(probe.targetPos),
+            probe.label,
+            probe.forwardEpisodeId,
+            probe.packetActions,
+            probe.distinctTargets,
+            probe.windowTicks,
+            probe.startX,
+            probe.startY,
+            probe.startZ,
+            mc.player == null
+                ? "null"
+                : String.format(Locale.ROOT, "(%.6f,%.6f,%.6f)", mc.player.getX(), mc.player.getY(), mc.player.getZ()),
+            probe.correctionPacketObserved,
+            probe.correctionPacketType,
+            probe.correctionEntityId,
+            probe.sourceSummary,
+            detail == null ? "" : detail
+        );
+
+        writeThmDebugLog(HIGHWAYBUILDER_DEBUG_FILE_NAME, formatThmDebugLine("%s", line));
+        if (probe.reason == DesyncWiggleReason.EnclosurePlacementDesync) {
+            writeThmDebugLog(RESTOCK_DEBUG_FILE_NAME, formatThmDebugLine("%s", line));
+        }
     }
 
     private boolean shouldPauseForAutoEat() {
@@ -3583,6 +3885,11 @@ public class HighwayBuilderTHM extends Module {
         refreshCountedForwardStatPositions();
 
         if (mc.player.getY() < start.y - 0.5) setState(State.ReLevel); // don't let the current state keep ticking, switch to re-levelling straight away
+        if (tickDesyncWiggleProbe()) {
+            if (breakTimer > 0) breakTimer--;
+            if (placeTimer > 0) placeTimer--;
+            return;
+        }
         tickDoubleMine();
         accrueEnclosurePlaceCredit();
         enforceKitbotFoodRestockFoodType();
@@ -3661,11 +3968,26 @@ public class HighwayBuilderTHM extends Module {
 
     @EventHandler
     private void onPacket(PacketEvent.Receive event) {
+        if (desyncWiggleProbe != null) {
+            if (event.packet instanceof PlayerPositionLookS2CPacket) {
+                noteDesyncWiggleCorrectionPacket("PlayerPositionLookS2CPacket", mc.player == null ? Integer.MIN_VALUE : mc.player.getId());
+            } else if (event.packet instanceof EntityPositionSyncS2CPacket packet && mc.player != null && packet.id() == mc.player.getId()) {
+                noteDesyncWiggleCorrectionPacket("EntityPositionSyncS2CPacket", packet.id());
+            }
+        }
+
         if (event.packet instanceof InventoryS2CPacket p) {
             if (p.syncId() == 0 && suspended)
                 inventory = true;
             else
                 this.syncId = p.syncId();
+        }
+    }
+
+    @EventHandler
+    private void onPacketSend(PacketEvent.Send event) {
+        if (event.packet instanceof PlayerInteractBlockC2SPacket packet) {
+            recordEnclosureInteractPacket(packet);
         }
     }
 
@@ -3931,6 +4253,7 @@ public class HighwayBuilderTHM extends Module {
         armMainServerResumeGate(ServerState.UNKNOWN);
         lastCommittedServerState = ServerState.UNKNOWN;
         releaseThmSpeedOwnership("game-leave", true);
+        clearDesyncWiggleProbe("game-leave");
         releaseActiveDoubleMineRuntime(false);
         clearPendingForwardBreakCredits();
         suspended = true;
@@ -8013,6 +8336,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private String formatBlockPos(BlockPos pos) {
+        if (pos == null) return "null";
         return "(" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")";
     }
 
@@ -8441,6 +8765,11 @@ public class HighwayBuilderTHM extends Module {
         pendingEnclosurePlacementAttempts = 0;
         pendingEnclosurePlacementConfirmWaitTicks = 0;
         pendingEnclosurePlacementRecentered = false;
+        pendingEnclosurePlacementPacketTarget = null;
+        pendingEnclosurePlacementInteractPackets = 0;
+        pendingEnclosurePlacementFirstPacketAge = 0;
+        pendingEnclosurePlacementLastPacketAge = 0;
+        enclosureDesyncWiggleUsedTarget = null;
     }
 
     private void startEnclosurePlacementConfirmation(State placementState, BlockPos pos, BlockPos centerTarget, KitbotStructureBlockType kitbotType, String label) {
@@ -8458,6 +8787,11 @@ public class HighwayBuilderTHM extends Module {
             pendingEnclosurePlacementLabel = label == null ? "" : label;
             pendingEnclosurePlacementAttempts = 0;
             pendingEnclosurePlacementRecentered = false;
+            pendingEnclosurePlacementPacketTarget = immutablePos;
+            pendingEnclosurePlacementInteractPackets = 0;
+            pendingEnclosurePlacementFirstPacketAge = mc.player == null ? 0 : mc.player.age;
+            pendingEnclosurePlacementLastPacketAge = pendingEnclosurePlacementFirstPacketAge;
+            enclosureDesyncWiggleUsedTarget = null;
         } else {
             pendingEnclosurePlacementKitbotType = kitbotType;
             pendingEnclosurePlacementLabel = label == null ? pendingEnclosurePlacementLabel : label;
@@ -8477,6 +8811,78 @@ public class HighwayBuilderTHM extends Module {
                 pendingEnclosurePlacementRecentered
             );
         }
+    }
+
+    private void recordEnclosureInteractPacket(PlayerInteractBlockC2SPacket packet) {
+        if (packet == null || pendingEnclosurePlacementConfirmPos == null || mc.player == null) return;
+        BlockHitResult hit = packet.getBlockHitResult();
+        if (hit == null || !pendingEnclosurePlacementConfirmPos.equals(hit.getBlockPos())) return;
+
+        if (pendingEnclosurePlacementPacketTarget == null || !pendingEnclosurePlacementPacketTarget.equals(hit.getBlockPos())) {
+            pendingEnclosurePlacementPacketTarget = hit.getBlockPos().toImmutable();
+            pendingEnclosurePlacementInteractPackets = 0;
+            pendingEnclosurePlacementFirstPacketAge = mc.player.age;
+        }
+
+        pendingEnclosurePlacementInteractPackets++;
+        pendingEnclosurePlacementLastPacketAge = mc.player.age;
+
+        writeThmDebugLog(
+            RESTOCK_DEBUG_FILE_NAME,
+            formatThmDebugLine(
+                "Enclosure desync packet sample state=%s target=%s packets=%d firstAge=%d lastAge=%d attempts=%d/%d label=%s hand=%s side=%s sequence=%d hit=(%.6f,%.6f,%.6f) player=(%.6f,%.6f,%.6f).",
+                stateName(pendingEnclosurePlacementConfirmState),
+                formatBlockPos(pendingEnclosurePlacementConfirmPos),
+                pendingEnclosurePlacementInteractPackets,
+                pendingEnclosurePlacementFirstPacketAge,
+                pendingEnclosurePlacementLastPacketAge,
+                pendingEnclosurePlacementAttempts,
+                ENCLOSURE_PLACEMENT_CONFIRM_MAX_ATTEMPTS,
+                pendingEnclosurePlacementLabel,
+                packet.getHand(),
+                hit.getSide(),
+                packet.getSequence(),
+                hit.getPos().x,
+                hit.getPos().y,
+                hit.getPos().z,
+                mc.player.getX(),
+                mc.player.getY(),
+                mc.player.getZ()
+            )
+        );
+    }
+
+    private boolean shouldStartEnclosureDesyncWiggleProbe(State placementState) {
+        if (placementState == null || pendingEnclosurePlacementConfirmPos == null) return false;
+        if (desyncWiggleProbe != null) return false;
+        if (enclosureDesyncWiggleUsedTarget != null && enclosureDesyncWiggleUsedTarget.equals(pendingEnclosurePlacementConfirmPos)) return false;
+        if (pendingEnclosurePlacementAttempts < ENCLOSURE_PLACEMENT_RECENTER_AFTER_ATTEMPTS) return false;
+
+        boolean packetEvidence = pendingEnclosurePlacementInteractPackets >= ENCLOSURE_PLACEMENT_DESYNC_MIN_INTERACT_PACKETS;
+        boolean attemptFallback = pendingEnclosurePlacementAttempts >= ENCLOSURE_PLACEMENT_RECENTER_AFTER_ATTEMPTS;
+        if (!packetEvidence && !attemptFallback) return false;
+
+        writeThmDebugLog(
+            RESTOCK_DEBUG_FILE_NAME,
+            formatThmDebugLine(
+                "Enclosure desync wiggle eligible state=%s target=%s attempts=%d/%d interactPackets=%d packetEvidence=%s attemptFallback=%s recentered=%s label=%s centerTarget=%s player=(%.6f,%.6f,%.6f).",
+                stateName(placementState),
+                formatBlockPos(pendingEnclosurePlacementConfirmPos),
+                pendingEnclosurePlacementAttempts,
+                ENCLOSURE_PLACEMENT_CONFIRM_MAX_ATTEMPTS,
+                pendingEnclosurePlacementInteractPackets,
+                packetEvidence,
+                attemptFallback,
+                pendingEnclosurePlacementRecentered,
+                pendingEnclosurePlacementLabel,
+                formatBlockPos(pendingEnclosurePlacementCenterTarget),
+                mc.player == null ? Double.NaN : mc.player.getX(),
+                mc.player == null ? Double.NaN : mc.player.getY(),
+                mc.player == null ? Double.NaN : mc.player.getZ()
+            )
+        );
+
+        return true;
     }
 
     private boolean isPendingEnclosurePlacementConfirmed() {
@@ -8516,6 +8922,12 @@ public class HighwayBuilderTHM extends Module {
         if (pendingEnclosurePlacementConfirmWaitTicks > 0) {
             pendingEnclosurePlacementConfirmWaitTicks--;
             return true;
+        }
+
+        if (shouldStartEnclosureDesyncWiggleProbe(placementState)) {
+            if (tryStartEnclosureDesyncWiggleProbe(placementState, pendingEnclosurePlacementConfirmPos, pendingEnclosurePlacementLabel)) {
+                return true;
+            }
         }
 
         if (pendingEnclosurePlacementAttempts >= ENCLOSURE_PLACEMENT_CONFIRM_MAX_ATTEMPTS) {
