@@ -5738,6 +5738,17 @@ public class HighwayBuilderTHM extends Module {
             || block == Blocks.GILDED_BLACKSTONE;
     }
 
+    private boolean canUseSilentForwardToolSwap(BlockState state, int toolSlot) {
+        return silentForwardToolSwap.get()
+            && mc.player != null
+            && mc.world != null
+            && state != null
+            && toolSlot >= 0
+            && toolSlot < 9
+            && !isHalvedInstamineBudgetBlock(state.getBlock())
+            && BlockUtils.getBreakDelta(toolSlot, state) >= 1.0;
+    }
+
     private int mineBudgetCost(BlockState state) {
         if (!isHalvedInstamineBudgetBlock(state.getBlock())) return 1;
 
@@ -9645,6 +9656,68 @@ public class HighwayBuilderTHM extends Module {
             && isDroppableTrashItem(itemStack.getItem());
     }
 
+    private boolean isStableFullTrashBlockStack(ItemStack itemStack) {
+        if (!isDroppableTrashStack(itemStack)) return false;
+        if (!(itemStack.getItem() instanceof BlockItem blockItem)) return false;
+        if (Utils.isShulker(itemStack.getItem())) return false;
+
+        Block block = blockItem.getBlock();
+        if (block instanceof FallingBlock || block instanceof BlockWithEntity) return false;
+
+        return Block.isShapeFullCube(block.getDefaultState().getCollisionShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN));
+    }
+
+    private int findPreferredTrashBlockSlot() {
+        if (mc.player == null) return -1;
+
+        int bestSlot = -1;
+        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
+            if (!isStableFullTrashBlockStack(mc.player.getInventory().getStack(i))) continue;
+            if (bestSlot == -1 || compareTrashBlockPreferenceSlots(i, bestSlot) < 0) bestSlot = i;
+        }
+
+        return bestSlot;
+    }
+
+    private int compareTrashBlockPreferenceSlots(int leftSlot, int rightSlot) {
+        ItemStack left = mc.player.getInventory().getStack(leftSlot);
+        ItemStack right = mc.player.getInventory().getStack(rightSlot);
+
+        int rankCompare = Integer.compare(getTrashBlockPreferenceRank(left), getTrashBlockPreferenceRank(right));
+        if (rankCompare != 0) return rankCompare;
+
+        int countCompare = Integer.compare(right.getCount(), left.getCount());
+        if (countCompare != 0) return countCompare;
+
+        return Integer.compare(leftSlot, rightSlot);
+    }
+
+    private int getTrashBlockPreferenceRank(ItemStack itemStack) {
+        if (!isStableFullTrashBlockStack(itemStack)) return Integer.MAX_VALUE;
+
+        Block block = ((BlockItem) itemStack.getItem()).getBlock();
+        if (block == Blocks.NETHERRACK) return 0;
+        if (canInstamineTrashBlockWithCurrentHotbar(block)) return 1;
+        return 2;
+    }
+
+    private boolean canInstamineTrashBlockWithCurrentHotbar(Block block) {
+        if (mc.player == null || mc.world == null || block == null) return false;
+
+        BlockState state = block.getDefaultState();
+        for (int i = 0; i < 9; i++) {
+            if (mc.player.getInventory().getStack(i).isEmpty()) continue;
+
+            try {
+                if (BlockUtils.getBreakDelta(i, state) >= 1.0) return true;
+            } catch (RuntimeException | StackOverflowError ignored) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
     private boolean isUsefulCursorStack(ItemStack itemStack) {
         if (itemStack == null || itemStack.isEmpty()) return false;
         if (isProtectedItemStack(itemStack)) return true;
@@ -10647,8 +10720,9 @@ public class HighwayBuilderTHM extends Module {
             boolean multiBreak = currentMineActionsThisTick() > 1 && safeCanInstaBreakForBreaking(task.pos);
             if (safeCanBreak(task.pos, state)) {
                 Block blockBefore = state.getBlock();
+                boolean silentAllowed = canUseSilentForwardToolSwap(state, slot);
                 boolean swapped = false;
-                if (silentForwardToolSwap.get()) {
+                if (silentAllowed) {
                     if (slot != mc.player.getInventory().getSelectedSlot()) {
                         if (!InvUtils.swap(slot, true)) continue;
                         swapped = true;
@@ -10946,7 +11020,7 @@ public class HighwayBuilderTHM extends Module {
                         }
                     }
 
-                    b.input.sneak(true);
+                    if (!b.useThmSpeed.get()) b.input.sneak(true);
                 }
             }
 
@@ -11487,22 +11561,22 @@ public class HighwayBuilderTHM extends Module {
                 ItemStack cursorStack = b.mc.player.currentScreenHandler.getCursorStack();
                 if (b.clearCursorStackToEmptySlot("ThrowOutTrash", true)) return true;
 
-                if (resolveUsefulCursorStack(b)) return true;
+                if (resolveProtectedCursorStack(b)) return true;
                 if (resolveTrashCursorStack(b, cursorStack)) return true;
 
-                if (Utils.isShulker(cursorStack.getItem()) && b.ejectUselessShulkers.get()) {
-                    if (!isUsefulShulker(b, cursorStack)) {
-                        return b.dropCursorStackIfSafe("ThrowOutTrash-useless-shulker");
+                if (Utils.isShulker(cursorStack.getItem())) {
+                    if (b.ejectUselessShulkers.get() && !isProtectedShulkerForTrash(b, cursorStack)) {
+                        return dropTrashCursorStack(b, "ThrowOutTrash-useless-shulker");
                     }
                     return false;
                 }
 
-                return b.dropCursorStackIfSafe("ThrowOutTrash-default");
+                return dropTrashCursorStack(b, "ThrowOutTrash-default");
             }
 
-            private boolean resolveUsefulCursorStack(HighwayBuilderTHM b) {
+            private boolean resolveProtectedCursorStack(HighwayBuilderTHM b) {
                 ItemStack cursorStack = b.mc.player.currentScreenHandler.getCursorStack();
-                if (cursorStack.isEmpty() || !b.isUsefulCursorStack(cursorStack)) return false;
+                if (cursorStack.isEmpty() || !isProtectedCursorStackForTrash(b, cursorStack)) return false;
 
                 int trashSlot = findTrashSwapSlot(b, false);
                 boolean usedProtectedTrash = false;
@@ -11526,7 +11600,7 @@ public class HighwayBuilderTHM extends Module {
                 );
 
                 ItemStack swappedCursor = b.mc.player.currentScreenHandler.getCursorStack();
-                if (b.isUsefulCursorStack(swappedCursor)) {
+                if (isProtectedCursorStackForTrash(b, swappedCursor)) {
                     if (b.restockDebugLog.get()) {
                         b.restockDebug("Preserved useful cursor stack %s because trash swap did not dislodge it (ThrowOutTrash-cursor).", swappedCursor.getItem());
                     }
@@ -11536,7 +11610,8 @@ public class HighwayBuilderTHM extends Module {
                 if (b.restockDebugLog.get() && usedProtectedTrash) {
                     b.restockDebug("ThrowOutTrash spent a protected trash block as a last resort to clear a useful cursor stack.");
                 }
-                return b.dropCursorStackIfSafe(
+                return dropTrashCursorStack(
+                    b,
                     usedProtectedTrash ? "ThrowOutTrash-protected-trash-cursor-swap" : "ThrowOutTrash-trash-cursor-swap"
                 );
             }
@@ -11555,13 +11630,12 @@ public class HighwayBuilderTHM extends Module {
                     b.mc.player
                 );
 
-                return b.dropCursorStackIfSafe("ThrowOutTrash-reserved-trash-cursor-swap");
+                return dropTrashCursorStack(b, "ThrowOutTrash-reserved-trash-cursor-swap");
             }
 
             private int findTrashSwapSlot(HighwayBuilderTHM b, boolean allowProtectedTrash) {
                 refreshProtectedTrashSlots(b);
                 for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
-                    if (isReservedHotbarSlot(b, i)) continue;
                     ItemStack itemStack = b.mc.player.getInventory().getStack(i);
                     if (!isEligibleTrashReserveStack(b, itemStack)) continue;
                     if (!allowProtectedTrash && keepSlots.contains(i)) continue;
@@ -11574,35 +11648,23 @@ public class HighwayBuilderTHM extends Module {
             private void refreshProtectedTrashSlots(HighwayBuilderTHM b) {
                 keepSlots.clear();
 
-                int reservedMatchingCount = 0;
                 List<Integer> trashBlockSlots = new ArrayList<>();
                 for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
                     ItemStack itemStack = b.mc.player.getInventory().getStack(i);
                     if (!isEligibleTrashReserveStack(b, itemStack)) continue;
-                    if (isReservedHotbarSlot(b, i)) {
-                        reservedMatchingCount++;
-                        continue;
-                    }
                     trashBlockSlots.add(i);
                 }
 
-                trashBlockSlots.sort((a, c) -> {
-                    int countCompare = Integer.compare(
-                        b.mc.player.getInventory().getStack(c).getCount(),
-                        b.mc.player.getInventory().getStack(a).getCount()
-                    );
-                    if (countCompare != 0) return countCompare;
-                    return Integer.compare(a, c);
-                });
+                trashBlockSlots.sort(b::compareTrashBlockPreferenceSlots);
 
-                int keepBudget = Math.max(b.keepTrashBlockStacks.get() - reservedMatchingCount, 0);
+                int keepBudget = Math.max(b.keepTrashBlockStacks.get(), 0);
                 int keepCount = Math.min(keepBudget, trashBlockSlots.size());
                 for (int i = 0; i < keepCount; i++) keepSlots.add(trashBlockSlots.get(i));
             }
 
             private boolean dropDirectTrashBatch(HighwayBuilderTHM b) {
                 int maxActions = Math.min(MAX_DIRECT_TRASH_DROPS_PER_PASS, b.mc.player.getInventory().getMainStacks().size());
-                boolean onlyReservedOrSkippedTrashRemains = false;
+                boolean onlySkippedTrashRemains = false;
 
                 for (int actions = 0; actions < maxActions; ) {
                     refreshProtectedTrashSlots(b);
@@ -11614,14 +11676,9 @@ public class HighwayBuilderTHM extends Module {
                         ItemStack itemStack = b.mc.player.getInventory().getStack(i);
                         boolean droppableShulker = Utils.isShulker(itemStack.getItem())
                             && b.ejectUselessShulkers.get()
-                            && !isUsefulShulker(b, itemStack);
+                            && !isProtectedShulkerForTrash(b, itemStack);
                         boolean droppableTrashItem = b.isDroppableTrashStack(itemStack);
                         if (!droppableShulker && !droppableTrashItem) continue;
-
-                        if (isReservedHotbarSlot(b, i)) {
-                            blockedThisPass = true;
-                            continue;
-                        }
 
                         if (isSkippedDropSlot(i, itemStack)) {
                             blockedThisPass = true;
@@ -11661,20 +11718,16 @@ public class HighwayBuilderTHM extends Module {
                     }
 
                     if (!droppedThisPass) {
-                        onlyReservedOrSkippedTrashRemains = blockedThisPass;
+                        onlySkippedTrashRemains = blockedThisPass;
                         break;
                     }
                 }
 
-                if (onlyReservedOrSkippedTrashRemains && b.restockDebugLog.get()) {
-                    b.restockDebug("ThrowOutTrash leaving with only reserved or temporarily skipped trash remaining.");
+                if (onlySkippedTrashRemains && b.restockDebugLog.get()) {
+                    b.restockDebug("ThrowOutTrash leaving with only temporarily skipped trash remaining.");
                 }
 
                 return false;
-            }
-
-            private boolean isReservedHotbarSlot(HighwayBuilderTHM b, int slot) {
-                return slot >= 0 && slot < 9 && b.isHotbarSlotReservedByManager(slot);
             }
 
             private boolean isSkippedDropSlot(int slot, ItemStack itemStack) {
@@ -11724,13 +11777,41 @@ public class HighwayBuilderTHM extends Module {
             }
 
             private boolean isEligibleTrashReserveStack(HighwayBuilderTHM b, ItemStack itemStack) {
-                return itemStack.getItem() instanceof BlockItem
-                    && !Utils.isShulker(itemStack.getItem())
-                    && b.isDroppableTrashStack(itemStack);
+                return b.isStableFullTrashBlockStack(itemStack);
             }
 
-            private boolean isUsefulShulker(HighwayBuilderTHM b, ItemStack itemStack) {
-                return b.isUsefulShulkerStack(itemStack);
+            private boolean isProtectedCursorStackForTrash(HighwayBuilderTHM b, ItemStack itemStack) {
+                if (itemStack == null || itemStack.isEmpty()) return false;
+                if (Utils.isShulker(itemStack.getItem())) return isProtectedShulkerForTrash(b, itemStack);
+                return b.isProtectedItemStack(itemStack);
+            }
+
+            private boolean isProtectedShulkerForTrash(HighwayBuilderTHM b, ItemStack itemStack) {
+                if (itemStack == null || itemStack.isEmpty()) return false;
+                if (!Utils.isShulker(itemStack.getItem())) return false;
+                if (b.isProtectedItemStack(itemStack)) return true;
+
+                ItemStack[] items = new ItemStack[27];
+                Utils.getItemsInContainerItem(itemStack, items);
+
+                for (ItemStack stack : items) {
+                    if (b.isProtectedItemStack(stack)) return true;
+                }
+
+                return false;
+            }
+
+            private boolean dropTrashCursorStack(HighwayBuilderTHM b, String reason) {
+                ItemStack cursorStack = b.mc.player.currentScreenHandler.getCursorStack();
+                if (cursorStack.isEmpty() || isProtectedCursorStackForTrash(b, cursorStack)) return false;
+
+                InvUtils.dropHand();
+
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug("Dropped trash cursor stack %s (%s).", cursorStack.getItem(), reason);
+                }
+
+                return true;
             }
         },
 
@@ -12523,10 +12604,7 @@ public class HighwayBuilderTHM extends Module {
             }
 
             private int findKitbotBlockSlot(HighwayBuilderTHM b) {
-                int slot = findAndMoveToHotbar(b, itemStack -> {
-                    if (!(itemStack.getItem() instanceof BlockItem)) return false;
-                    return b.isDroppableTrashStack(itemStack);
-                }, false);
+                int slot = findPreferredTrashBlockToHotbar(b, false);
 
                 if (slot != -1) return slot;
 
@@ -15016,6 +15094,41 @@ public class HighwayBuilderTHM extends Module {
             return predicate.test(b.mc.player.getInventory().getStack(hotbarSlot)) ? hotbarSlot : -1;
         }
 
+        protected int findPreferredTrashBlockToHotbar(HighwayBuilderTHM b, boolean failHardNoHotbar) {
+            int slot = b.findPreferredTrashBlockSlot();
+            if (slot == -1) return -1;
+            if (slot < 9) return slot;
+
+            ItemStack inventoryStack = b.mc.player.getInventory().getStack(slot);
+            int hotbarSlot = b.getPreferredManagedHotbarSlot(inventoryStack.getItem());
+            if (hotbarSlot != -1) {
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug("findPreferredTrashBlockToHotbar using HotbarManager slot %d for preferred trash block %s.",
+                        hotbarSlot,
+                        inventoryStack.getItem()
+                    );
+                }
+            } else {
+                hotbarSlot = findHotbarSlot(b, false, failHardNoHotbar);
+                if (hotbarSlot == -1) return -1;
+            }
+
+            if (b.restockDebugLog.get()) {
+                b.restockDebug("findPreferredTrashBlockToHotbar moving inventory slot %d into hotbar slot %d for %s.",
+                    slot,
+                    hotbarSlot,
+                    inventoryStack.getItem()
+                );
+            }
+
+            InvUtils.move().from(slot).toHotbar(hotbarSlot);
+            if (!b.clearCursorStackToEmptySlot("findPreferredTrashBlockToHotbar")
+                && !b.dropCursorStackIfSafe("findPreferredTrashBlockToHotbar")) {
+            }
+
+            return hotbarSlot;
+        }
+
         protected int findAndMoveBestToolToHotbar(HighwayBuilderTHM b, BlockState blockState, boolean noSilkTouch) {
             return findAndMoveBestToolToHotbar(b, blockState, noSilkTouch, true);
         }
@@ -15130,10 +15243,7 @@ public class HighwayBuilderTHM extends Module {
         }
 
         protected int findBlocksToPlacePrioritizeTrash(HighwayBuilderTHM b) {
-            int slot = findAndMoveToHotbar(b, itemStack -> {
-                if (!(itemStack.getItem() instanceof BlockItem)) return false;
-                return b.isDroppableTrashStack(itemStack);
-            });
+            int slot = findPreferredTrashBlockToHotbar(b, true);
 
             return slot != -1 ? slot : findBlocksToPlace(b);
         }

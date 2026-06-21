@@ -1,8 +1,15 @@
 package xyz.thm.addon.modules;
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
+import meteordevelopment.meteorclient.gui.screens.settings.ItemSettingScreen;
+import meteordevelopment.meteorclient.gui.widgets.WItem;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
+import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
+import meteordevelopment.meteorclient.gui.utils.SettingsWidgetFactory;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
@@ -15,8 +22,9 @@ import net.minecraft.nbt.NbtCompound;
 import xyz.thm.addon.THMAddon;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 public class HotbarManager extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -51,7 +59,7 @@ public class HotbarManager extends Module {
         return reset;
     }
 
-    private final List<Setting<List<Item>>> itemSettings = new ArrayList<>();
+    private final List<Setting<Item>> itemSettings = new ArrayList<>();
     private final Item[] defaultItems = {
         Items.AIR,          // Slot 1
         Items.AIR,          // Slot 2
@@ -71,11 +79,10 @@ public class HotbarManager extends Module {
         final SettingGroup sgHotbar = settings.createGroup("Hotbar");
 
         for (int i = 0; i < 9; i++) {
-            Setting<List<Item>> setting = sgHotbar.add(new ClearableSlotSetting.Builder()
+            Setting<Item> setting = sgHotbar.add(new ClearableItemSetting.Builder()
                 .name("slot-" + (i + 1))
                 .description("The item to store in slot " + (i + 1) + ".")
                 .defaultValue(defaultItems[i])
-                .filter(item -> item != Items.AIR)
                 .build()
             );
             itemSettings.add(setting);
@@ -89,13 +96,12 @@ public class HotbarManager extends Module {
 
     public boolean managesSlot(int hotbarSlot) {
         if (hotbarSlot < 0 || hotbarSlot >= itemSettings.size()) return false;
-        return getManagedItem(hotbarSlot) != Items.AIR;
+        return itemSettings.get(hotbarSlot).get() != Items.AIR;
     }
 
     public Item getManagedItem(int hotbarSlot) {
         if (hotbarSlot < 0 || hotbarSlot >= itemSettings.size()) return Items.AIR;
-        List<Item> items = itemSettings.get(hotbarSlot).get();
-        return items.isEmpty() ? Items.AIR : items.get(0);
+        return itemSettings.get(hotbarSlot).get();
     }
 
     @EventHandler
@@ -108,7 +114,7 @@ public class HotbarManager extends Module {
             if (ticksLeft > 0.0) return;
             highestSlot = Math.max(highestSlot, i);
 
-            Item targetItem = getManagedItem(i);
+            Item targetItem = itemSettings.get(i).get();
             if (targetItem == Items.AIR) continue;
 
             Item slotItem = mc.player.getInventory().getStack(i).getItem();
@@ -125,60 +131,88 @@ public class HotbarManager extends Module {
         if (highestSlot == 8 && toggle.get()) toggle();
     }
 
-    private static class ClearableSlotSetting extends ItemListSetting {
-        public ClearableSlotSetting(String name, String description, List<Item> defaultValue, IVisible visible, java.util.function.Predicate<Item> filter) {
-            super(name, description, defaultValue, null, null, visible, filter, false);
+    private static void registerClearableItemSettingWidget() {
+        SettingsWidgetFactory.registerCustomFactory(ClearableItemSetting.class, theme -> (table, setting) ->
+            fillClearableItemSettingRow(theme, table, (ClearableItemSetting) setting)
+        );
+    }
+
+    private static void fillClearableItemSettingRow(GuiTheme theme, WTable table, ClearableItemSetting setting) {
+        WHorizontalList list = table.add(theme.horizontalList()).expandX().widget();
+
+        WItem item = list.add(theme.item(setting.get().getDefaultStack())).widget();
+
+        WButton select = list.add(theme.button("Select")).widget();
+        select.action = () -> {
+            ItemSettingScreen screen = new ItemSettingScreen(theme, setting);
+            screen.onClosed(() -> item.set(setting.get().getDefaultStack()));
+            MeteorClient.mc.setScreen(screen);
+        };
+
+        WButton clear = list.add(theme.button("Clear")).widget();
+        clear.action = () -> {
+            setting.set(Items.AIR);
+            item.set(Items.AIR.getDefaultStack());
+        };
+
+        WButton reset = table.add(theme.button(GuiRenderer.RESET)).widget();
+        reset.action = () -> {
+            setting.reset();
+            item.set(setting.get().getDefaultStack());
+        };
+        reset.tooltip = "Reset";
+    }
+
+    static {
+        registerClearableItemSettingWidget();
+    }
+
+    private static class ClearableItemSetting extends ItemSetting {
+        public ClearableItemSetting(String name, String description, Item defaultValue, Consumer<Item> onChanged, Consumer<Setting<Item>> onModuleActivated, IVisible visible, Predicate<Item> filter) {
+            super(name, description, defaultValue, onChanged, onModuleActivated, visible, filter);
         }
 
         @Override
-        public void onChanged() {
-            clampToOneItem();
-            super.onChanged();
-        }
-
-        @Override
-        public List<Item> load(NbtCompound tag) {
-            if (tag.getListOrEmpty("value").isEmpty()) {
-                get().clear();
-                List<Item> legacyItems = parseImpl(tag.getString("value", ""));
-                if (!legacyItems.isEmpty()) get().add(legacyItems.get(0));
+        public Item load(NbtCompound tag) {
+            if (tag.getList("value").isPresent()) {
+                String value = tag.getListOrEmpty("value").getString(0, "minecraft:air");
+                Item item = parseImpl(value);
+                setValue(item == null ? Items.AIR : item);
                 return get();
             }
 
             return super.load(tag);
         }
 
-        private void clampToOneItem() {
-            List<Item> items = get();
-            items.removeIf(item -> item == null || item == Items.AIR);
-            if (items.size() > 1) items.subList(1, items.size()).clear();
+        @Override
+        protected boolean isValueValid(Item value) {
+            return value == Items.AIR || super.isValueValid(value);
         }
 
-        private static class Builder extends SettingBuilder<Builder, List<Item>, ClearableSlotSetting> {
-            private java.util.function.Predicate<Item> filter;
+        private void setValue(Item item) {
+            value = item;
+        }
+
+        private static class Builder extends SettingBuilder<Builder, Item, ClearableItemSetting> {
+            private Predicate<Item> filter;
 
             public Builder() {
-                super(new ArrayList<>());
+                super(Items.AIR);
             }
 
-            public Builder defaultValue(Item... defaults) {
-                defaultValue = new ArrayList<>();
-                if (defaults != null) {
-                    Arrays.stream(defaults)
-                        .filter(item -> item != null && item != Items.AIR)
-                        .forEach(defaultValue::add);
-                }
+            public Builder defaultValue(Item defaultValue) {
+                this.defaultValue = defaultValue == null ? Items.AIR : defaultValue;
                 return this;
             }
 
-            public Builder filter(java.util.function.Predicate<Item> filter) {
+            public Builder filter(Predicate<Item> filter) {
                 this.filter = filter;
                 return this;
             }
 
             @Override
-            public ClearableSlotSetting build() {
-                return new ClearableSlotSetting(name, description, defaultValue, visible, filter);
+            public ClearableItemSetting build() {
+                return new ClearableItemSetting(name, description, defaultValue, onChanged, onModuleActivated, visible, filter);
             }
         }
     }
