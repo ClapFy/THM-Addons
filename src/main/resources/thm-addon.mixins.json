@@ -40,6 +40,7 @@
     "meteor.MeteorGuiThemeMixin",
     "meteor.MeteorGuiThemeModuleMixin",
     "meteor.ModuleMixin",
+    "meteor.ModuleScreenLiveUpdateMixin",
     "meteor.ModulesScreenMixin",
     "meteor.NametagsMixin",
     "meteor.NoSlowMixin",
