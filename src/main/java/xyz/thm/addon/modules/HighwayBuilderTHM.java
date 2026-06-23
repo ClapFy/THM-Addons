@@ -130,6 +130,15 @@ public class HighwayBuilderTHM extends Module {
         AwaitingRestart,
         Unavailable
     }
+
+    private enum TpsThrottlePauseReason {
+        None,
+        Settling,
+        StaleTick,
+        InvalidTps,
+        LowTps
+    }
+
     private static final long STATS_CHECKPOINT_INTERVAL_MS = 10 * 60 * 1000L;
     private static final int STATS_SCREENSHOT_DELAY_MS = 250;
     private static final long STATS_MEMORY_RETRY_RECHECK_MS = 5_000L;
@@ -181,6 +190,9 @@ public class HighwayBuilderTHM extends Module {
     private static final double TPS_THROTTLE_PAUSE_THRESHOLD = 10.0;
     private static final double TPS_THROTTLE_NORMAL = 20.0;
     private static final double TPS_THROTTLE_DEBUG_DELTA = 0.05;
+    private static final long TPS_THROTTLE_SETTLE_MS = 5_000L;
+    private static final float TPS_THROTTLE_STALE_TICK_SECONDS = 1.5f;
+    private static final long TPS_THROTTLE_PAUSE_REASON_LOG_INTERVAL_MS = 5_000L;
     private static final int FORWARD_BREAK_CREDIT_TTL_TICKS = 60;
     private static final int HIGHWAY_FLOOR_Y = 120;
     private static final int HIGHWAY_RAILING_Y = 121;
@@ -836,6 +848,30 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
+    private final Setting<Boolean> fallSaveAirPlace = sgPaving.add(new BoolSetting.Builder()
+        .name("fall-save-air-place")
+        .description("Places a safety block below your hitbox while forward-building if the floor disappears.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> fallSaveDistance = sgPaving.add(new IntSetting.Builder()
+        .name("fall-save-distance")
+        .description("Vertical distance below your hitbox for fall-save air placement.")
+        .defaultValue(2)
+        .range(1, 3)
+        .sliderRange(1, 3)
+        .visible(fallSaveAirPlace::get)
+        .build()
+    );
+
+    private final Setting<Boolean> tpsSafetyEnclosure = sgPaving.add(new BoolSetting.Builder()
+        .name("tps-safety-enclosure")
+        .description("After TPS settling, builds a small safety enclosure during low/unknown TPS pauses.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> packetBuild = sgPaving.add(new BoolSetting.Builder()
         .name("packet-build")
         .description("Sends forward placement packets directly for maximum throughput. Automatically enables Packet Limiter on activation.")
@@ -1299,6 +1335,15 @@ public class HighwayBuilderTHM extends Module {
     private double tpsThrottleAdjustedBlocksPerTick = 1.0;
     private double tpsThrottleAdjustedPlacementsPerTick = 1.0;
     private boolean tpsThrottlePaused;
+    private TpsThrottlePauseReason tpsThrottlePauseReason = TpsThrottlePauseReason.None;
+    private long tpsThrottleSettleUntilMs;
+    private long nextTpsThrottlePauseReasonLogAtMs;
+    private boolean safetyPlacedThisTick;
+    private boolean tpsSafetyEnclosureActive;
+    private boolean tpsSafetyEnclosureTriggeredThisEpisode;
+    private boolean tpsSafetyCenterOwned;
+    private BlockPos tpsSafetyEnclosureAnchor;
+    private final ArrayDeque<BlockPos> tpsSafetyEnclosureTargets = new ArrayDeque<>();
     private int enclosurePlaceCreditTenths;
     private final Set<BlockPos> countedBrokenForwardPositions = new HashSet<>();
     private final Set<BlockPos> countedPlacedForwardPositions = new HashSet<>();
@@ -1829,6 +1874,7 @@ public class HighwayBuilderTHM extends Module {
 
     private void pauseExecutionForServerState(ServerState committedState) {
         releaseThmSpeedOwnership("server-state-" + committedState.name(), true);
+        clearSafetyRuntime("server-state-" + committedState.name());
         if (input != null) input.stop();
         executionPausedByServerState = true;
     }
@@ -1930,6 +1976,7 @@ public class HighwayBuilderTHM extends Module {
         kitbotPeriodicUpdateNextTick = mc.world.getTime() + KITBOT_PERIODIC_UPDATE_INTERVAL_TICKS;
         forwardSchedulerDebugFileErrorLogged = false;
         resetTpsThrottleRuntime();
+        clearSafetyRuntime("module-activate");
         mineActionsThisTick = Math.max(1, (int) Math.floor(sanitizeActionRate(blocksPerTick.get())));
         mineFractionCarry = 0.0;
         placeActionsThisTick = Math.max(1, (int) Math.floor(sanitizeActionRate(placementsPerTick.get())));
@@ -2023,6 +2070,7 @@ public class HighwayBuilderTHM extends Module {
         placeActionsThisTick = 0;
         placeFractionCarry = 0.0;
         resetTpsThrottleRuntime();
+        clearSafetyRuntime("module-deactivate");
         resetEnclosurePlaceCredit();
         clearEnclosurePlacementConfirmation();
         lastForwardDesyncWiggleEpisodeId = Integer.MIN_VALUE;
@@ -3775,6 +3823,7 @@ public class HighwayBuilderTHM extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
+        safetyPlacedThisTick = false;
 
         maybeCheckpointStatsSession();
 
@@ -3818,8 +3867,15 @@ public class HighwayBuilderTHM extends Module {
         if (useThmSpeed.get() || thmSpeedOwnershipActive || thmSpeedSnapshot != null) syncThmSpeedOwnership("tick");
         tickDeferredCenterSpeedRestore();
         updateTpsActionThrottle();
+        if (!shouldPauseForTpsThrottle() && (tpsSafetyEnclosureActive || tpsSafetyCenterOwned || tpsSafetyEnclosureTriggeredThisEpisode)) {
+            boolean wasSafetyCenter = tpsSafetyCenterOwned && state == State.Center;
+            clearTpsSafetyEnclosureRuntime("tps-recovered", true);
+            if (wasSafetyCenter) setState(State.Forward);
+        }
+        tryFallSaveAirPlace();
         if (shouldPauseForTpsThrottle()) {
-            handleTpsThrottlePauseTick();
+            boolean preserveCenterInput = tickTpsSafetyEnclosureDuringPause();
+            handleTpsThrottlePauseTick(!preserveCenterInput);
             return;
         }
 
@@ -5136,74 +5192,155 @@ public class HighwayBuilderTHM extends Module {
     private void resetTpsThrottleRuntime() {
         tpsThrottleLastSampleAge = Integer.MIN_VALUE;
         tpsThrottleSampledTps = TPS_THROTTLE_NORMAL;
-        tpsThrottleAdjustedBlocksPerTick = sanitizeActionRate(blocksPerTick.get());
-        tpsThrottleAdjustedPlacementsPerTick = sanitizeActionRate(placementsPerTick.get());
-        tpsThrottlePaused = false;
+        nextTpsThrottlePauseReasonLogAtMs = 0L;
+
+        if (pauseOnLag.get()) {
+            tpsThrottleAdjustedBlocksPerTick = 0.0;
+            tpsThrottleAdjustedPlacementsPerTick = 0.0;
+            tpsThrottlePaused = true;
+            tpsThrottlePauseReason = TpsThrottlePauseReason.Settling;
+            tpsThrottleSettleUntilMs = System.currentTimeMillis() + TPS_THROTTLE_SETTLE_MS;
+        } else {
+            tpsThrottleAdjustedBlocksPerTick = sanitizeActionRate(blocksPerTick.get());
+            tpsThrottleAdjustedPlacementsPerTick = sanitizeActionRate(placementsPerTick.get());
+            tpsThrottlePaused = false;
+            tpsThrottlePauseReason = TpsThrottlePauseReason.None;
+            tpsThrottleSettleUntilMs = 0L;
+        }
     }
 
     private void updateTpsActionThrottle() {
         double baseBlocksPerTick = sanitizeActionRate(blocksPerTick.get());
         double basePlacementsPerTick = sanitizeActionRate(placementsPerTick.get());
+        boolean wasPaused = tpsThrottlePaused;
+        TpsThrottlePauseReason previousReason = tpsThrottlePauseReason;
 
         if (!pauseOnLag.get()) {
-            boolean wasPaused = tpsThrottlePaused;
             tpsThrottleLastSampleAge = Integer.MIN_VALUE;
             tpsThrottleSampledTps = TPS_THROTTLE_NORMAL;
             tpsThrottleAdjustedBlocksPerTick = baseBlocksPerTick;
             tpsThrottleAdjustedPlacementsPerTick = basePlacementsPerTick;
             tpsThrottlePaused = false;
+            tpsThrottlePauseReason = TpsThrottlePauseReason.None;
+            tpsThrottleSettleUntilMs = 0L;
+            nextTpsThrottlePauseReasonLogAtMs = 0L;
             if (wasPaused) info("Server TPS throttle disabled. Resuming HighwayBuilder.");
             return;
         }
 
-        if (mc.player == null) return;
-
-        int age = mc.player.age;
-        if (tpsThrottleLastSampleAge != Integer.MIN_VALUE && age - tpsThrottleLastSampleAge < TPS_THROTTLE_SAMPLE_INTERVAL_TICKS) return;
-
-        tpsThrottleLastSampleAge = age;
-        boolean wasPaused = tpsThrottlePaused;
-        double previousBlocksPerTick = tpsThrottleAdjustedBlocksPerTick;
-        double previousPlacementsPerTick = tpsThrottleAdjustedPlacementsPerTick;
-
-        double sampledTps = TickRate.INSTANCE.getTickRate();
-        if (!Double.isFinite(sampledTps) || sampledTps <= 0.0) sampledTps = TPS_THROTTLE_NORMAL;
-        tpsThrottleSampledTps = sampledTps;
-
-        if (sampledTps < TPS_THROTTLE_PAUSE_THRESHOLD) {
+        if (mc.player == null) {
             tpsThrottleAdjustedBlocksPerTick = 0.0;
             tpsThrottleAdjustedPlacementsPerTick = 0.0;
             tpsThrottlePaused = true;
+            tpsThrottlePauseReason = TpsThrottlePauseReason.InvalidTps;
+            return;
+        }
+
+        int age = mc.player.age;
+        double sampledTps = TickRate.INSTANCE.getTickRate();
+        float secondsSinceLastTick = TickRate.INSTANCE.getTimeSinceLastTick();
+        long now = System.currentTimeMillis();
+        TpsThrottlePauseReason pauseReason = resolveTpsThrottlePauseReason(sampledTps, secondsSinceLastTick, now);
+        boolean forceSample = wasPaused || pauseReason != TpsThrottlePauseReason.None || previousReason != TpsThrottlePauseReason.None;
+
+        if (!forceSample
+            && tpsThrottleLastSampleAge != Integer.MIN_VALUE
+            && age - tpsThrottleLastSampleAge < TPS_THROTTLE_SAMPLE_INTERVAL_TICKS) {
+            return;
+        }
+
+        tpsThrottleLastSampleAge = age;
+        double previousBlocksPerTick = tpsThrottleAdjustedBlocksPerTick;
+        double previousPlacementsPerTick = tpsThrottleAdjustedPlacementsPerTick;
+        tpsThrottleSampledTps = sampledTps;
+
+        if (pauseReason != TpsThrottlePauseReason.None) {
+            tpsThrottleAdjustedBlocksPerTick = 0.0;
+            tpsThrottleAdjustedPlacementsPerTick = 0.0;
+            tpsThrottlePaused = true;
+            tpsThrottlePauseReason = pauseReason;
         } else {
             double clampedTps = Math.min(TPS_THROTTLE_NORMAL, Math.max(TPS_THROTTLE_PAUSE_THRESHOLD, sampledTps));
             double multiplier = clampedTps / TPS_THROTTLE_NORMAL;
             tpsThrottleAdjustedBlocksPerTick = roundToNearestTenth(baseBlocksPerTick * multiplier);
             tpsThrottleAdjustedPlacementsPerTick = roundToNearestTenth(basePlacementsPerTick * multiplier);
             tpsThrottlePaused = false;
+            tpsThrottlePauseReason = TpsThrottlePauseReason.None;
         }
 
         if (tpsThrottlePaused && !wasPaused) {
-            warning("Server TPS %.1f is below 10. Pausing HighwayBuilder.", tpsThrottleSampledTps);
+            warning("Server TPS throttle pausing HighwayBuilder: %s.", describeTpsThrottlePauseReason(tpsThrottlePauseReason, sampledTps, secondsSinceLastTick, now));
         } else if (!tpsThrottlePaused && wasPaused) {
             info("Server TPS recovered to %.1f. Resuming HighwayBuilder.", tpsThrottleSampledTps);
+        } else if (debugLog.get() && tpsThrottlePaused && previousReason != tpsThrottlePauseReason) {
+            highwayDebug(
+                "HB TPS throttle pause reason changed: %s -> %s (%s).",
+                previousReason,
+                tpsThrottlePauseReason,
+                describeTpsThrottlePauseReason(tpsThrottlePauseReason, sampledTps, secondsSinceLastTick, now)
+            );
         }
 
         if (debugLog.get()
             && (wasPaused != tpsThrottlePaused
+                || previousReason != tpsThrottlePauseReason
                 || Math.abs(previousBlocksPerTick - tpsThrottleAdjustedBlocksPerTick) >= TPS_THROTTLE_DEBUG_DELTA
                 || Math.abs(previousPlacementsPerTick - tpsThrottleAdjustedPlacementsPerTick) >= TPS_THROTTLE_DEBUG_DELTA)) {
             double multiplier = tpsThrottlePaused
                 ? 0.0
                 : Math.min(TPS_THROTTLE_NORMAL, Math.max(TPS_THROTTLE_PAUSE_THRESHOLD, tpsThrottleSampledTps)) / TPS_THROTTLE_NORMAL;
             highwayDebug(
-                "HB TPS throttle sampledTps=%.2f multiplier=%.2f adjustedMine=%.2f adjustedPlace=%.2f paused=%s",
-                tpsThrottleSampledTps,
+                "HB TPS throttle sampledTps=%s lastTickAge=%.2f multiplier=%.2f adjustedMine=%.2f adjustedPlace=%.2f paused=%s reason=%s",
+                formatTpsThrottleSample(tpsThrottleSampledTps),
+                secondsSinceLastTick,
                 multiplier,
                 tpsThrottleAdjustedBlocksPerTick,
                 tpsThrottleAdjustedPlacementsPerTick,
-                tpsThrottlePaused
+                tpsThrottlePaused,
+                tpsThrottlePauseReason
             );
         }
+
+        maybeLogTpsThrottlePauseReason(sampledTps, secondsSinceLastTick, now);
+    }
+
+    private TpsThrottlePauseReason resolveTpsThrottlePauseReason(double sampledTps, float secondsSinceLastTick, long now) {
+        if (now < tpsThrottleSettleUntilMs) return TpsThrottlePauseReason.Settling;
+        if (!Float.isFinite(secondsSinceLastTick) || secondsSinceLastTick > TPS_THROTTLE_STALE_TICK_SECONDS) {
+            return TpsThrottlePauseReason.StaleTick;
+        }
+        if (!Double.isFinite(sampledTps) || sampledTps <= 0.0) return TpsThrottlePauseReason.InvalidTps;
+        if (sampledTps < TPS_THROTTLE_PAUSE_THRESHOLD) return TpsThrottlePauseReason.LowTps;
+        return TpsThrottlePauseReason.None;
+    }
+
+    private void maybeLogTpsThrottlePauseReason(double sampledTps, float secondsSinceLastTick, long now) {
+        if (!debugLog.get() || !tpsThrottlePaused) return;
+        if (now < nextTpsThrottlePauseReasonLogAtMs) return;
+
+        highwayDebug(
+            "HB TPS throttle still paused: reason=%s, detail=%s, sampledTps=%s, lastTickAge=%.2f.",
+            tpsThrottlePauseReason,
+            describeTpsThrottlePauseReason(tpsThrottlePauseReason, sampledTps, secondsSinceLastTick, now),
+            formatTpsThrottleSample(sampledTps),
+            secondsSinceLastTick
+        );
+        nextTpsThrottlePauseReasonLogAtMs = now + TPS_THROTTLE_PAUSE_REASON_LOG_INTERVAL_MS;
+    }
+
+    private String describeTpsThrottlePauseReason(TpsThrottlePauseReason reason, double sampledTps, float secondsSinceLastTick, long now) {
+        return switch (reason) {
+            case Settling -> String.format(Locale.ROOT, "settling for %.1fs", Math.max(0L, tpsThrottleSettleUntilMs - now) / 1000.0);
+            case StaleTick -> String.format(Locale.ROOT, "last server tick %.2fs ago", secondsSinceLastTick);
+            case InvalidTps -> String.format(Locale.ROOT, "TPS unknown (sample=%s)", formatTpsThrottleSample(sampledTps));
+            case LowTps -> String.format(Locale.ROOT, "TPS %s is below 10", formatTpsThrottleSample(sampledTps));
+            case None -> "none";
+        };
+    }
+
+    private String formatTpsThrottleSample(double sampledTps) {
+        if (!Double.isFinite(sampledTps)) return "invalid";
+        return String.format(Locale.ROOT, "%.1f", sampledTps);
     }
 
     public boolean isTpsThrottlePaused() {
@@ -5215,7 +5352,11 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void handleTpsThrottlePauseTick() {
-        if (input != null) input.stop();
+        handleTpsThrottlePauseTick(true);
+    }
+
+    private void handleTpsThrottlePauseTick(boolean stopInput) {
+        if (stopInput && input != null) input.stop();
         releaseActiveDoubleMineRuntime(true);
         count = 0;
         forwardMineCount = 0;
@@ -5224,6 +5365,271 @@ public class HighwayBuilderTHM extends Module {
         placeActionsThisTick = 0;
         touchForwardSchedulerPauseHeartbeat();
         restockWatchdog.pauseHeartbeat("tps-throttle");
+    }
+
+    private boolean isTpsSettlingPause() {
+        return pauseOnLag.get() && tpsThrottlePauseReason == TpsThrottlePauseReason.Settling;
+    }
+
+    private boolean isConfirmedTpsSafetyPause() {
+        return pauseOnLag.get()
+            && tpsThrottlePaused
+            && (tpsThrottlePauseReason == TpsThrottlePauseReason.StaleTick
+                || tpsThrottlePauseReason == TpsThrottlePauseReason.InvalidTps
+                || tpsThrottlePauseReason == TpsThrottlePauseReason.LowTps);
+    }
+
+    private boolean isSafetyForwardEligible() {
+        return state == State.Forward
+            && !suspended
+            && input != null
+            && dir != null
+            && blockPosProvider != null
+            && !forwardSchedulerRuntime.backstepping;
+    }
+
+    private void clearTpsSafetyEnclosureRuntime(String reason, boolean resetEpisode) {
+        boolean hadRuntime = tpsSafetyEnclosureActive
+            || tpsSafetyCenterOwned
+            || tpsSafetyEnclosureAnchor != null
+            || !tpsSafetyEnclosureTargets.isEmpty();
+
+        tpsSafetyEnclosureActive = false;
+        tpsSafetyCenterOwned = false;
+        tpsSafetyEnclosureAnchor = null;
+        tpsSafetyEnclosureTargets.clear();
+        if (resetEpisode) tpsSafetyEnclosureTriggeredThisEpisode = false;
+
+        if (hadRuntime && debugLog.get()) highwayDebug("HB TPS safety enclosure cleared (%s).", reason);
+    }
+
+    private void clearSafetyRuntime(String reason) {
+        safetyPlacedThisTick = false;
+        clearTpsSafetyEnclosureRuntime(reason, true);
+    }
+
+    private boolean tickTpsSafetyEnclosureDuringPause() {
+        if (!tpsSafetyEnclosure.get() || !isConfirmedTpsSafetyPause()) return false;
+
+        if (!tpsSafetyEnclosureActive && !tpsSafetyEnclosureTriggeredThisEpisode) {
+            if (!isSafetyForwardEligible()) return false;
+
+            tpsSafetyEnclosureActive = true;
+            tpsSafetyEnclosureTriggeredThisEpisode = true;
+            tpsSafetyEnclosureAnchor = null;
+            tpsSafetyEnclosureTargets.clear();
+            if (debugLog.get()) highwayDebug("HB TPS safety enclosure armed (reason=%s).", tpsThrottlePauseReason);
+        }
+
+        if (!tpsSafetyEnclosureActive) return false;
+
+        if (tpsSafetyCenterOwned && state == State.Center) {
+            state.tick(this);
+            if (state == State.Center) return true;
+
+            tpsSafetyCenterOwned = false;
+            if (state != State.Forward) {
+                clearTpsSafetyEnclosureRuntime("safety-center-left-to-" + stateName(state), false);
+                return false;
+            }
+        }
+
+        if (state != State.Forward || suspended || forwardSchedulerRuntime.backstepping) {
+            clearTpsSafetyEnclosureRuntime("ineligible-state-" + stateName(state), false);
+            return false;
+        }
+
+        if (!isPlayerCenteredForSafety()) {
+            tpsSafetyCenterOwned = true;
+            if (debugLog.get()) highwayDebug("HB TPS safety enclosure entering Center before build.");
+            setState(State.Center, State.Forward);
+            return false;
+        }
+
+        if (tpsSafetyEnclosureAnchor == null) initializeTpsSafetyEnclosureTargets();
+        placeNextTpsSafetyEnclosureBlock();
+        return false;
+    }
+
+    private void initializeTpsSafetyEnclosureTargets() {
+        tpsSafetyEnclosureAnchor = mc.player.getBlockPos().toImmutable();
+        tpsSafetyEnclosureTargets.clear();
+
+        addTpsSafetyPillar(tpsSafetyEnclosureAnchor.north());
+        addTpsSafetyPillar(tpsSafetyEnclosureAnchor.south());
+        addTpsSafetyPillar(tpsSafetyEnclosureAnchor.east());
+        addTpsSafetyPillar(tpsSafetyEnclosureAnchor.west());
+
+        if (debugLog.get()) {
+            highwayDebug("HB TPS safety enclosure anchor=%s targets=%d.", formatBlockPos(tpsSafetyEnclosureAnchor), tpsSafetyEnclosureTargets.size());
+        }
+    }
+
+    private void addTpsSafetyPillar(BlockPos base) {
+        tpsSafetyEnclosureTargets.add(base.toImmutable());
+        tpsSafetyEnclosureTargets.add(base.up().toImmutable());
+    }
+
+    private void placeNextTpsSafetyEnclosureBlock() {
+        if (safetyPlacedThisTick) return;
+
+        while (!tpsSafetyEnclosureTargets.isEmpty()) {
+            BlockPos target = tpsSafetyEnclosureTargets.pollFirst();
+            if (!isSafetyPlacementCandidate(target)) continue;
+
+            int slot = findSafetyBlockHotbarSlot();
+            if (slot == -1) {
+                tpsSafetyEnclosureTargets.addFirst(target);
+                if (debugLog.get()) highwayDebug("HB TPS safety enclosure waiting: no non-hard-fail block slot.");
+                return;
+            }
+            if (!canSafetyPlaceBlockAt(target, slot)) continue;
+
+            if (trySafetyAirPlaceBlock(target, slot, "tps-enclosure")) {
+                if (debugLog.get()) highwayDebug("HB TPS safety enclosure placed %s.", formatBlockPos(target));
+                return;
+            }
+        }
+
+        if (debugLog.get()) highwayDebug("HB TPS safety enclosure completed.");
+        tpsSafetyEnclosureActive = false;
+        tpsSafetyCenterOwned = false;
+        tpsSafetyEnclosureAnchor = null;
+    }
+
+    private boolean tryFallSaveAirPlace() {
+        if (!fallSaveAirPlace.get()) return false;
+        if (isTpsSettlingPause()) return false;
+        if (!isSafetyForwardEligible()) return false;
+        if (mc.player == null || mc.world == null) return false;
+
+        Box hitbox = mc.player.getBoundingBox();
+        BlockPos dominantColumn = dominantHitboxColumn(hitbox, MathHelper.floor(hitbox.minY));
+        if (dominantColumn == null) return false;
+
+        int supportY = MathHelper.floor(hitbox.minY - 0.01);
+        BlockPos supportPos = new BlockPos(dominantColumn.getX(), supportY, dominantColumn.getZ());
+        boolean supportMissing = mc.world.getBlockState(supportPos).isReplaceable();
+        boolean falling = mc.player.getVelocity().y < -0.03 || mc.player.fallDistance > 0.0f;
+        if (!supportMissing && !falling) return false;
+
+        int feetY = MathHelper.floor(hitbox.minY);
+        int minY = feetY - fallSaveDistance.get();
+        int maxY = feetY - 1;
+
+        for (int y = minY; y <= maxY; y++) {
+            BlockPos target = new BlockPos(dominantColumn.getX(), y, dominantColumn.getZ());
+            if (!isSafetyPlacementCandidate(target)) continue;
+
+            int slot = findSafetyBlockHotbarSlot();
+            if (slot == -1) {
+                if (debugLog.get()) highwayDebug("HB fall-save skipped: no non-hard-fail block slot.");
+                return false;
+            }
+            if (!canSafetyPlaceBlockAt(target, slot)) continue;
+
+            if (trySafetyAirPlaceBlock(target, slot, "fall-save")) {
+                if (debugLog.get()) {
+                    highwayDebug(
+                        "HB fall-save placed %s (supportMissing=%s, falling=%s, velocityY=%.3f, fallDistance=%.2f).",
+                        formatBlockPos(target),
+                        supportMissing,
+                        falling,
+                        mc.player.getVelocity().y,
+                        mc.player.fallDistance
+                    );
+                }
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private BlockPos dominantHitboxColumn(Box hitbox, int y) {
+        int minX = MathHelper.floor(hitbox.minX);
+        int maxX = MathHelper.floor(Math.nextDown(hitbox.maxX));
+        int minZ = MathHelper.floor(hitbox.minZ);
+        int maxZ = MathHelper.floor(Math.nextDown(hitbox.maxZ));
+        double centerX = (hitbox.minX + hitbox.maxX) * 0.5;
+        double centerZ = (hitbox.minZ + hitbox.maxZ) * 0.5;
+
+        BlockPos best = null;
+        double bestArea = -1.0;
+        double bestDistanceSq = Double.POSITIVE_INFINITY;
+
+        for (int x = minX; x <= maxX; x++) {
+            double overlapX = Math.max(0.0, Math.min(hitbox.maxX, x + 1.0) - Math.max(hitbox.minX, x));
+            for (int z = minZ; z <= maxZ; z++) {
+                double overlapZ = Math.max(0.0, Math.min(hitbox.maxZ, z + 1.0) - Math.max(hitbox.minZ, z));
+                double area = overlapX * overlapZ;
+                double dx = (x + 0.5) - centerX;
+                double dz = (z + 0.5) - centerZ;
+                double distanceSq = dx * dx + dz * dz;
+
+                if (area > bestArea || (Math.abs(area - bestArea) <= 1.0e-9 && distanceSq < bestDistanceSq)) {
+                    bestArea = area;
+                    bestDistanceSq = distanceSq;
+                    best = new BlockPos(x, y, z);
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private boolean isSafetyPlacementCandidate(BlockPos target) {
+        if (mc.player == null || mc.world == null || target == null) return false;
+        if (!isWithinConfiguredForwardRange(target)) return false;
+
+        BlockState state = mc.world.getBlockState(target);
+        return state.isReplaceable();
+    }
+
+    private boolean canSafetyPlaceBlockAt(BlockPos target, int slot) {
+        if (mc.player == null || mc.world == null || target == null) return false;
+        if (slot < 0 || slot > 8) return false;
+        ItemStack stack = mc.player.getInventory().getStack(slot);
+        if (!(stack.getItem() instanceof BlockItem blockItem)) return false;
+        return BlockUtils.canPlaceBlock(target, true, blockItem.getBlock());
+    }
+
+    private int findSafetyBlockHotbarSlot() {
+        return State.Forward.findAndMoveToHotbar(
+            this,
+            itemStack -> itemStack.getItem() instanceof BlockItem blockItem && blocksToPlace.get().contains(blockItem.getBlock()),
+            false
+        );
+    }
+
+    private boolean trySafetyAirPlaceBlock(BlockPos target, int slot, String source) {
+        if (mc.player == null || mc.world == null) return false;
+        if (slot < 0 || slot > 8) return false;
+
+        ItemStack stack = mc.player.getInventory().getStack(slot);
+        if (!(stack.getItem() instanceof BlockItem blockItem)) return false;
+        if (!blocksToPlace.get().contains(blockItem.getBlock())) return false;
+        if (!BlockUtils.canPlaceBlock(target, true, blockItem.getBlock())) return false;
+
+        FindItemResult item = new FindItemResult(slot, stack.getCount());
+        boolean placed = PacketPlaceUtils.placeBlockPacket(target, item, false, 0, true, silentForwardPlaceSwap.get());
+        if (!placed) return false;
+
+        safetyPlacedThisTick = true;
+        placeTimer = placeDelay.get();
+        count++;
+        forwardPlaceCount++;
+        if (renderPlace.get()) placeTrail.add(BlockPos.asLong(target.getX(), target.getY(), target.getZ()));
+        if (debugLog.get()) highwayDebug("HB safety place source=%s target=%s slot=%d.", source, formatBlockPos(target), slot);
+        return true;
+    }
+
+    private boolean isPlayerCenteredForSafety() {
+        if (mc.player == null) return false;
+        double centerX = getCenteredBlockCoordinate(mc.player.getX());
+        double centerZ = getCenteredBlockCoordinate(mc.player.getZ());
+        return Math.abs(mc.player.getX() - centerX) <= 0.1
+            && Math.abs(mc.player.getZ() - centerZ) <= 0.1;
     }
 
     private double effectiveBlocksPerTickActionRate() {
@@ -10616,9 +11022,10 @@ public class HighwayBuilderTHM extends Module {
         // In paket mode, skip place work while mine tasks are pending so the UpdateSelectedSlot
         // packet (pickaxe switch) and the mine packets are not dropped by the packet rate limiter.
         boolean skipPlaceForPaketMine = packetBuild.get() && activeRow != null && !activeRow.mineQueue.isEmpty();
+        boolean skipPlaceForSafetyPlacement = safetyPlacedThisTick;
 
         boolean placedChangedWorld = false;
-        if (!skipPlaceForPaketMine) {
+        if (!skipPlaceForPaketMine && !skipPlaceForSafetyPlacement) {
             placedChangedWorld = runForwardPlaceWork(activeRow);
             if (placedChangedWorld) logForwardSchedulerStatus("place", activeRow, "place changed world", true);
             if (state != State.Forward) return;
