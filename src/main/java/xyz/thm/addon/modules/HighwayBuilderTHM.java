@@ -699,6 +699,13 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
+    private final Setting<Boolean> packetMode = sgGeneral.add(new BoolSetting.Builder()
+        .name("packet-mode")
+        .description("Enables Packet Build and Packet Borer. Leaves them alone if already on.")
+        .defaultValue(false)
+        .onChanged(value -> { if (value) activatePacketMode(); })
+        .build()
+    );
 
     // Digging
 
@@ -819,6 +826,13 @@ public class HighwayBuilderTHM extends Module {
         .defaultValue(true)
         .onChanged(value -> updateSignBreakRegex())
         .visible(() -> !ignoreSigns.get())
+        .build()
+    );
+
+    private final Setting<Boolean> packetBorer = sgDigging.add(new BoolSetting.Builder()
+        .name("packet-borer")
+        .description("Supplements digging by spamming instant-break packets for the full highway shape around the player each tick, like packet build does for placing.")
+        .defaultValue(false)
         .build()
     );
 
@@ -1328,6 +1342,7 @@ public class HighwayBuilderTHM extends Module {
     private int forwardLatchedMineSlot = -1;
     private int mineActionsThisTick;
     private double mineFractionCarry;
+    private int borerPackets;
     private int placeActionsThisTick;
     private double placeFractionCarry;
     private int tpsThrottleLastSampleAge = Integer.MIN_VALUE;
@@ -3946,6 +3961,7 @@ public class HighwayBuilderTHM extends Module {
             if (placeTimer > 0) placeTimer--;
             return;
         }
+        tickPacketBorer();
         tickDoubleMine();
         accrueEnclosurePlaceCredit();
         enforceKitbotFoodRestockFoodType();
@@ -10277,6 +10293,51 @@ public class HighwayBuilderTHM extends Module {
     private void notifyDesktop(Setting<Boolean> eventToggle, String heading, String description) {
         if (!desktopNotifies.get() || !eventToggle.get()) return;
         Notify(heading, description);
+    }
+
+    private void activatePacketMode() {
+        packetBuild.set(true);
+        packetBorer.set(true);
+    }
+
+    private void tickPacketBorer() {
+        if (!packetBorer.get() || dir == null || mc.player == null || mc.world == null) return;
+        borerPackets = 0;
+        int dx = dir.offsetX, dz = dir.offsetZ;
+        // perpendicular: left = CW rotation (dz, -dx), right = CCW (-dz, dx)
+        int lx = dz, lz = -dx, rx = -dz, rz = dx;
+        BlockPos base = mc.player.getBlockPos();
+        int xOff = dir.diagonal ? dx * 2 : 0;
+        int zOff = dir.diagonal ? dz * 2 : 0;
+        doPacketBorerShape(base.add(xOff, 0, zOff), dx, dz, lx, lz, rx, rz);
+        // for diagonals, a second shifted pass covers the other arm of the diagonal tunnel
+        if (dir.diagonal) doPacketBorerShape(base.add(xOff * -3, 0, zOff * -3), dx, dz, lx, lz, rx, rz);
+    }
+
+    private void doPacketBorerShape(BlockPos center, int dx, int dz, int lx, int lz, int rx, int rz) {
+        int ext = dir.diagonal ? 1 : 4;
+        int back = dir.diagonal ? 2 : 4;
+        for (int i = -back; i <= ext; i++) {
+            int bx = center.getX() + dx * i;
+            int bz = center.getZ() + dz * i;
+            int by = center.getY();
+            // center col (y+0..3), right-1 (y+0..3), right-2 (y+1..3), left-1 (y+0..3), left-2 (y+0..3), left-3 (y+1..3)
+            for (int y = 0; y <= 3; y++) borerBreakBlock(new BlockPos(bx, by + y, bz));
+            for (int y = 0; y <= 3; y++) borerBreakBlock(new BlockPos(bx + rx, by + y, bz + rz));
+            for (int y = 1; y <= 3; y++) borerBreakBlock(new BlockPos(bx + rx * 2, by + y, bz + rz * 2));
+            for (int y = 0; y <= 3; y++) borerBreakBlock(new BlockPos(bx + lx, by + y, bz + lz));
+            for (int y = 0; y <= 3; y++) borerBreakBlock(new BlockPos(bx + lx * 2, by + y, bz + lz * 2));
+            for (int y = 1; y <= 3; y++) borerBreakBlock(new BlockPos(bx + lx * 3, by + y, bz + lz * 3));
+        }
+    }
+
+    private void borerBreakBlock(BlockPos pos) {
+        if (borerPackets >= 130) return;
+        BlockState state = mc.world.getBlockState(pos);
+        if (!safeCanBreak(pos, state)) return;
+        mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos, Direction.UP));
+        mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, pos, Direction.UP));
+        borerPackets += 2;
     }
 
     private void tickDoubleMine() {
