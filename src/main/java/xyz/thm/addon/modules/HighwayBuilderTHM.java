@@ -183,9 +183,13 @@ public class HighwayBuilderTHM extends Module {
     private static final double THM_FORWARD_DRIFT_RECOVERY_START = 0.125;
     private static final double THM_FORWARD_DRIFT_RECOVERY_STOP = 0.03;
     private static final double KITBOT_ORDER_CENTER_RADIUS = 0.125;
+    private static final double KITBOT_ORDER_SUBMIT_RADIUS = 0.25;
     private static final double KITBOT_ORDER_CENTER_SLOWDOWN_DISTANCE = 0.75;
     private static final double KITBOT_ORDER_CENTER_SPEED_CAP = 1.0;
     private static final int KITBOT_ORDER_CENTER_TIMEOUT_TICKS = 100;
+    private static final int KITBOT_ORDER_VERIFY_RECENTER_TIMEOUT_TICKS = 20;
+    private static final int KITBOT_ORDER_VERIFY_SETTLE_TICKS = 5;
+    private static final int KITBOT_ORDER_VERIFY_WIGGLE_TICKS = DESYNC_WIGGLE_LEFT_TICKS + DESYNC_WIGGLE_RIGHT_TICKS;
     private static final int TPS_THROTTLE_SAMPLE_INTERVAL_TICKS = 40;
     private static final double TPS_THROTTLE_PAUSE_THRESHOLD = 10.0;
     private static final double TPS_THROTTLE_NORMAL = 20.0;
@@ -1394,6 +1398,16 @@ public class HighwayBuilderTHM extends Module {
     private int kitbotPartialDeliveryGraceUntilAge;
     private long kitbotNextSubmitAtMs;
     private long kitbotInventoryProofDeadlineMs;
+    private boolean kitbotOrderCenterVerificationActive;
+    private boolean kitbotOrderCenterVerified;
+    private int kitbotOrderCenterVerificationTicks;
+    private int kitbotOrderCenterVerificationFailures;
+    private int kitbotOrderCenterVerificationRecenterTicks;
+    private int kitbotOrderCenterVerificationSettleTicks;
+    private boolean kitbotOrderCenterVerificationRecentered;
+    private double kitbotOrderCenterVerificationTargetX = Double.NaN;
+    private double kitbotOrderCenterVerificationTargetZ = Double.NaN;
+    private double kitbotOrderCenterVerificationDistance = Double.POSITIVE_INFINITY;
     private final KitbotFrontend.LifecycleListener kitbotRestockLifecycleListener = this::onKitbotRestockLifecycle;
     private boolean kitbotOrderResumeAfterCenter;
     private BlockPos pendingCenterTargetBlock;
@@ -2070,6 +2084,7 @@ public class HighwayBuilderTHM extends Module {
     public void onDeactivate() {
         KitbotFrontend.removeLifecycleListener(kitbotRestockLifecycleListener);
         if (input != null) input.stop();
+        restoreHotbarManagerAfterTrash("module-deactivate");
         clearDesyncWiggleProbe("module-deactivate");
         clearMainServerResumeGate();
         resetEatingPauseWatchdog();
@@ -4180,6 +4195,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void scheduleKitbotRestockSubmitAfterWindow(long remainingWindowMs, String reason) {
+        invalidateKitbotOrderCenterVerification("schedule-submit:" + reason);
         long remaining = Math.max(Math.max(remainingWindowMs, KitbotFrontend.getRemainingWindowMs()), 0L);
         kitbotNextSubmitAtMs = System.currentTimeMillis() + remaining + KITBOT_FRONTEND_WINDOW_BUFFER_MS;
         if (restockDebugLog.get()) {
@@ -4739,8 +4755,12 @@ public class HighwayBuilderTHM extends Module {
         if (previousState == State.MineEnderChests && state != State.MineEnderChests) {
             restoreEChestBreakSpeedIfOwned("echest-exit:" + stateName(state));
         }
+        if (previousState == State.ThrowOutTrash && state != State.ThrowOutTrash) {
+            restoreHotbarManagerAfterTrash("throw-out-trash-exit:" + stateName(state));
+        }
         if (previousState == State.KitbotOrder && state != State.KitbotOrder) {
             clearKitbotCenteringRuntime("kitbot-order-exit:" + stateName(state));
+            resetKitbotOrderCenterVerificationRuntime("kitbot-order-exit:" + stateName(state));
         }
         if (previousState == State.Forward && state != State.Forward) {
             clearForwardLatchedPlaceSlot();
@@ -4855,6 +4875,7 @@ public class HighwayBuilderTHM extends Module {
 
     private void clearKitbotRuntimeState(String reason) {
         clearKitbotCenteringRuntime(reason);
+        resetKitbotOrderCenterVerificationRuntime(reason);
         clearKitbotOrderTracking(reason);
         clearKitbotEnclosureState(reason);
         kitbotOrderResumeAfterCenter = false;
@@ -4884,6 +4905,53 @@ public class HighwayBuilderTHM extends Module {
         if (hadRuntime && restockDebugLog.get()) {
             restockDebug("KitbotOrder cleared center-walk runtime (%s).", reason);
         }
+    }
+
+    private void resetKitbotOrderCenterVerificationRuntime(String reason) {
+        clearKitbotOrderCenterVerificationRuntime(reason, true);
+    }
+
+    private void invalidateKitbotOrderCenterVerification(String reason) {
+        clearKitbotOrderCenterVerificationRuntime(reason, false);
+    }
+
+    private void clearKitbotOrderCenterVerificationRuntime(String reason, boolean resetFailures) {
+        boolean hadRuntime = kitbotOrderCenterVerificationActive
+            || kitbotOrderCenterVerified
+            || kitbotOrderCenterVerificationTicks != 0
+            || kitbotOrderCenterVerificationRecenterTicks != 0
+            || kitbotOrderCenterVerificationSettleTicks != 0
+            || kitbotOrderCenterVerificationRecentered
+            || Double.isFinite(kitbotOrderCenterVerificationTargetX)
+            || Double.isFinite(kitbotOrderCenterVerificationTargetZ)
+            || Double.isFinite(kitbotOrderCenterVerificationDistance)
+            || (resetFailures && kitbotOrderCenterVerificationFailures != 0);
+        boolean wasActive = kitbotOrderCenterVerificationActive;
+
+        kitbotOrderCenterVerificationActive = false;
+        kitbotOrderCenterVerified = false;
+        kitbotOrderCenterVerificationTicks = 0;
+        kitbotOrderCenterVerificationRecenterTicks = 0;
+        kitbotOrderCenterVerificationSettleTicks = 0;
+        kitbotOrderCenterVerificationRecentered = false;
+        kitbotOrderCenterVerificationTargetX = Double.NaN;
+        kitbotOrderCenterVerificationTargetZ = Double.NaN;
+        kitbotOrderCenterVerificationDistance = Double.POSITIVE_INFINITY;
+        if (resetFailures) kitbotOrderCenterVerificationFailures = 0;
+        if (wasActive && input != null) input.stop();
+
+        if (hadRuntime && restockDebugLog.get()) {
+            restockDebug(
+                "KitbotOrder cleared center verification runtime (%s, resetFailures=%s).",
+                reason,
+                resetFailures
+            );
+        }
+    }
+
+    private boolean matchesKitbotOrderCenterVerificationTarget(double targetX, double targetZ) {
+        return Math.abs(kitbotOrderCenterVerificationTargetX - targetX) <= 0.0001
+            && Math.abs(kitbotOrderCenterVerificationTargetZ - targetZ) <= 0.0001;
     }
 
     private void clearKitbotOrderTracking(String reason) {
@@ -9421,6 +9489,35 @@ public class HighwayBuilderTHM extends Module {
         return manager != null && manager.isActive() && manager.managesSlot(hotbarSlot);
     }
 
+    private boolean isHotbarSlotConfiguredByManager(int hotbarSlot) {
+        if (hotbarSlot < 0 || hotbarSlot >= 9) return false;
+        if (!hotbarmanager.get()) return false;
+
+        HotbarManager manager = Modules.get().get(HotbarManager.class);
+        return manager != null && manager.managesSlot(hotbarSlot);
+    }
+
+    private boolean disableHotbarManagerForTrash(String reason) {
+        if (!hotbarmanager.get()) return false;
+
+        HotbarManager manager = Modules.get().get(HotbarManager.class);
+        if (manager == null || !manager.isActive()) return false;
+
+        manager.toggle();
+        if (restockDebugLog.get()) restockDebug("ThrowOutTrash paused HotbarManager (%s).", reason);
+        return true;
+    }
+
+    private void restoreHotbarManagerAfterTrash(String reason) {
+        if (!hotbarmanager.get()) return;
+
+        HotbarManager manager = Modules.get().get(HotbarManager.class);
+        if (manager == null || manager.isActive()) return;
+
+        manager.toggle();
+        if (restockDebugLog.get()) restockDebug("ThrowOutTrash restored HotbarManager (%s).", reason);
+    }
+
     private void syncFoodManagementOnActivate() {
         switch (foodManagement.get()) {
             case None -> {
@@ -11933,11 +12030,12 @@ public class HighwayBuilderTHM extends Module {
 
             @Override
             protected void start(HighwayBuilderTHM b) {
+                boolean pausedHotbarManager = b.disableHotbarManagerForTrash("throw-out-trash-start");
                 keepSlots.clear();
                 skippedDropSlots.clear();
                 firstTick = true;
                 completionDelayStarted = false;
-                timer = 0;
+                timer = pausedHotbarManager ? Math.max(1, b.inventoryDelay.get()) : 0;
                 clearFailedDropState();
                 failedRotationRetries = 0;
                 cachedPreRotateYaw = b.mc.player.getYaw();
@@ -12104,6 +12202,7 @@ public class HighwayBuilderTHM extends Module {
             private int findTrashSwapSlot(HighwayBuilderTHM b, boolean allowProtectedTrash) {
                 refreshProtectedTrashSlots(b);
                 for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
+                    if (isManagedHotbarTrashSlot(b, i)) continue;
                     ItemStack itemStack = b.mc.player.getInventory().getStack(i);
                     if (!isEligibleTrashReserveStack(b, itemStack)) continue;
                     if (!allowProtectedTrash && keepSlots.contains(i)) continue;
@@ -12118,6 +12217,7 @@ public class HighwayBuilderTHM extends Module {
 
                 List<Integer> trashBlockSlots = new ArrayList<>();
                 for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
+                    if (isManagedHotbarTrashSlot(b, i)) continue;
                     ItemStack itemStack = b.mc.player.getInventory().getStack(i);
                     if (!isEligibleTrashReserveStack(b, itemStack)) continue;
                     trashBlockSlots.add(i);
@@ -12147,6 +12247,11 @@ public class HighwayBuilderTHM extends Module {
                             && !isProtectedShulkerForTrash(b, itemStack);
                         boolean droppableTrashItem = b.isDroppableTrashStack(itemStack);
                         if (!droppableShulker && !droppableTrashItem) continue;
+
+                        if (isManagedHotbarTrashSlot(b, i)) {
+                            blockedThisPass = true;
+                            continue;
+                        }
 
                         if (isSkippedDropSlot(i, itemStack)) {
                             blockedThisPass = true;
@@ -12196,6 +12301,10 @@ public class HighwayBuilderTHM extends Module {
                 }
 
                 return false;
+            }
+
+            private boolean isManagedHotbarTrashSlot(HighwayBuilderTHM b, int slot) {
+                return slot >= 0 && slot < 9 && b.isHotbarSlotConfiguredByManager(slot);
             }
 
             private boolean isSkippedDropSlot(int slot, ItemStack itemStack) {
@@ -12596,6 +12705,7 @@ public class HighwayBuilderTHM extends Module {
 
                 positionReady = false;
                 b.clearKitbotCenteringRuntime("kitbot-order-start");
+                b.resetKitbotOrderCenterVerificationRuntime("kitbot-order-start");
                 sourceBlockadeType = b.getEffectiveBlockadeType();
                 containerDirection = b.getRestockContainerDirection(b.dir);
                 expansionDirection = b.getKitbotExpansionDirection(containerDirection);
@@ -12719,6 +12829,267 @@ public class HighwayBuilderTHM extends Module {
                 return true;
             }
 
+            private boolean verifyKitbotOrderCenterBeforeSubmit(HighwayBuilderTHM b) {
+                if (b.mc.player == null) return true;
+
+                Vec3d targetOrderPos = b.getKitbotOrderTargetPosition(
+                    b.kitbotAnchorPos.toImmutable(),
+                    b.mc.player.getY(),
+                    containerDirection,
+                    expansionDirection
+                );
+                if (targetOrderPos == null) {
+                    failKitbotOrder(b, "Unable to resolve the KitBot enclosure center before verifying order position.", FailureMode.KITBOT_LOCAL);
+                    return true;
+                }
+
+                targetOrderX = targetOrderPos.x;
+                targetOrderZ = targetOrderPos.z;
+
+                if ((b.kitbotOrderCenterVerificationActive || b.kitbotOrderCenterVerified)
+                    && !b.matchesKitbotOrderCenterVerificationTarget(targetOrderX, targetOrderZ)) {
+                    b.invalidateKitbotOrderCenterVerification("kitbot-order-target-changed");
+                }
+
+                double distance = distanceToKitbotOrderCenter(b);
+                boolean playerBlockMatchesAnchor = playerBlockMatchesKitbotAnchor(b);
+                b.kitbotOrderCenterVerificationDistance = distance;
+
+                if (b.kitbotOrderCenterVerified) {
+                    if (distance <= KITBOT_ORDER_SUBMIT_RADIUS) {
+                        if (b.restockDebugLog.get()) {
+                            b.restockDebug(
+                                "KitbotOrder center verification accepted for submit: player=(%.6f, %.6f) block=%s target=(%.3f, %.3f) distance=%.3f submitRadius=%.3f playerBlockMatchesAnchor=%s failures=%d.",
+                                b.mc.player.getX(),
+                                b.mc.player.getZ(),
+                                b.formatBlockPos(b.mc.player.getBlockPos()),
+                                targetOrderX,
+                                targetOrderZ,
+                                distance,
+                                KITBOT_ORDER_SUBMIT_RADIUS,
+                                playerBlockMatchesAnchor,
+                                b.kitbotOrderCenterVerificationFailures
+                            );
+                        }
+                        return false;
+                    }
+
+                    if (b.restockDebugLog.get()) {
+                        b.restockDebug(
+                            "KitbotOrder center verification invalidated before submit: player=(%.6f, %.6f) block=%s target=(%.3f, %.3f) distance=%.3f submitRadius=%.3f playerBlockMatchesAnchor=%s.",
+                            b.mc.player.getX(),
+                            b.mc.player.getZ(),
+                            b.formatBlockPos(b.mc.player.getBlockPos()),
+                            targetOrderX,
+                            targetOrderZ,
+                            distance,
+                            KITBOT_ORDER_SUBMIT_RADIUS,
+                            playerBlockMatchesAnchor
+                        );
+                    }
+                    b.invalidateKitbotOrderCenterVerification("kitbot-order-verified-position-invalid");
+                    positionReady = false;
+                }
+
+                if (b.kitbotOrderCenterVerificationActive) {
+                    return tickKitbotOrderCenterVerification(b);
+                }
+
+                if (distance > KITBOT_ORDER_CENTER_RADIUS) {
+                    if (b.restockDebugLog.get()) {
+                        b.restockDebug(
+                            "KitbotOrder submit blocked until center walk: player=(%.6f, %.6f) block=%s target=(%.3f, %.3f) distance=%.3f centerRadius=%.3f playerBlockMatchesAnchor=%s failures=%d.",
+                            b.mc.player.getX(),
+                            b.mc.player.getZ(),
+                            b.formatBlockPos(b.mc.player.getBlockPos()),
+                            targetOrderX,
+                            targetOrderZ,
+                            distance,
+                            KITBOT_ORDER_CENTER_RADIUS,
+                            playerBlockMatchesAnchor,
+                            b.kitbotOrderCenterVerificationFailures
+                        );
+                    }
+                    b.invalidateKitbotOrderCenterVerification("kitbot-order-pre-submit-position");
+                    positionReady = false;
+                    if (handleKitbotOrderCentering(b)) return true;
+                }
+
+                return startKitbotOrderCenterVerification(b);
+            }
+
+            private boolean startKitbotOrderCenterVerification(HighwayBuilderTHM b) {
+                if (b.mc.player == null || b.input == null) return true;
+
+                b.kitbotOrderCenterVerificationActive = true;
+                b.kitbotOrderCenterVerified = false;
+                b.kitbotOrderCenterVerificationTicks = 0;
+                b.kitbotOrderCenterVerificationRecenterTicks = 0;
+                b.kitbotOrderCenterVerificationSettleTicks = 0;
+                b.kitbotOrderCenterVerificationRecentered = false;
+                b.kitbotOrderCenterVerificationTargetX = targetOrderX;
+                b.kitbotOrderCenterVerificationTargetZ = targetOrderZ;
+                b.kitbotOrderCenterVerificationDistance = distanceToKitbotOrderCenter(b);
+                b.input.stop();
+
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug(
+                        "KitbotOrder center verification started: player=(%.6f, %.6f) target=(%.3f, %.3f) distance=%.3f failures=%d wiggleTicks=%d recenterTimeout=%d settleTicks=%d submitRadius=%.3f.",
+                        b.mc.player.getX(),
+                        b.mc.player.getZ(),
+                        targetOrderX,
+                        targetOrderZ,
+                        b.kitbotOrderCenterVerificationDistance,
+                        b.kitbotOrderCenterVerificationFailures,
+                        KITBOT_ORDER_VERIFY_WIGGLE_TICKS,
+                        KITBOT_ORDER_VERIFY_RECENTER_TIMEOUT_TICKS,
+                        KITBOT_ORDER_VERIFY_SETTLE_TICKS,
+                        KITBOT_ORDER_SUBMIT_RADIUS
+                    );
+                }
+
+                return true;
+            }
+
+            private boolean tickKitbotOrderCenterVerification(HighwayBuilderTHM b) {
+                if (b.mc.player == null || b.input == null) return true;
+
+                b.input.stop();
+                if (b.kitbotOrderCenterVerificationTicks < KITBOT_ORDER_VERIFY_WIGGLE_TICKS) {
+                    int tick = b.kitbotOrderCenterVerificationTicks;
+                    if (tick < DESYNC_WIGGLE_LEFT_TICKS) {
+                        b.input.left(true);
+                    } else {
+                        b.input.right(true);
+                    }
+
+                    b.kitbotOrderCenterVerificationTicks++;
+                    return true;
+                }
+
+                if (!b.kitbotOrderCenterVerificationRecentered) {
+                    KitbotCenterWalkResult result = b.walkKitbotToTarget(
+                        targetOrderX,
+                        targetOrderZ,
+                        KITBOT_ORDER_CENTER_RADIUS,
+                        "kitbot-order-wiggle-recenter",
+                        "enclosure center recenter"
+                    );
+
+                    if (result == KitbotCenterWalkResult.Reached) {
+                        b.kitbotOrderCenterVerificationRecentered = true;
+                        b.kitbotOrderCenterVerificationRecenterTicks = 0;
+                        b.kitbotOrderCenterVerificationSettleTicks = 0;
+                        b.input.stop();
+                        if (b.restockDebugLog.get()) {
+                            b.restockDebug(
+                                "KitbotOrder center verification recentered after wiggle: player=(%.6f, %.6f) target=(%.3f, %.3f) distance=%.3f centerRadius=%.3f.",
+                                b.mc.player.getX(),
+                                b.mc.player.getZ(),
+                                targetOrderX,
+                                targetOrderZ,
+                                distanceToKitbotOrderCenter(b),
+                                KITBOT_ORDER_CENTER_RADIUS
+                            );
+                        }
+                        return true;
+                    }
+
+                    b.kitbotOrderCenterVerificationRecenterTicks++;
+                    if (result == KitbotCenterWalkResult.TimedOut
+                        || b.kitbotOrderCenterVerificationRecenterTicks >= KITBOT_ORDER_VERIFY_RECENTER_TIMEOUT_TICKS) {
+                        failSoftKitbotOrderCenterVerification(b, "recenter-timeout");
+                    }
+
+                    return true;
+                }
+
+                if (b.kitbotOrderCenterVerificationSettleTicks < KITBOT_ORDER_VERIFY_SETTLE_TICKS) {
+                    b.kitbotOrderCenterVerificationSettleTicks++;
+                    b.input.stop();
+                    return true;
+                }
+
+                b.input.stop();
+                double distance = distanceToKitbotOrderCenter(b);
+                boolean playerBlockMatchesAnchor = playerBlockMatchesKitbotAnchor(b);
+                b.kitbotOrderCenterVerificationActive = false;
+                b.kitbotOrderCenterVerificationTicks = 0;
+                b.kitbotOrderCenterVerificationRecenterTicks = 0;
+                b.kitbotOrderCenterVerificationSettleTicks = 0;
+                b.kitbotOrderCenterVerificationRecentered = false;
+                b.kitbotOrderCenterVerificationDistance = distance;
+
+                if (distance <= KITBOT_ORDER_SUBMIT_RADIUS) {
+                    b.kitbotOrderCenterVerified = true;
+                    if (b.restockDebugLog.get()) {
+                        b.restockDebug(
+                            "KitbotOrder center verification passed: player=(%.6f, %.6f) block=%s target=(%.3f, %.3f) distance=%.3f submitRadius=%.3f playerBlockMatchesAnchor=%s failures=%d.",
+                            b.mc.player.getX(),
+                            b.mc.player.getZ(),
+                            b.formatBlockPos(b.mc.player.getBlockPos()),
+                            targetOrderX,
+                            targetOrderZ,
+                            distance,
+                            KITBOT_ORDER_SUBMIT_RADIUS,
+                            playerBlockMatchesAnchor,
+                            b.kitbotOrderCenterVerificationFailures
+                        );
+                    }
+                    return true;
+                }
+
+                failSoftKitbotOrderCenterVerification(b, "submit-radius");
+                return true;
+            }
+
+            private void failSoftKitbotOrderCenterVerification(HighwayBuilderTHM b, String reason) {
+                double distance = distanceToKitbotOrderCenter(b);
+                boolean playerBlockMatchesAnchor = playerBlockMatchesKitbotAnchor(b);
+                b.kitbotOrderCenterVerified = false;
+                b.kitbotOrderCenterVerificationActive = false;
+                b.kitbotOrderCenterVerificationTicks = 0;
+                b.kitbotOrderCenterVerificationRecenterTicks = 0;
+                b.kitbotOrderCenterVerificationSettleTicks = 0;
+                b.kitbotOrderCenterVerificationRecentered = false;
+                b.kitbotOrderCenterVerificationFailures++;
+                b.kitbotOrderCenterVerificationTargetX = Double.NaN;
+                b.kitbotOrderCenterVerificationTargetZ = Double.NaN;
+                b.kitbotOrderCenterVerificationDistance = distance;
+                positionReady = false;
+                b.clearKitbotCenteringRuntime("kitbot-order-verification-" + reason);
+
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug(
+                        "KitbotOrder center verification soft-failed (%s): player=(%.6f, %.6f) block=%s target=(%.3f, %.3f) distance=%.3f centerRadius=%.3f submitRadius=%.3f playerBlockMatchesAnchor=%s failures=%d.",
+                        reason,
+                        b.mc.player.getX(),
+                        b.mc.player.getZ(),
+                        b.formatBlockPos(b.mc.player.getBlockPos()),
+                        targetOrderX,
+                        targetOrderZ,
+                        distance,
+                        KITBOT_ORDER_CENTER_RADIUS,
+                        KITBOT_ORDER_SUBMIT_RADIUS,
+                        playerBlockMatchesAnchor,
+                        b.kitbotOrderCenterVerificationFailures
+                    );
+                }
+            }
+
+            private double distanceToKitbotOrderCenter(HighwayBuilderTHM b) {
+                if (b.mc.player == null) return Double.POSITIVE_INFINITY;
+                return Math.hypot(targetOrderX - b.mc.player.getX(), targetOrderZ - b.mc.player.getZ());
+            }
+
+            private boolean playerBlockMatchesKitbotAnchor(HighwayBuilderTHM b) {
+                if (b.mc.player == null) return false;
+                BlockPos playerPos = b.mc.player.getBlockPos();
+                return playerPos.getX() == b.kitbotAnchorPos.getX()
+                    && playerPos.getY() == b.kitbotAnchorPos.getY()
+                    && playerPos.getZ() == b.kitbotAnchorPos.getZ();
+            }
+
             private void submitKitbotOrderIfReady(HighwayBuilderTHM b) {
                 long now = System.currentTimeMillis();
                 if (b.kitbotNextSubmitAtMs > 0L && now < b.kitbotNextSubmitAtMs) return;
@@ -12739,6 +13110,8 @@ public class HighwayBuilderTHM extends Module {
                     b.restockWatchdog.pauseHeartbeat("kitbot-awaiting-restart");
                     return;
                 }
+
+                if (verifyKitbotOrderCenterBeforeSubmit(b)) return;
 
                 KitbotFrontend.KitName kit = b.getKitbotKitNameForActiveRestock();
                 int amount = b.getKitbotOrderAmountForActiveRestock();
@@ -12763,6 +13136,7 @@ public class HighwayBuilderTHM extends Module {
                     return;
                 }
 
+                b.invalidateKitbotOrderCenterVerification("kitbot-order-accepted");
                 if (b.kitbotOrderAcceptedAttempts == 0) {
                     b.kitbotOrderBaselineShulkerCount = baseline;
                     b.kitbotOrderExpectedShulkerGain = amount;
