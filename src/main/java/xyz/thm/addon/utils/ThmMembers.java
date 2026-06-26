@@ -241,6 +241,21 @@ public final class ThmMembers {
         return cachedHighwayByMcName.get(normalized);
     }
 
+    /** Returns the max distance from origin (blocks) this member is allowed to claim via $update. Mirrors the server-side getMemberDistanceLimit logic. */
+    public static double getDistanceLimit(Member member) {
+        if (member == null || member.rank == null) return 50000;
+        String rank = member.rank.trim().toLowerCase(Locale.ROOT);
+        if (rank.contains("mayor") || rank.contains("king") || rank.contains("prince")
+            || rank.contains("major") || rank.contains("chosen")) return Double.MAX_VALUE;
+        return switch (rank) {
+            case "elite highway man" -> 500000;
+            case "journeyman"        -> 300000;
+            case "highway man"       -> 100000;
+            case "apprentice"        -> 100000;
+            default                  -> 50000;
+        };
+    }
+
     public static Color getRankColor(String rankName) {
         return switch (rankName) {
             case "King","King/Owner" -> new Color(255, 217, 94, 255); // Orange

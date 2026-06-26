@@ -630,7 +630,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> kitbotPeriodicUpdate = sgKitBotIntegration.add(new BoolSetting.Builder()
         .name("kitbot-periodic-update")
-        .description("Sends $update to KitBot1 every 30 minutes while building without stopping. Deferred until after restock completes.")
+        .description("Sends $update to KitBot1 every hour while building without stopping. Deferred until after restock completes.")
         .defaultValue(true)
         .build()
     );
@@ -1526,7 +1526,7 @@ public class HighwayBuilderTHM extends Module {
     private int nextAdvertisementIndex;
     private long nextAdvertisementAtTick;
     private static final String KITBOT_NAME = "KitBot1";
-    private static final long KITBOT_PERIODIC_UPDATE_INTERVAL_TICKS = 36000L; // 30 min at 20 tps
+    private static final long KITBOT_PERIODIC_UPDATE_INTERVAL_TICKS = 72000L; // 1 hour at 20 tps
     private static final double CENTER_SPEED_OVERRIDE = 0.6;
     private static final int CENTER_SPEED_RESTORE_RETRY_WINDOW_TICKS = 60;
     private static final double CENTER_TELEPORT_MAX_HORIZONTAL_DISTANCE = 4.0;
@@ -2185,12 +2185,17 @@ public class HighwayBuilderTHM extends Module {
             } else if (isAtHighwayEnd()) {
                 String kitbotDir = directionToKitbotCommand(dir);
                 if (kitbotDir != null && mc.player != null && mc.world != null) {
-                    buildKitbotUpdateEnclosure();
-                    ChatUtils.sendPlayerMsg("/msg KitBot1 $update " + kitbotDir);
-                    info("Sent $update %s to KitBot1. Waiting up to 60s for teleport...", kitbotDir);
-                    kitbotUpdateOnFinishActive = true;
-                    kitbotUpdateOnFinishStartTick = mc.world.getTime();
-                    kitbotUpdateOnFinishTpAccepted = false;
+                    double distFromOrigin = Math.hypot(mc.player.getX(), mc.player.getZ());
+                    if (distFromOrigin < 10000) {
+                        info("Too close to origin (%.0f blocks) - skipping KitBot $update.", distFromOrigin);
+                    } else {
+                        buildKitbotUpdateEnclosure();
+                        ChatUtils.sendPlayerMsg("/msg KitBot1 $update " + kitbotDir);
+                        info("Sent $update %s to KitBot1. Waiting up to 60s for teleport...", kitbotDir);
+                        kitbotUpdateOnFinishActive = true;
+                        kitbotUpdateOnFinishStartTick = mc.world.getTime();
+                        kitbotUpdateOnFinishTpAccepted = false;
+                    }
                 }
             } else {
                 info("Not at highway end - skipping KitBot $update.");
@@ -8512,7 +8517,10 @@ public class HighwayBuilderTHM extends Module {
         if (sendStatisticsapi.get() && !working.apiSendCommitted()) {
             double distance = PlayerUtils.distanceTo(report.startPos());
             if (distance > 1) {
-                if (distance < 50000) {
+                String playerName = mc.player.getName().getLiteralString();
+                ThmMembers.Member selfMember = ThmMembers.getMemberByMcName(playerName);
+                double distLimit = ThmMembers.getDistanceLimit(selfMember);
+                if (distance < distLimit) {
                     if (report.blocksPlaced() < 300 && report.blocksBroken() < 1000) {
                         warning("Repair detected. Use the /calculate repair command to calculate the distance.");
                     } else if (isNot6B6T()) warning("API not sent. You are not on 6B6T");
@@ -8529,7 +8537,6 @@ public class HighwayBuilderTHM extends Module {
                         );
                         if (committed != null) {
                             String server = mc.getCurrentServerEntry() != null ? mc.getCurrentServerEntry().address : "singleplayer";
-                            String playerName = mc.player.getName().getLiteralString();
                             String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
                                 THMSystem.get().getHash(),
                                 playerName,
