@@ -89,6 +89,7 @@ import org.joml.Vector3d;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.accessor.StuckEatingRetryBridge;
 import xyz.thm.addon.accessor.StuckEatingRetryResult;
+import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.*;
 import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
@@ -1117,22 +1118,6 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
-    private final Setting<Boolean> rebreakEchests = sgInventory.add(new BoolSetting.Builder()
-        .name("instantly-rebreak-echests")
-        .description("Whether or not to use the instant rebreak exploit to break echests.")
-        .defaultValue(true)
-        .visible(mineEnderChests::get)
-        .build()
-    );
-
-    private final Setting<Integer> rebreakTimer = sgInventory.add(new IntSetting.Builder()
-        .name("rebreak-delay")
-        .description("Delay between rebreak attempts.")
-        .defaultValue(0)
-        .sliderMax(20)
-        .visible(() -> mineEnderChests.get() && rebreakEchests.get())
-        .build()
-    );
 
     private final Setting<Boolean> useBreakSpeedMultiplier = sgInventory.add(new BoolSetting.Builder()
         .name("use-break-speed-multiplier")
@@ -1154,9 +1139,9 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> silentRebreakSwap = sgInventory.add(new BoolSetting.Builder()
         .name("silent-rebreak-swap")
-        .description("Silently swaps to the best pick for instant rebreak packets, then restores your selected slot.")
+        .description("Silently swaps to the best pick when placing ender chests for restock.")
         .defaultValue(true)
-        .visible(() -> mineEnderChests.get() && rebreakEchests.get())
+        .visible(mineEnderChests::get)
         .build()
     );
 
@@ -12425,7 +12410,7 @@ public class HighwayBuilderTHM extends Module {
             private int lastObservedObsidianCount;
             private boolean first, primed;
             private boolean stopTimerEnabled;
-            private int stopTimer, moveTimer, rebreakTimer, timeout;
+            private int stopTimer, moveTimer;
             private double returnX, returnY, returnZ;
             private boolean returnAnchorSaved;
             @Override
@@ -12477,6 +12462,12 @@ public class HighwayBuilderTHM extends Module {
                 session.refreshProgress();
                 targetEchestsToBreak = session.getTargetEchestsToBreak();
                 targetObsidianCount = session.getMiningGoalObsidianCount();
+                if (targetEchestsToBreak > 0) {
+                    session.markGreatestAvailable();
+                    session.refreshProgress();
+                    targetEchestsToBreak = session.getTargetEchestsToBreak();
+                    targetObsidianCount = session.getMiningGoalObsidianCount();
+                }
                 if (targetEchestsToBreak <= 0) {
                     b.restockTask.markCurrentSourceExhausted(RestockTask.SourcePhase.MineEnderChests);
                     if (b.restockTask.isCurrentTaskSuccessful()) {
@@ -12490,7 +12481,7 @@ public class HighwayBuilderTHM extends Module {
                 }
                 if (b.prioritizePickaxeRestockBeforeEChestMining(targetEchestsToBreak, "mine-echests-start durability preflight")) return;
                 first = true;
-                moveTimer = timeout = 0;
+                moveTimer = 0;
                 lastObservedObsidianCount = 0;
                 returnX = b.mc.player.getX();
                 returnY = b.mc.player.getY();
@@ -12499,6 +12490,7 @@ public class HighwayBuilderTHM extends Module {
 
                 stopTimerEnabled = false;
                 primed = false;
+                if (Speedmine.INSTANCE != null && !Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
                 b.applyEChestBreakSpeedOverrideIfPossible("mine-echests-start");
             }
 
@@ -12592,6 +12584,7 @@ public class HighwayBuilderTHM extends Module {
                     // Mine ender chest
                     int slot = findAndMoveBestToolToHotbar(b, blockState, true);
                     if (slot == -1) {
+                        if (Speedmine.INSTANCE != null && Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
                         if (b.restockTask.isActiveMaterials() && b.restockTask.hasPendingPickaxes()) {
                             completeAndReturnToAnchor(b);
                         } else if (!b.restockTask.pickaxes
@@ -12606,50 +12599,12 @@ public class HighwayBuilderTHM extends Module {
                         return;
                     }
 
-                    int selectedSlot = b.mc.player.getInventory().getSelectedSlot();
-                    boolean swappedForRebreak = false;
-
-                    if (b.rebreakEchests.get() && primed) {
-                        timeout++;
-                        if (timeout > 60) {
-                            primed = false;
-                            timeout = 0;
-                            return;
-                        }
-
-                        if (rebreakTimer > 0) {
-                            rebreakTimer--;
-                            return;
-                        }
-
-                        Runnable sendRebreakPackets = () ->
-                            b.mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, bp, BlockUtils.getDirection(bp)));
-                        rebreakTimer = b.rebreakTimer.get();
-
-                        if (b.silentRebreakSwap.get()) {
-                            if (selectedSlot != slot) {
-                                InvUtils.swap(slot, false);
-                                swappedForRebreak = true;
-                            }
-                        } else {
-                            if (selectedSlot != slot) InvUtils.swap(slot, false);
-                        }
-
-                        if (b.rotation.get().mine) Rotations.rotate(Rotations.getYaw(bp), Rotations.getPitch(bp), sendRebreakPackets);
-                        else sendRebreakPackets.run();
-
-                        if (swappedForRebreak) InvUtils.swap(selectedSlot, false);
-                    }
-                    else {
-                        if (selectedSlot != slot) InvUtils.swap(slot, false);
-                        if (b.rotation.get().mine) Rotations.rotate(Rotations.getYaw(bp), Rotations.getPitch(bp), () -> BlockUtils.breakBlock(bp, true));
-                        else BlockUtils.breakBlock(bp, true);
-                    }
+                    Speedmine.INSTANCE.requestBreak(bp);
                 }
                 else {
                     // Place ender chest
                     int slot = findAndMoveToHotbar(b, itemStack -> itemStack.getItem() == Items.ENDER_CHEST);
-                    if (slot == -1 || countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) <= b.saveEchests.get()) {
+                    if (slot == -1 || countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) <= 0) {
                         b.restockTask.markCurrentSourceExhausted(RestockTask.SourcePhase.MineEnderChests);
                         stopTimerEnabled = true;
                         stopTimer = 12;
@@ -12659,11 +12614,11 @@ public class HighwayBuilderTHM extends Module {
                     if (!first) primed = true;
 
                     BlockUtils.place(bp, Hand.MAIN_HAND, slot, b.rotation.get().place, 0, true, true, b.silentRebreakSwap.get());
-                    timeout = 0;
                 }
             }
 
             private void completeAndReturnToAnchor(HighwayBuilderTHM b) {
+                if (Speedmine.INSTANCE != null && Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
                 if (returnAnchorSaved) {
                     b.input.stop();
                     b.mc.player.setPosition(returnX, returnY, returnZ);

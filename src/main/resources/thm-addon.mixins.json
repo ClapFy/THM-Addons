@@ -15,6 +15,7 @@
     "ScreenshotClipboardMixin",
     "SplashTextMixin",
     "SystemsMixin",
+    "accessor.ClientPlayerInteractionManagerTHMAccessor",
     "accessor.CameraAccessor",
     "accessor.EntityPositionAccessor",
     "accessor.ExplosionS2CPacketAccessor",
