@@ -128,6 +128,13 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
+    public final Setting<CapeType> cape = sgRender.add(new EnumSetting.Builder<CapeType>()
+        .name("thm-cape")
+        .description("Cape shown on yourself and other THM members.")
+        .defaultValue(CapeType.None)
+        .build()
+    );
+
     // Store original values
     private int savedWidth = -1;
     private int savedHeight = -1;
@@ -238,5 +245,10 @@ public class THMSystem extends System<THMSystem> {
         Obby,
         TransparentWhite,
         TransparentBlack
+    }
+
+    public enum CapeType {
+        None,
+        THM
     }
 }

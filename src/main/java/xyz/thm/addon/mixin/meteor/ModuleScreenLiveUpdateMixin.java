@@ -2,6 +2,7 @@ package xyz.thm.addon.mixin.meteor;
 
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.screens.ModuleScreen;
+import meteordevelopment.meteorclient.gui.widgets.containers.WContainer;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -22,6 +23,7 @@ import static org.lwjgl.glfw.GLFW.*;
 @Mixin(value = ModuleScreen.class, remap = false)
 public abstract class ModuleScreenLiveUpdateMixin {
     @Shadow private Module module;
+    @Shadow private WContainer settingsContainer;
 
     @Unique private final Map<String, Integer> thm$hashes = new HashMap<>();
 
@@ -43,6 +45,9 @@ public abstract class ModuleScreenLiveUpdateMixin {
         long w = mc.getWindow().getHandle();
         if (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS
          || glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) return;
+
+        // Skip while a dropdown or text box is focused — avoids closing the widget
+        if (settingsContainer != null && settingsContainer.isFocused()) return;
 
         boolean dirty = false;
         for (SettingGroup g : module.settings.groups) {

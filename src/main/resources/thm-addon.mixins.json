@@ -15,6 +15,7 @@
     "ScreenshotClipboardMixin",
     "SplashTextMixin",
     "SystemsMixin",
+    "ThmCapeRenderMixin",
     "accessor.ClientPlayerInteractionManagerTHMAccessor",
     "accessor.CameraAccessor",
     "accessor.EntityPositionAccessor",
