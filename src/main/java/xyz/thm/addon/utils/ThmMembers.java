@@ -1,6 +1,10 @@
 package xyz.thm.addon.utils;
 
+import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.utils.render.color.Color;
+import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.player.PlayerEntity;
 
 import java.util.*;
@@ -31,6 +35,24 @@ public final class ThmMembers {
 
     private static final long HIGHWAY_STATUS_REFRESH_MS = 10 * 60 * 1000; // 10 minutes
     private static Map<String, String> cachedHighwayByMcName = new HashMap<>();
+    private static Map<String, String> cachedCapeByMcName = new HashMap<>();
+    private static boolean eventSubscribed = false;
+
+    private static volatile boolean joinedOnce = false;
+
+    private static final Object SERVER_JOIN_LISTENER = new Object() {
+        @EventHandler
+        private void onGameJoined(GameJoinedEvent event) {
+            if (joinedOnce) return; // dimension change, not server join
+            joinedOnce = true;
+            refreshNow();
+        }
+
+        @EventHandler
+        private void onGameLeft(GameLeftEvent event) {
+            joinedOnce = false;
+        }
+    };
     private static long lastHighwayStatusFetchTime = 0;
     private static boolean highwayStatusPollingStarted = false;
 
@@ -200,11 +222,51 @@ public final class ThmMembers {
     public static synchronized void refreshNow() {
         resetCache();
         startFetch(true);
+        refreshCapeList();
+        refreshHighwayStatus();
+    }
+
+    public static void refreshHighwayStatus() {
+        Thread t = new Thread(() -> {
+            Map<String, String> fetched = APIUtils.fetchHighwayStatusFromApi();
+            if (fetched != null) {
+                synchronized (ThmMembers.class) {
+                    cachedHighwayByMcName = fetched;
+                    lastHighwayStatusFetchTime = System.currentTimeMillis();
+                }
+            }
+        }, "THM-HighwayStatusFetch");
+        t.setDaemon(true);
+        t.start();
     }
 
     public static synchronized void initialize() {
+        if (!eventSubscribed) {
+            MeteorClient.EVENT_BUS.subscribe(SERVER_JOIN_LISTENER);
+            eventSubscribed = true;
+        }
         startFetch(false);
         startHighwayStatusPollingIfNeeded();
+        refreshCapeList();
+    }
+
+    public static void refreshCapeList() {
+        Thread t = new Thread(() -> {
+            Map<String, String> fetched = APIUtils.fetchCapeListFromApi();
+            if (fetched != null) {
+                synchronized (ThmMembers.class) {
+                    cachedCapeByMcName = fetched;
+                }
+            }
+        }, "THM-CapeFetch");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    public static synchronized String getCapeByMcName(String mcName) {
+        String normalized = normalizeMcName(mcName);
+        if (normalized == null) return null;
+        return cachedCapeByMcName.get(normalized);
     }
 
     private static void startHighwayStatusPollingIfNeeded() {

@@ -60,7 +60,7 @@ public class THMTab extends Tab {
             applyButton.action = () -> THMSystem.get().applyProfile();
             add(applyButton).expandX();
 
-            WButton refreshMembers = theme.button("Refresh Members");
+            WButton refreshMembers = theme.button("Refresh Cache");
             refreshMembers.action = ThmMembers::refreshNow;
             add(refreshMembers).expandX();
         }

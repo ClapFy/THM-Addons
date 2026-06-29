@@ -5,10 +5,13 @@ import meteordevelopment.meteorclient.systems.System;
 import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.block.Blocks;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.nbt.NbtCompound;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.modules.HighwayBuilderTHM;
+import xyz.thm.addon.utils.APIUtils;
 import xyz.thm.addon.utils.KitbotChatRouter;
+import xyz.thm.addon.utils.ThmMembers;
 
 public class THMSystem extends System<THMSystem> {
     public final Settings settings = new Settings();
@@ -61,7 +64,7 @@ public class THMSystem extends System<THMSystem> {
     public final Setting<Boolean> ignoreThmMembers = sgPvp.add(new BoolSetting.Builder()
         .name("ignore-thm-members")
         .description("Ignore THM members in PvP modules.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build()
     );
 
@@ -132,6 +135,13 @@ public class THMSystem extends System<THMSystem> {
         .name("thm-cape")
         .description("Cape shown on yourself and other THM members.")
         .defaultValue(CapeType.None)
+        .onChanged(ct -> {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (mc == null || mc.player == null) return;
+            if (!ThmMembers.isThmMember(mc.player)) return;
+            String username = mc.player.getGameProfile().name();
+            APIUtils.postCapeSelection(username, ct.toApiId(), getHash());
+        })
         .build()
     );
 
@@ -249,6 +259,11 @@ public class THMSystem extends System<THMSystem> {
 
     public enum CapeType {
         None,
-        THM
+        Thm3,
+        Thm4;
+
+        public String toApiId() {
+            return this.name().toLowerCase(java.util.Locale.ROOT);
+        }
     }
 }

@@ -1,5 +1,7 @@
 package xyz.thm.addon.mixin;
 
+import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.SkinTextures;
@@ -17,21 +19,32 @@ public abstract class ThmCapeRenderMixin {
     @Inject(method = "getSkin", at = @At("RETURN"), cancellable = true)
     private void thm$injectCape(CallbackInfoReturnable<SkinTextures> cir) {
         THMSystem system = THMSystem.get();
-        if (system == null || system.cape.get() == THMSystem.CapeType.None) return;
+        if (system == null) return;
 
         PlayerEntity self = (PlayerEntity) (Object) this;
-        if (!ThmMembers.isThmMember(self)) return;
+        MinecraftClient mc = MinecraftClient.getInstance();
+
+        String capeId;
+        if (mc.player == (Object) self) {
+            // Self: always show the locally selected cape for instant feedback
+            THMSystem.CapeType ct = system.cape.get();
+            if (ct == THMSystem.CapeType.None) return;
+            capeId = ct.toApiId();
+        } else {
+            // Others: use API cache; in prod also require THM membership
+            capeId = ThmMembers.getCapeByMcName(self.getGameProfile().name());
+            if (capeId == null) return;
+            if (!FabricLoader.getInstance().isDevelopmentEnvironment() && !ThmMembers.isThmMember(self)) return;
+        }
 
         SkinTextures original = cir.getReturnValue();
         if (original == null) return;
 
-        Identifier id = switch (system.cape.get()) {
-            case THM -> Identifier.of("thm-addon", "cape/thm.png");
-            default -> null;
-        };
-        if (id == null) return;
-
-        AssetInfo.TextureAssetInfo capeAsset = new AssetInfo.TextureAssetInfo(id, id);
+        // ponytail: dynamic path — to add a cape just add the enum value + drop the PNG in assets/thm-addon/cape/
+        AssetInfo.TextureAssetInfo capeAsset = new AssetInfo.TextureAssetInfo(
+            Identifier.of("thm-addon", "cape/" + capeId + ".png"),
+            Identifier.of("thm-addon", "cape/" + capeId + ".png")
+        );
         cir.setReturnValue(new SkinTextures(
             original.body(),
             capeAsset,
