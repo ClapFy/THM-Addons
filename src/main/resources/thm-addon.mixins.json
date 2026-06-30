@@ -21,6 +21,7 @@
     "WaveyCapesPlayerRendererMixin",
     "accessor.ClientPlayerInteractionManagerTHMAccessor",
     "accessor.CameraAccessor",
+    "accessor.ChatHudAccessor",
     "accessor.EntityPositionAccessor",
     "accessor.ExplosionS2CPacketAccessor",
     "accessor.LimbAnimatorAccessor",

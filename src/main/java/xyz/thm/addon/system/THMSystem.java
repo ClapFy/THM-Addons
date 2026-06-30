@@ -5,7 +5,6 @@ import meteordevelopment.meteorclient.systems.System;
 import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.nbt.NbtCompound;
 import xyz.thm.addon.THMAddon;
@@ -17,7 +16,12 @@ import xyz.thm.addon.waveycapes.CapeStyle;
 import xyz.thm.addon.waveycapes.WaveyCapesConfig;
 import xyz.thm.addon.waveycapes.WindMode;
 
+import java.util.EnumMap;
+
 public class THMSystem extends System<THMSystem> {
+    private static final String HIGHWAY_PROFILE_SNAPSHOTS_TAG = "highwayProfileSnapshots";
+    private static final String ACTIVE_HIGHWAY_PROFILE_TAG = "activeHighwayProfile";
+
     public final Settings settings = new Settings();
 
     private final SettingGroup sgGeneral = settings.createGroup("General");
@@ -240,12 +244,8 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    // Store original values
-    private int savedWidth = -1;
-    private int savedHeight = -1;
-    private boolean savedMineAboveRailings = false;
-    private boolean savedBuildRailings = false;
-    private java.util.List<net.minecraft.block.Block> savedBlocksToPlace = null;
+    private final EnumMap<Mode, NbtCompound> highwayProfileSnapshots = new EnumMap<>(Mode.class);
+    private Mode activeHighwayProfile = Mode.None;
 
     public THMSystem() {
         super("THM-Addon");
@@ -269,49 +269,22 @@ public class THMSystem extends System<THMSystem> {
         HighwayBuilderTHM hwBuilder = Modules.get().get(HighwayBuilderTHM.class);
         if (hwBuilder == null) return;
 
-        switch (mode.get()) {
-            case None -> {
-                // Only restore if values were previously saved
-                if (savedWidth != -1) {
-                    hwBuilder.width.set(savedWidth);
-                    hwBuilder.height.set(savedHeight);
-                    hwBuilder.mineAboveRailings.set(savedMineAboveRailings);
-                    hwBuilder.blocksToPlace.set(savedBlocksToPlace);
-                    hwBuilder.railings.set(savedBuildRailings);
-                }
-            }
-            case HighwayBuilding -> {
-                // Save original values before changing
-                savedWidth = hwBuilder.width.get();
-                savedHeight = hwBuilder.height.get();
-                savedMineAboveRailings = hwBuilder.mineAboveRailings.get();
-                savedBlocksToPlace = hwBuilder.blocksToPlace.get();
-                savedBuildRailings = hwBuilder.railings.get();
+        Mode previousProfile = activeHighwayProfile == null ? Mode.None : activeHighwayProfile;
+        Mode targetProfile = mode.get();
 
-                hwBuilder.width.set(5);
-                hwBuilder.height.set(3);
-                hwBuilder.blocksToPlace.set(java.util.List.of(Blocks.OBSIDIAN));
-                hwBuilder.mineAboveRailings.set(true);
-                hwBuilder.railings.set(true);
-                hwBuilder.kitbotEChestRestockKit.set(HighwayBuilderTHM.KitbotEChestRestockKit.Highway);
-                hwBuilder.kitbotPickaxeRestockKit.set(HighwayBuilderTHM.KitbotPickaxeRestockKit.Highway);
-            }
-            case HighwayDigging -> {
-                // Save original values before changing
-                savedWidth = hwBuilder.width.get();
-                savedHeight = hwBuilder.height.get();
-                savedMineAboveRailings = hwBuilder.mineAboveRailings.get();
-                savedBlocksToPlace = hwBuilder.blocksToPlace.get();
-                savedBuildRailings = hwBuilder.railings.get();
+        saveHighwayProfileSnapshot(hwBuilder, previousProfile);
 
-                hwBuilder.blocksToPlace.set(java.util.List.of(Blocks.NETHERRACK, Blocks.BASALT, Blocks.BLACKSTONE));
-                hwBuilder.width.set(5);
-                hwBuilder.height.set(4);
-                hwBuilder.mineAboveRailings.set(true);
-                hwBuilder.railings.set(true);
-                hwBuilder.kitbotPickaxeRestockKit.set(HighwayBuilderTHM.KitbotPickaxeRestockKit.Pickaxe);
+        if (previousProfile != targetProfile) {
+            if (highwayProfileSnapshots.containsKey(targetProfile)) {
+                loadHighwayProfileSnapshot(hwBuilder, targetProfile);
+            } else {
+                hwBuilder.applyThmProfileSeed(targetProfile);
+                hwBuilder.normalizeAfterThmProfileLoad();
+                saveHighwayProfileSnapshot(hwBuilder, targetProfile);
             }
+            activeHighwayProfile = targetProfile;
         }
+
         if (toggleModules.get() && !hwBuilder.isActive()) {
             hwBuilder.toggle();
         }
@@ -327,10 +300,14 @@ public class THMSystem extends System<THMSystem> {
 
     @Override
     public NbtCompound toTag() {
+        captureActiveHighwayProfileSnapshotIfPossible();
+
         NbtCompound tag = new NbtCompound();
         tag.putString("version", THMAddon.VERSION);
         tag.put("settings", settings.toTag());
         tag.put("wavyCapesSettings", wavyCapesSettings.toTag());
+        tag.putString(ACTIVE_HIGHWAY_PROFILE_TAG, (activeHighwayProfile == null ? Mode.None : activeHighwayProfile).name());
+        tag.put(HIGHWAY_PROFILE_SNAPSHOTS_TAG, highwayProfileSnapshotsToTag());
         return tag;
     }
 
@@ -342,9 +319,74 @@ public class THMSystem extends System<THMSystem> {
         if (tag.contains("wavyCapesSettings")) {
             wavyCapesSettings.fromTag(tag.getCompound("wavyCapesSettings").orElse(new NbtCompound()));
         }
+        activeHighwayProfile = readHighwayProfileMode(tag, ACTIVE_HIGHWAY_PROFILE_TAG, Mode.None);
+        highwayProfileSnapshots.clear();
+        if (tag.contains(HIGHWAY_PROFILE_SNAPSHOTS_TAG)) {
+            NbtCompound profilesTag = tag.getCompound(HIGHWAY_PROFILE_SNAPSHOTS_TAG).orElse(new NbtCompound());
+            for (Mode profile : Mode.values()) {
+                if (profilesTag.contains(profile.name())) {
+                    highwayProfileSnapshots.put(profile, copyTag(profilesTag.getCompound(profile.name()).orElse(new NbtCompound())));
+                }
+            }
+        }
         KitbotChatRouter.setEnabled(kitbotChatRouterEnabled.get());
         WaveyCapesConfig.syncFromSystem();
         return this;
+    }
+
+    private void captureActiveHighwayProfileSnapshotIfPossible() {
+        try {
+            HighwayBuilderTHM hwBuilder = Modules.get().get(HighwayBuilderTHM.class);
+            if (hwBuilder != null) saveHighwayProfileSnapshot(hwBuilder, activeHighwayProfile == null ? Mode.None : activeHighwayProfile);
+        } catch (Throwable ignored) {
+            // Modules may not be available during early system serialization.
+        }
+    }
+
+    private void saveHighwayProfileSnapshot(HighwayBuilderTHM hwBuilder, Mode profile) {
+        if (hwBuilder == null || profile == null) return;
+        hwBuilder.normalizeAfterThmProfileLoad();
+        highwayProfileSnapshots.put(profile, copyTag(hwBuilder.settings.toTag()));
+    }
+
+    private void loadHighwayProfileSnapshot(HighwayBuilderTHM hwBuilder, Mode profile) {
+        if (hwBuilder == null || profile == null) return;
+        NbtCompound snapshot = highwayProfileSnapshots.get(profile);
+        if (snapshot == null) {
+            hwBuilder.applyThmProfileSeed(profile);
+            saveHighwayProfileSnapshot(hwBuilder, profile);
+            return;
+        }
+
+        hwBuilder.settings.fromTag(copyTag(snapshot));
+        hwBuilder.normalizeAfterThmProfileLoad();
+    }
+
+    private NbtCompound highwayProfileSnapshotsToTag() {
+        NbtCompound tag = new NbtCompound();
+        for (Mode profile : Mode.values()) {
+            NbtCompound snapshot = highwayProfileSnapshots.get(profile);
+            if (snapshot != null) tag.put(profile.name(), copyTag(snapshot));
+        }
+        return tag;
+    }
+
+    private static Mode readHighwayProfileMode(NbtCompound tag, String key, Mode fallback) {
+        if (tag == null || !tag.contains(key)) return fallback;
+        return parseMode(tag.getString(key, fallback.name()), fallback);
+    }
+
+    private static Mode parseMode(String value, Mode fallback) {
+        if (value == null || value.isBlank()) return fallback;
+        try {
+            return Mode.valueOf(value);
+        } catch (IllegalArgumentException ignored) {
+            return fallback;
+        }
+    }
+
+    private static NbtCompound copyTag(NbtCompound tag) {
+        return tag == null ? new NbtCompound() : tag.copy();
     }
 
     public enum Mode {
