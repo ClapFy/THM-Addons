@@ -6,6 +6,7 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
+import net.minecraft.block.BlockState;
 import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.*;
@@ -15,6 +16,7 @@ import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.network.packet.s2c.play.UpdateSelectedSlotS2CPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import xyz.thm.addon.accessor.InputAccessor;
+import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
 import xyz.thm.addon.mixin.accessor.UpdateSelectedSlotS2CPacketAccessor;
 
@@ -453,6 +455,45 @@ public class InventoryManager {
             return swapTo;
         }
     }
+
+    /**
+     * Silently swaps to the best hotbar tool for {@code state}, runs {@code action},
+     * then swaps back — all via sequenced packets so the visual held item never changes.
+     *
+     * <pre>{@code
+     * BlockState state = mc.world.getBlockState(pos);
+     * Speedmine.INSTANCE.withSilentTool(state, () -> {
+     *     mc.interactionManager.sendSequencedPacket(mc.world, seq ->
+     *         new PlayerActionC2SPacket(STOP_DESTROY_BLOCK, pos, dir, seq));
+     * });
+     * }</pre>
+     */
+    public void withSilentTool(BlockState state, Runnable action) {
+        if (mc.player == null) { action.run(); return; }
+        int best = findBestHotbarSlot(state);
+        int prev = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
+        boolean swap = best != -1 && best != prev;
+        if (swap) sendSequencedUpdateSlot(best);
+        action.run();
+        if (swap) sendSequencedUpdateSlot(prev);
+    }
+    public void sendSequencedUpdateSlot(int slot) {
+        if (mc.interactionManager == null || mc.world == null || slot < 0) return;
+        ((ClientPlayerInteractionManagerTHMAccessor) mc.interactionManager)
+            .thm$sendSequencedPacket(mc.world, seq -> new UpdateSelectedSlotC2SPacket(slot));
+    }
+
+    public int findBestHotbarSlot(BlockState state) {
+        if (mc.player == null) return -1;
+        int   best      = -1;
+        float bestSpeed = -1;
+        for (int i = 0; i < 9; i++) {
+            float s = mc.player.getInventory().getStack(i).getMiningSpeedMultiplier(state);
+            if (s > bestSpeed) { bestSpeed = s; best = i; }
+        }
+        return best;
+    }
+
     public enum VelocityMode {
         NORMAL,
         WALLS,
