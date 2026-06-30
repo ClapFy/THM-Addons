@@ -626,6 +626,7 @@ public class HighwayBuilderTHM extends Module {
         .name("restock-secondary-source-order")
         .description("Which external restock source to try first after inventory-local sources make no useful progress.")
         .defaultValue(RestockSecondarySourceOrder.EnderChestThenKitBot)
+        .visible(() -> mc.player != null && !ThmMembers.isNovice(mc.player.getName().getString()))
         .build()
     );
 

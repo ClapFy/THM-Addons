@@ -1,8 +1,28 @@
 # Highway Settings Guide
 
-This guide explains the user-definable settings in `THM-HighwayBuilder` (`HighwayBuilderTHM`) and `THM Highway Monitor` (`THMHwyMonitor`).
+This public guide explains the user-facing settings in `THM-HighwayBuilder` (`HighwayBuilderTHM`), `THM Highway Monitor` (`THMHwyMonitor`), and the Highway Profiles section of the THM Addon tab.
 
-Hidden settings are included when they still affect behavior. Hidden settings that are deprecated, locked, or not read by runtime logic are intentionally left out of the manual; see "Omitted Hidden Settings" near the end.
+## Highway Profiles
+
+Highway Profiles let you keep separate complete HighwayBuilder configurations for `None`, `HighwayBuilding`, and `HighwayDigging`.
+
+1. Open the **THM Addon** tab.
+2. Select a value under **Highway Profiles**.
+3. Press **Apply Profile**.
+
+Applying a different profile saves the complete current HighwayBuilder configuration under the profile you are leaving before loading the selected profile. Changes made while using a profile are restored the next time you return to it. Profile snapshots persist with the THM Addon configuration.
+
+For users upgrading from an earlier version, the existing HighwayBuilder configuration becomes the `None` profile baseline. Selecting or applying `None` does not force preset values over those settings.
+
+The first time `HighwayBuilding` or `HighwayDigging` is applied, it starts from the current settings and applies these public seed values:
+
+| Profile | Initial public seed values |
+| --- | --- |
+| `None` | No forced changes; preserves the current HighwayBuilder configuration. |
+| `HighwayBuilding` | Width `5`, height `3`, `Replace` floor, railings and mine-above-railings enabled, Obsidian placement, and Highway Monitor management enabled when Baritone is installed. |
+| `HighwayDigging` | Width `5`, height `4`, `Replace` floor, railings and mine-above-railings enabled, Netherrack/Basalt/Blackstone/Soul Soil placement, and Highway Monitor management enabled when Baritone is installed. |
+
+After that first seed, each profile loads its own saved values rather than reapplying defaults. The `toggle-modules` setting defaults to `true`; when enabled, **Apply Profile** also activates HighwayBuilder if it is currently off.
 
 ## Quick Cheat Sheet
 
@@ -27,9 +47,8 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `pause-on-lag` | `false` | Throttles actions from TPS and pauses below 10 TPS. |
 | `tps-safety-enclosure` | `true` | Builds a small safety enclosure during confirmed low/unknown TPS pauses. |
 | `destroy-crystal-traps` | `true` | Uses a bow to safely defuse crystal traps from range. |
-| `manage-thm-hwy-monitor` | `false`; shown only when Baritone is installed | Lets HighwayBuilder toggle/manage THM Highway Monitor. |
-| `manage-module-manager` | `false` | Enables Module Manager while HighwayBuilder is running. |
-| `autosetup-modules` | `true` | Configures Meteor Speed Mine, Meteor Reach, and HighwayBuilder place range for highway work. |
+| `manage-thm-highway-monitor` | `true`; shown only when Baritone is installed | Lets HighwayBuilder toggle/manage THM Highway Monitor. |
+| `autosetup-modules` | `true` | Configures Meteor Speed Mine, Reach, Velocity, and HighwayBuilder place range for highway work. |
 | `toggle-perspective` | `true` | Switches to third person while active, then restores the old camera. |
 | `toggle-hud` | `true` | Toggles the highway HUD integration. |
 
@@ -39,7 +58,6 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | --- | --- | --- |
 | `double-mine` | `true` | Uses normal mine and packet mine together when applicable. |
 | `fast-break` | `true`; shown when `double-mine` is on | Finishes double-mined blocks faster. |
-| `speedmine` | `false`; shown when `double-mine` is on | Lets Meteor Speed Mine help with basalt breaking. |
 | `blocks-per-tick` | `7`, range `1-30`, slider max `20` | Maximum instant-break mining throughput, including fractional values. |
 | `break-delay` | `0`, minimum `0` | Delay between normal break actions. |
 | `dont-break-tools` | `false` | Stops using tools before they break. |
@@ -53,7 +71,7 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | Setting | Default / Range | What to change it for |
 | --- | --- | --- |
 | `blocks-to-place` | `Obsidian`; full-cube blocks only | Blocks the builder may place. |
-| `placements-per-tick` | `1`, range `1-100`, slider max `10` | Maximum place throughput, including fractional values. |
+| `placements-per-tick` | `1`, range `0.1-100`, slider `0.1-10`, one decimal place | Maximum averaged place throughput; `0.1` performs about one placement every 10 ticks. |
 | `place-range` | `4.5`, slider max `5.5` | Maximum block placement reach. |
 | `place-delay` | `0`, minimum `0` | Delay between place actions. |
 | `fall-save-air-place` | `true` | Places a safety block under you if forward floor disappears. |
@@ -79,11 +97,10 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `use-break-speed-multiplier` | `true`; shown when `mine-ender-chests` is on | Temporarily boosts Timer while mining ender chests. |
 | `silent-rebreak-swap` | `true`; shown when `mine-ender-chests` is on | Silently swaps to the best pick when placing ender chests for restock. |
 
-### KitBot Controls
+### KitBot Updates
 
 | Setting | Default / Options | What to change it for |
 | --- | --- | --- |
-| `restock-secondary-source-order` | `EnderChestThenKitBot`; options `EnderChestThenKitBot`, `KitBotThenEnderChest` | Chooses whether ender chest bank or KitBot is tried first after local inventory sources stop helping. |
 | `kitbot-update-on-finish` | `true` | Sends `$update` to KitBot1 with the current direction when the module finishes, then disconnects. |
 | `kitbot-periodic-update` | `true` | Sends `$update` every 60 minutes while building, deferred during restock. |
 
@@ -121,9 +138,8 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `disconnect-on-toggle` | `true` | Always | Disconnects automatically when the module turns itself off, such as when blocks run out. |
 | `pause-on-lag` | `false` | Always | Throttles mining/placing from TPS and pauses below 10 TPS. |
 | `destroy-crystal-traps` | `true` | Always | Uses a bow to defuse crystal traps safely from distance. |
-| `manage-thm-hwy-monitor` | `false` | Baritone is installed | Lets HighwayBuilder enable and manage THM Highway Monitor while active. |
-| `manage-module-manager` | `false` | Always | Enables Module Manager while HighwayBuilder is running. |
-| `autosetup-modules` | `true` | Always | Automatically configures Meteor Speed Mine, Meteor Reach, and HighwayBuilder place range for highway work. |
+| `manage-thm-highway-monitor` | `true` when Baritone is installed | Baritone is installed | Lets HighwayBuilder enable and manage THM Highway Monitor while active. |
+| `autosetup-modules` | `true` | Always | Automatically configures Meteor Speed Mine, Reach, Velocity, and HighwayBuilder place range for highway work. |
 | `packet-mode` | `false` | Always | Enables Packet Build and Packet Borer, leaving already-enabled pieces alone. |
 | `check-behind` | `true` | Always | Checks and repairs missing floor or railings behind the player. |
 | `advertise` | `false` | Always | Sends THM advertisement messages in chat. |
@@ -138,7 +154,6 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `instamine-bypass` | `false` | Always | Uses old-style breaking for basalt/blackstone override blocks so double mine and fast break only bypass when truly instamineable. |
 | `double-mine` | `true` | Always | Mines with normal mine and packet mine together when applicable. |
 | `fast-break` | `true` | `double-mine` is on | Speeds up finishing blocks while double mining. |
-| `speedmine` | `false` | `double-mine` is on | Uses Meteor Speed Mine to speed up basalt breaking. |
 | `dont-break-tools` | `false` | Always | Stops using tools before they break. |
 | `durability-percentage` | `2`, range `1-100` | `dont-break-tools` is on | Tool durability percentage where the module stops using that tool. |
 | `save-pickaxes` | `1`, range `0-36` | `dont-break-tools` is off | Pickaxe reserve that triggers restock or module shutdown when reached. |
@@ -164,7 +179,7 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `packet-build-lookahead` | `true` | `packet-build` is on | Lets Packet Build place blocks from upcoming rows in the same tick. |
 | `silent-forward-place-swap` | `true` | `legacy-mode` is off | Silently swaps to placement blocks for scheduler work, then restores your selected slot. |
 | `silent-forward-tool-swap` | `true` | `legacy-mode` is off | Silently swaps to scheduler mining tools, then restores your selected slot. |
-| `placements-per-tick` | `1`, range `1-100`, slider max `10` | Always | Maximum placement actions per tick; fractional values are averaged over time. |
+| `placements-per-tick` | `1`, range `0.1-100`, slider `0.1-10`, one decimal place | Always | Maximum averaged placement rate; `0.1` performs about one placement every 10 ticks. |
 
 ### THM-HighwayBuilder: Inventory
 
@@ -189,11 +204,10 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `break-speed-multiplier` | `1.5`, range `1-3` | `mine-ender-chests` and `use-break-speed-multiplier` are on | Timer multiplier used during ender chest mining. |
 | `silent-rebreak-swap` | `true` | `mine-ender-chests` is on | Silently swaps to the best pickaxe when placing ender chests for restock. |
 
-### THM-HighwayBuilder: KitBot Integration Not Role-Gated
+### THM-HighwayBuilder: KitBot Updates
 
 | Setting | Default / Range / Options | Visible when | Behavior |
 | --- | --- | --- | --- |
-| `restock-secondary-source-order` | `EnderChestThenKitBot`; options `EnderChestThenKitBot`, `KitBotThenEnderChest` | Always | Chooses which external restock source to try first after inventory-local sources stop making useful progress. |
 | `kitbot-update-on-finish` | `true` | Always | Sends `$update` to KitBot1 with the current highway direction when the module finishes, waits for KitBot to teleport, then disconnects. |
 | `kitbot-periodic-update` | `true` | Always | Sends `$update` to KitBot1 every 60 minutes while building without stopping; delayed until restock completes. |
 
@@ -258,38 +272,3 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `forward-stall-timeout-seconds` | `20`, range `10-900`, slider `10-300` | `auto-recover` and `recover-forward-stalls` are on | Seconds without meaningful Forward progress or Center transition before forced stall escape begins. |
 | `recover-rubberband-ghostblocks` | `true` | `auto-recover` is on | Disconnects and uses AutoReconnect when Forward appears rubberbanded or ghostblocked for too long. |
 | `recovery-cooldown` | `10`, range `1-100`, slider `1-40` | Always | Ticks to wait before checking again after a recovery attempt. |
-
-## Role-Gated Extended Manual
-
-Role-gated settings are hidden when the THM member role/status check treats the player as novice. In source, HighwayBuilder KitBot restock checks the current player name, while THM Highway Monitor reconnect automation checks the saved player name.
-
-### HighwayBuilder KitBot Restocking
-
-| Setting | Default / Range / Options | Visible when | Behavior |
-| --- | --- | --- | --- |
-| `kitbot-restock` | `false` | Player is present and not novice by THM member role/status | Allows restock tasks to order kits from KitBot1. This is the top-level gate for the restock ordering controls below. |
-| `kitbot-echest-restock` | `true` | `kitbot-restock` is on | Allows KitBot to provide ender chest reserve and obsidian restock supply. |
-| `kitbot-echest-restock-kit` | `Echest`; options `Echest`, `Highway` | `kitbot-restock` and `kitbot-echest-restock` are on | KitBot kit used for ender chest reserve and obsidian supply. |
-| `kitbot-echest-restock-amount` | `4`, range `1-10` | `kitbot-restock` and `kitbot-echest-restock` are on | Number of e-chest kits to order per restock. |
-| `kitbot-pickaxe-restock` | `true` | `kitbot-restock` is on | Allows KitBot to provide pickaxe restock supply. |
-| `kitbot-pickaxe-restock-kit` | `Pickaxe`; options `Pickaxe`, `Highway` | `kitbot-restock` and `kitbot-pickaxe-restock` are on | KitBot kit used for pickaxe restock supply. |
-| `kitbot-pickaxe-restock-amount` | `4`, range `1-10` | `kitbot-restock` and `kitbot-pickaxe-restock` are on | Number of pickaxe kits to order per restock. |
-| `kitbot-food-restock` | `false` | `kitbot-restock` is on | Allows KitBot to provide food restock supply and forces food type handling to enchanted golden apples while enabled. |
-| `kitbot-food-restock-amount` | `1`, range `1-10` | `kitbot-restock` and `kitbot-food-restock` are on | Number of food kits to order per restock. |
-
-### THM Highway Monitor Reconnect Automation
-
-| Setting | Default / Range / Options | Visible when | Behavior |
-| --- | --- | --- | --- |
-| `auto-reconnect` | `false` | Saved player name is not novice by THM member role/status | Handles automatic reconnects after disconnects and restarts HighwayBuilderTHM when recovery succeeds. |
-| `restart-rejoin-delay-minutes` | `15`, range `1-240`, slider `1-60` | Saved player name is not novice by THM member role/status | Delay in minutes applied to Meteor AutoReconnect during restart/rejoin recovery. |
-
-## Omitted Hidden Settings
-
-These settings are defined in code but are intentionally omitted from the manual because they are hidden and not useful user controls:
-
-| Setting | Why it is omitted |
-| --- | --- |
-| `resume-tps` | Deprecated and hidden; TPS throttle resumes automatically at 10 TPS and runtime logic no longer reads this setting. |
-| `instamine-override-blocks-per-tick` | Hidden and not read by runtime logic. |
-| `echest-blockade-type` | Hidden and forcibly locked to `FullRoof`; live blockade behavior uses the fixed effective type instead of user input. |
