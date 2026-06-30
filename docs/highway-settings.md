@@ -76,8 +76,8 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `minimum-empty-slots` | `1`, minimum `0`, slider `0-9` | Empty inventory slots to preserve after mining obsidian. |
 | `mine-ender-chests` | `true` | Mines ender chests to convert them into obsidian. |
 | `save-ender-chests` | `4`, range `4-64` | Loose ender chest reserve to keep in inventory. |
-| `instantly-rebreak-echests` | `true`; shown when `mine-ender-chests` is on | Uses instant rebreak for ender chest mining. |
 | `use-break-speed-multiplier` | `true`; shown when `mine-ender-chests` is on | Temporarily boosts Timer while mining ender chests. |
+| `silent-rebreak-swap` | `true`; shown when `mine-ender-chests` is on | Silently swaps to the best pick when placing ender chests for restock. |
 
 ### KitBot Controls
 
@@ -185,11 +185,9 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | `minimum-empty-slots` | `1`, minimum `0`, slider `0-9` | Always | Empty inventory slots to preserve after obsidian mining. |
 | `mine-ender-chests` | `true` | Always | Mines ender chests to create obsidian. |
 | `save-ender-chests` | `4`, range `4-64` | Always | Loose ender chests to reserve; falling one below this queues restock, and failure to replenish can hard-fail the module. |
-| `instantly-rebreak-echests` | `true` | `mine-ender-chests` is on | Uses the instant rebreak exploit for ender chest mining. |
-| `rebreak-delay` | `0`, slider max `20` | `mine-ender-chests` and `instantly-rebreak-echests` are on | Delay between instant rebreak attempts. |
 | `use-break-speed-multiplier` | `true` | `mine-ender-chests` is on | Temporarily boosts Timer while mining ender chests, then restores the previous Timer state. |
 | `break-speed-multiplier` | `1.5`, range `1-3` | `mine-ender-chests` and `use-break-speed-multiplier` are on | Timer multiplier used during ender chest mining. |
-| `silent-rebreak-swap` | `true` | `mine-ender-chests` and `instantly-rebreak-echests` are on | Silently swaps to the best pickaxe for rebreak packets, then restores your selected slot. |
+| `silent-rebreak-swap` | `true` | `mine-ender-chests` is on | Silently swaps to the best pickaxe when placing ender chests for restock. |
 
 ### THM-HighwayBuilder: KitBot Integration Not Role-Gated
 
@@ -197,7 +195,7 @@ Hidden settings are included when they still affect behavior. Hidden settings th
 | --- | --- | --- | --- |
 | `restock-secondary-source-order` | `EnderChestThenKitBot`; options `EnderChestThenKitBot`, `KitBotThenEnderChest` | Always | Chooses which external restock source to try first after inventory-local sources stop making useful progress. |
 | `kitbot-update-on-finish` | `true` | Always | Sends `$update` to KitBot1 with the current highway direction when the module finishes, waits for KitBot to teleport, then disconnects. |
-| `kitbot-periodic-update` | `true` | Always | Sends `$update` to KitBot1 every 30 minutes while building without stopping; delayed until restock completes. |
+| `kitbot-periodic-update` | `true` | Always | Sends `$update` to KitBot1 every 60 minutes while building without stopping; delayed until restock completes. |
 
 ### THM-HighwayBuilder: Debugging
 
