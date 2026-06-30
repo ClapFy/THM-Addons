@@ -272,6 +272,7 @@ public class THMHwyMonitor extends Module {
     private String delayedMainServerResumeContext = "";
     private boolean restartRecoveryActive;
     private ObsidianFarmerTHM recoveryFarmer;
+    private THMStashMover recoveryStashMover;
     private boolean postRejoinDirectionGateActive;
     private int postRejoinDirectionRetryCount;
     private long postRejoinDirectionNextAttemptAtMs;
@@ -377,7 +378,8 @@ public class THMHwyMonitor extends Module {
     private enum ReconnectOwner {
         None,
         HighwayBuilder,
-        ObsidianFarmer
+        ObsidianFarmer,
+        StashMover
     }
 
     public THMHwyMonitor() {
@@ -406,6 +408,46 @@ public class THMHwyMonitor extends Module {
         pendingDisconnectScreenEvidenceUntilMs = 0L;
         nonRestartHardFailArmed = true;
         signalNonRestartHardFailFromHighwayBuilder();
+    }
+
+    public boolean beginStashMoverReconnectHandling(THMStashMover stashMover, String source) {
+        if (stashMover == null || !stashMover.isActive() || !stashMover.isManagingThmHwyMonitorReconnect()) return false;
+
+        recoveryStashMover = stashMover;
+        reconnectOwner = ReconnectOwner.StashMover;
+        restartRecoveryActive = true;
+        resetForwardProgressWatch();
+        resetRubberbandGhostblockWatch();
+        resetForwardPacketDesyncEpisode("stash-mover-reconnect");
+        clearPendingAlignmentGateRequest();
+        clearPostRejoinDirectionGateState();
+
+        if (activeReconnectCycleId != 0L && reconnectService().isReconnectArmed()) return true;
+
+        long cycleId;
+        ServerReconnectService.ReconnectPreflight preflight = reconnectService().getReconnectPreflight();
+        if (preflight.serviceArmed() && preflight.cycleId() > 0L) {
+            cycleId = preflight.cycleId();
+            activeReconnectCycleId = cycleId;
+        } else {
+            String safeSource = source == null || source.isBlank() ? "unknown" : source;
+            cycleId = armReconnectCycle("stash-mover-" + safeSource, false);
+        }
+
+        info("StashMover armed THMHwyMonitor reconnect handling (cycle %d).", cycleId);
+        return true;
+    }
+
+    public void clearStashMoverReconnectHandling(THMStashMover stashMover, String reason) {
+        boolean ownsStashMover = reconnectOwner == ReconnectOwner.StashMover || recoveryStashMover == stashMover;
+        if (!ownsStashMover) return;
+
+        clearStashMoverReconnectState(reason == null || reason.isBlank() ? "stash-mover-clear" : reason, true, true);
+        if (autoReconnect.get() && isActive()) {
+            long cycleId = armReconnectCycle("stash-mover-clear-auto-reconnect-restore", false);
+            reconnectOwner = ReconnectOwner.HighwayBuilder;
+            info("Restored normal THMHwyMonitor AutoReconnect ownership after StashMover clear (cycle %d).", cycleId);
+        }
     }
 
     private static boolean consumeNonRestartHardFailSignal() {
@@ -647,6 +689,19 @@ public class THMHwyMonitor extends Module {
             return;
         }
 
+        if (reconnectOwner == ReconnectOwner.StashMover) {
+            delayedMainServerResumePending = true;
+            delayedMainServerResumeCycleId = cycleId;
+            delayedMainServerResumeAtMs = System.currentTimeMillis() + MAIN_SERVER_RESUME_DELAY_MS;
+            delayedMainServerResumeContext = contextTag == null ? "stash-mover" : contextTag;
+            info(
+                "Reconnect service reached MAIN_SERVER (%s). Waiting 6.0s before THM Stash mover resume (cycle %d).",
+                delayedMainServerResumeContext,
+                cycleId
+            );
+            return;
+        }
+
         boolean restartEvidenceMatched = restartEvidenceGateCycleId == cycleId;
         if (!restartEvidenceMatched) {
             return;
@@ -691,6 +746,14 @@ public class THMHwyMonitor extends Module {
             return;
         }
 
+        if (reconnectOwner == ReconnectOwner.StashMover) {
+            THMStashMover stashMover = recoveryStashMover;
+            clearStashMoverReconnectState("stash-mover-failure:" + reason.name(), true, true);
+            if (stashMover != null) stashMover.onMonitorReconnectFailure(cycleId, reason.name(), detail);
+            warning("Reconnect failed for THM Stash mover (%s): %s", reason.name(), detail == null ? "" : detail);
+            return;
+        }
+
         clearHighwayBuilderReconnectModuleRestoreSnapshot("reconnect-failure:" + reason.name());
         clearRestartRecoveryState("failure:" + reason.name(), false, true);
         warning("Reconnect failed (%s): %s", reason.name(), detail == null ? "" : detail);
@@ -707,8 +770,25 @@ public class THMHwyMonitor extends Module {
         if (disarmService) reconnectService().disarmReconnect("THMHwyMonitor clearRestartRecoveryState: " + reason);
     }
 
+    private void clearStashMoverReconnectState(String reason, boolean disarmService, boolean clearCycleBinding) {
+        restartRecoveryActive = false;
+        reconnectOwner = ReconnectOwner.None;
+        recoveryStashMover = null;
+        restartEvidenceGateCycleId = 0L;
+        clearDelayedMainServerResumeState();
+        clearPostRejoinDirectionGateState();
+        resetRubberbandGhostblockWatch();
+        resetForwardProgressWatch();
+        resetForwardPacketDesyncEpisode("stash-mover-clear:" + reason);
+        clearPendingAlignmentGateRequest();
+        clearPendingRestartBuilderDisableGrace();
+        if (clearCycleBinding) activeReconnectCycleId = 0L;
+        if (disarmService) reconnectService().disarmReconnect("THMHwyMonitor clearStashMoverReconnectState: " + reason);
+        info("StashMover reconnect handling cleared: %s", reason);
+    }
+
     private void clearHighwayBuilderReconnectModuleRestoreSnapshot(String reason) {
-        ModuleManager manager = Modules.get().get(ModuleManager.class);
+        ModuleManager manager = getModuleManager();
         if (manager != null) manager.clearReconnectModuleRestoreSnapshot(reason);
     }
 
@@ -759,18 +839,21 @@ public class THMHwyMonitor extends Module {
 
     @EventHandler
     private void onActiveModulesChanged(ActiveModulesChangedEvent event) {
+        if (stashMoverReconnectHandlingActive()) return;
         if (!reconnectAutomationEnabled()) return;
         refreshTimerSpeedSnapshotFromCurrentState("activeModulesChanged");
     }
 
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
+        if (stashMoverReconnectHandlingActive()) return;
         if (!(event.packet instanceof PlayerPositionLookS2CPacket)) return;
         queueForwardCorrectionPacket();
     }
 
     @EventHandler
     private void onPacketSend(PacketEvent.Send event) {
+        if (stashMoverReconnectHandlingActive()) return;
         if (!(event.packet instanceof PlayerActionC2SPacket packet)) return;
         recordForwardDestroyPacket(packet);
     }
@@ -784,6 +867,7 @@ public class THMHwyMonitor extends Module {
 
     @EventHandler(priority = 999)
     private void onMessageReceive(ReceiveMessageEvent event) {
+        if (stashMoverReconnectHandlingActive()) return;
         String message = event.getMessage().getString();
         if (message == null) return;
         String lower = message.toLowerCase(Locale.ROOT);
@@ -843,8 +927,26 @@ public class THMHwyMonitor extends Module {
         boolean farmerWasActiveAtDisconnect = farmerBeforeDisconnect != null
             && farmerBeforeDisconnect.isActive()
             && farmerBeforeDisconnect.isManagingThmHwyMonitor();
-        unresolvedMainServerDisconnectCandidate = builderWasActiveAtDisconnect;
+        THMStashMover stashMoverBeforeDisconnect = Modules.get().get(THMStashMover.class);
+        boolean stashMoverWasActiveAtDisconnect = stashMoverBeforeDisconnect != null
+            && stashMoverBeforeDisconnect.isActive()
+            && stashMoverBeforeDisconnect.isManagingThmHwyMonitorReconnect();
+        unresolvedMainServerDisconnectCandidate = builderWasActiveAtDisconnect && !stashMoverWasActiveAtDisconnect;
         String disconnectScreenReason = readDisconnectedScreenReasonLower();
+
+        if (stashMoverWasActiveAtDisconnect) {
+            unresolvedMainServerDisconnectCandidate = false;
+            recoveryStashMover = stashMoverBeforeDisconnect;
+            reconnectOwner = ReconnectOwner.StashMover;
+            restartRecoveryActive = true;
+            clearRestartDisconnectEvidence();
+            clearNonRestartHardFailSignal();
+            clearRestartHardFailSignal();
+            nonRestartHardFailArmed = false;
+            long cycleId = armReconnectCycle("stash-mover-disconnect", false);
+            info("Detected disconnect while THM Stash mover owned reconnect handling. Armed reconnect cycle %d.", cycleId);
+            return;
+        }
 
         boolean nonRestartHardFail = nonRestartHardFailArmed || consumeNonRestartHardFailSignal();
         if (!nonRestartHardFail && isKnownNonRestartHardFailMessage(disconnectScreenReason)) {
@@ -1080,6 +1182,32 @@ public class THMHwyMonitor extends Module {
         return autoReconnect.get();
     }
 
+    private boolean stashMoverReconnectHandlingActive() {
+        if (reconnectOwner == ReconnectOwner.StashMover) return true;
+
+        try {
+            THMStashMover stashMover = Modules.get().get(THMStashMover.class);
+            return stashMover != null
+                && stashMover.isActive()
+                && stashMover.isManagingThmHwyMonitorReconnect();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private void resetHighwayBuilderCorrectionForStashMover(String source) {
+        resetForwardProgressWatch();
+        resetRubberbandGhostblockWatch();
+        resetForwardPacketDesyncEpisode("stash-mover-" + source);
+        clearPendingAlignmentGateRequest();
+        trackedSegment = null;
+        trackedDirection = "";
+        if (recoveryPhase != RecoveryPhase.None || recoveryModulesPaused) {
+            preserveHighwayBuilderDisabledAcrossRecoveryResume();
+            resetRecoveryState();
+        }
+    }
+
     private boolean hasRestartAutomationState() {
         return activeReconnectCycleId != 0L
             || restartEvidenceGateCycleId != 0L
@@ -1098,7 +1226,9 @@ public class THMHwyMonitor extends Module {
             || deferredRestartScreenshotAfterReconnectPending
             || pendingDisconnectScreenEvidenceCheck
             || pendingDisconnectScreenEvidenceUntilMs != 0L
-            || rearmNormalReconnectAfterForwardReconnectResume;
+            || rearmNormalReconnectAfterForwardReconnectResume
+            || reconnectOwner == ReconnectOwner.StashMover
+            || recoveryStashMover != null;
     }
 
     private void resetReconnectAutomationState(boolean clearCycleBinding) {
@@ -1120,6 +1250,7 @@ public class THMHwyMonitor extends Module {
         clearRestartHardFailSignal();
         reconnectOwner = ReconnectOwner.None;
         recoveryFarmer = null;
+        recoveryStashMover = null;
         rearmNormalReconnectAfterForwardReconnectResume = false;
         clearRestartRecoveryState("reset-automation", false, clearCycleBinding);
     }
@@ -1143,7 +1274,7 @@ public class THMHwyMonitor extends Module {
             return;
         }
 
-        ModuleManager manager = Modules.get().get(ModuleManager.class);
+        ModuleManager manager = getModuleManager();
         if (manager != null && manager.isActive() && !manager.prepareForMonitorReconnectPause(activeReconnectCycleId, source)) {
             enterReconnectSafetyStop("Unable to freeze Module Manager reconnect snapshot before restart pause.");
             return;
@@ -1176,6 +1307,12 @@ public class THMHwyMonitor extends Module {
         boolean currentToggle = autoReconnect.get();
         if (currentToggle == previousAutoReconnectToggleState) return;
 
+        if (stashMoverReconnectHandlingActive()) {
+            previousAutoReconnectToggleState = currentToggle;
+            info("Auto-reconnect toggle changed while THM Stash mover owns reconnect handling; HighwayBuilder reconnect side effects were suppressed.");
+            return;
+        }
+
         if (currentToggle) {
             long cycleId = armReconnectCycle("toggle-on", false);
             reconnectOwner = ReconnectOwner.HighwayBuilder;
@@ -1201,6 +1338,11 @@ public class THMHwyMonitor extends Module {
         if (!isHighwayRecoveryAllowedOnCurrentServer()) {
             resetRubberbandGhostblockWatch();
             abortActiveRecoveryForNonMainServer("server-state-" + getCommittedServerState().name());
+            return;
+        }
+
+        if (stashMoverReconnectHandlingActive()) {
+            resetHighwayBuilderCorrectionForStashMover("tick");
             return;
         }
 
@@ -2137,7 +2279,7 @@ public class THMHwyMonitor extends Module {
             return false;
         }
 
-        ModuleManager manager = Modules.get().get(ModuleManager.class);
+        ModuleManager manager = getModuleManager();
         if (manager != null && manager.isActive() && !manager.prepareForMonitorReconnectPause(cycleId, "forward-" + triggerLabel)) {
             warning("Forward %s recovery aborted: unable to freeze Module Manager reconnect snapshot.", triggerLabel);
             abortRubberbandGhostblockReconnectAttempt("module-manager-baseline-failed", true);
@@ -2236,12 +2378,12 @@ public class THMHwyMonitor extends Module {
         handlePendingDisconnectScreenEvidenceCheck(liveConnectedNow);
         wasConnectedLastTick = liveConnectedNow;
 
-        if (consumeNonRestartHardFailSignal()) {
+        if (consumeNonRestartHardFailSignal() && !stashMoverReconnectHandlingActive()) {
             nonRestartHardFailArmed = true;
             handleDetectedNonRestartHardFail("signal");
         }
 
-        if (reconnectService().isReconnectArmed() && restartRecoveryActive) {
+        if (reconnectService().isReconnectArmed() && restartRecoveryActive && reconnectOwner == ReconnectOwner.HighwayBuilder) {
             ensureHighwayBuilderDisabledForRestart("tick guard", false);
         }
 
@@ -2259,6 +2401,14 @@ public class THMHwyMonitor extends Module {
 
     private ServerState getCommittedServerState() {
         return ServerStatusHandler.getInstance().getCommittedState();
+    }
+
+    private ModuleManager getModuleManager() {
+        try {
+            return Modules.get().get(ModuleManager.class);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private boolean isHighwayRecoveryAllowedOnCurrentServer() {
@@ -2345,6 +2495,15 @@ public class THMHwyMonitor extends Module {
             recoveryFarmer = null;
             if (farmer != null && farmer.isActive()) {
                 farmer.onMonitorReconnectMainServerReady(cycleId, contextTag);
+            }
+            return;
+        }
+
+        if (reconnectOwner == ReconnectOwner.StashMover) {
+            THMStashMover stashMover = recoveryStashMover;
+            clearStashMoverReconnectState("stash-mover-main-server-ready", true, true);
+            if (stashMover != null && stashMover.isActive()) {
+                stashMover.onMonitorReconnectMainServerReady(cycleId, contextTag);
             }
             return;
         }
@@ -3306,7 +3465,7 @@ public class THMHwyMonitor extends Module {
             return false;
         }
 
-        ModuleManager manager = Modules.get().get(ModuleManager.class);
+        ModuleManager manager = getModuleManager();
         if (manager != null && manager.isActive()) {
             ModuleManager.ReconnectRestoreOutcome restoreOutcome = manager.restoreReconnectManagedModules(activeReconnectCycleId);
             if (restoreOutcome == ModuleManager.ReconnectRestoreOutcome.CriticalFailure) {

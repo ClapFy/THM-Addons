@@ -32,6 +32,7 @@ THM Addons is a Meteor Client addon focused on highway automation, travel utilit
 A full module-by-module overview is available in `FEATURES.md`.
 
 ## Documentation
+- `docs/highway-settings.md`
 - `docs/highwaybuilder-stats-screenshot-simulation.md`
 - `docs/hwymonitor-reconnect-simulation.md`
 
