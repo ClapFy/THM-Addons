@@ -159,6 +159,8 @@ public class HighwayBuilderTHM extends Module {
     private static final String THM_SPEED_SNAPSHOT_FILE_NAME = "highwaybuilder-speed-snapshot";
     private static final String THM_SPEED_SNAPSHOT_MAGIC = "HB_THM_SPEED_SNAPSHOT_V1";
     private static final int THM_SPEED_SNAPSHOT_VERSION = 1;
+    private static boolean MANAGED_SPEEDMINE_SETTING_ENABLED = false;
+    private static boolean MODULE_MANAGER_INTEGRATION_ENABLED = false;
     private static final long THM_DEBUG_LOG_ROTATE_BYTES = 100L * 1024L * 1024L;
     private static final Object THM_DEBUG_LOG_LOCK = new Object();
     private static final String STATS_CANONICAL_FILE_NAME = "highwaybuildersettings";
@@ -673,9 +675,9 @@ public class HighwayBuilderTHM extends Module {
     );
 
     private final Setting<Boolean> manageThmHwyMonitor = sgGeneral.add(new BoolSetting.Builder()
-        .name("manage-thm-hwy-monitor")
+        .name("manage-thm-highway-monitor")
         .description("Manages HighwayBuilder to reduce highway-building drift and auto-aligns the user on the current highway when HighwayBuilder is on.")
-        .defaultValue(false)
+        .defaultValue(THMUtils.isBaritoneInstalled())
         .onChanged(value -> {
             if (!isActive()) return;
             if (value) syncThmHwyMonitorOnActivate();
@@ -694,12 +696,13 @@ public class HighwayBuilderTHM extends Module {
             if (value) syncModuleManagerOnActivate();
             else syncModuleManagerOnDeactivate();
         })
+        .visible(() -> MODULE_MANAGER_INTEGRATION_ENABLED)
         .build()
     );
 
     private final Setting<Boolean> autosetupModules = sgGeneral.add(new BoolSetting.Builder()
         .name("autosetup-modules")
-        .description("Automatically configures Meteor Speed Mine, Meteor Reach, and HighwayBuilder place range for highway work.")
+        .description("Automatically configures Meteor Speed Mine, Meteor Reach, Meteor Velocity, and HighwayBuilder place range for highway work.")
         .defaultValue(true)
         .onChanged(value -> {
             if (!isActive()) return;
@@ -750,7 +753,7 @@ public class HighwayBuilderTHM extends Module {
         .name("speedmine")
         .description("Wether to use the Speedmine module to speed up basalt breaking")
         .defaultValue(false)
-        .visible(doubleMine::get)
+        .visible(() -> MANAGED_SPEEDMINE_SETTING_ENABLED && doubleMine.get())
         .onChanged(value -> {
             if (!isActive()) return;
             syncManagedSpeedMineOwnership();
@@ -985,8 +988,9 @@ public class HighwayBuilderTHM extends Module {
         .name("placements-per-tick")
         .description("The maximum amount of blocks that can be placed in a tick. Supports fractional values like 1.5 for real averaged throughput.")
         .defaultValue(1)
-        .range(1, 100)
-        .sliderMax(10)
+        .range(0.1, 100)
+        .sliderRange(0.1, 10)
+        .decimalPlaces(1)
         .build()
     );
 
@@ -1433,6 +1437,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean thmSpeedOwnershipActive;
     private boolean thmSpeedRestorePending;
     private boolean thmSpeedSnapshotDeletePending;
+    private boolean thmSpeedReconnectSuppressed;
     private boolean centerTeleportSlowdownActive;
     private boolean kitbotCenteringActive;
     private int kitbotCenteringTicks;
@@ -1878,6 +1883,10 @@ public class HighwayBuilderTHM extends Module {
         }
 
         clearMainServerResumeGate();
+        if (thmSpeedReconnectSuppressed && !suspended) {
+            thmSpeedReconnectSuppressed = false;
+            syncThmSpeedOwnership("main-server-settle");
+        }
         return true;
     }
 
@@ -1903,10 +1912,48 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void pauseExecutionForServerState(ServerState committedState) {
-        releaseThmSpeedOwnership("server-state-" + committedState.name(), true);
+        parkThmSpeedForReconnect("server-state-" + committedState.name());
         clearSafetyRuntime("server-state-" + committedState.name());
         if (input != null) input.stop();
         executionPausedByServerState = true;
+    }
+
+    private void enforceDisabledHighwayBuilderSettings() {
+        if (!MANAGED_SPEEDMINE_SETTING_ENABLED && speedmine.get()) speedmine.set(false);
+        if (!MODULE_MANAGER_INTEGRATION_ENABLED && manageModuleManager.get()) manageModuleManager.set(false);
+    }
+
+    public void normalizeAfterThmProfileLoad() {
+        enforceDisabledHighwayBuilderSettings();
+        enforceKitbotFoodRestockFoodType();
+    }
+
+    public void applyThmProfileSeed(THMSystem.Mode profile) {
+        switch (profile) {
+            case None -> {
+            }
+            case HighwayBuilding -> {
+                width.set(5);
+                height.set(3);
+                blocksToPlace.set(List.of(Blocks.OBSIDIAN));
+                mineAboveRailings.set(true);
+                railings.set(true);
+                floor.set(Floor.Replace);
+                if (THMUtils.isBaritoneInstalled()) manageThmHwyMonitor.set(true);
+                kitbotEChestRestockKit.set(KitbotEChestRestockKit.Highway);
+                kitbotPickaxeRestockKit.set(KitbotPickaxeRestockKit.Highway);
+            }
+            case HighwayDigging -> {
+                width.set(5);
+                height.set(4);
+                blocksToPlace.set(List.of(Blocks.NETHERRACK, Blocks.BASALT, Blocks.BLACKSTONE, Blocks.SOUL_SOIL));
+                mineAboveRailings.set(true);
+                railings.set(true);
+                floor.set(Floor.Replace);
+                if (THMUtils.isBaritoneInstalled()) manageThmHwyMonitor.set(true);
+                kitbotPickaxeRestockKit.set(KitbotPickaxeRestockKit.Pickaxe);
+            }
+        }
     }
 
     @Override
@@ -1916,6 +1963,7 @@ public class HighwayBuilderTHM extends Module {
         ReconnectResumeContext reconnectResume = reconnectResumeContext;
         reconnectResumeContext = null;
         boolean reconnectActivation = reconnectResume != null;
+        if (reconnectActivation) thmSpeedReconnectSuppressed = true;
         KitbotFrontend.addLifecycleListener(kitbotRestockLifecycleListener);
         clearKitbotRuntimeState("module-activate");
         enforceKitbotFoodRestockFoodType();
@@ -1932,6 +1980,7 @@ public class HighwayBuilderTHM extends Module {
         }
         clearEChestBreakSpeedOwnership();
 
+        enforceDisabledHighwayBuilderSettings();
         if (!suppressThmHwyMonitorSync) {
             syncModuleManagerOnActivate();
             syncThmHwyMonitorOnActivate();
@@ -2007,9 +2056,9 @@ public class HighwayBuilderTHM extends Module {
         forwardSchedulerDebugFileErrorLogged = false;
         resetTpsThrottleRuntime();
         clearSafetyRuntime("module-activate");
-        mineActionsThisTick = Math.max(1, (int) Math.floor(sanitizeActionRate(blocksPerTick.get())));
+        mineActionsThisTick = Math.max(1, (int) Math.floor(sanitizeMineActionRate(blocksPerTick.get())));
         mineFractionCarry = 0.0;
-        placeActionsThisTick = Math.max(1, (int) Math.floor(sanitizeActionRate(placementsPerTick.get())));
+        placeActionsThisTick = Math.max(0, (int) Math.floor(sanitizePlaceActionRate(placementsPerTick.get())));
         placeFractionCarry = 0.0;
         resetEnclosurePlaceCredit();
         clearEnclosurePlacementConfirmation();
@@ -2045,7 +2094,7 @@ public class HighwayBuilderTHM extends Module {
         //it could be tested to print different warnings depending on the amount of blocks being broken per tick but that would need much testing and wouldn't be reliable
         if (Modules.get().get(NoGhostBlocks.class).isActive())
             warning("It's recommended to disable the NoGhostBlocks module to avoid packet kicks and wrong statistics.");
-        if (!Modules.get().get(Velocity.class).isActive()) {
+        if (!autosetupModules.get() && !Modules.get().get(Velocity.class).isActive()) {
             warning("It's recommended to enable the Velocity module to avoid misalignment.");};
         perspectiveChanged = false;
         if (togglePerspective.get()) {
@@ -2059,26 +2108,6 @@ public class HighwayBuilderTHM extends Module {
         validateManagedHotbarReserveSlots();
         if (!Modules.get().get(AntiDrop.class).isActive() && antidrop.get()) { Modules.get().get(AntiDrop.class).toggle();}
         syncManagedSpeedMineOwnership();
-
-        THMSystem thmSystem = THMSystem.get();
-        if (thmSystem != null) {
-            int playerY = (int) mc.player.getY();
-
-            if (thmSystem.mode.get() == THMSystem.Mode.HighwayBuilding) {
-                if (playerY != 120) {
-                    warning("You are not on Y Level 120!!");
-                    toggle();
-                }
-            }
-            if (thmSystem.mode.get() == THMSystem.Mode.HighwayDigging) {
-                if (playerY != 119) {
-                    warning("You are not on Y Level 119!!");
-                    toggle();
-                }
-            }
-        }
-
-
 
     }
     @Override
@@ -2112,10 +2141,14 @@ public class HighwayBuilderTHM extends Module {
         monitorPauseDeactivateArmed = false;
         reconnectFailureDeactivateArmed = false;
         autoLogTerminalDeactivateArmed = false;
-        if (!isMonitorPauseDeactivate) releaseThmSpeedOwnership(
-            isReconnectFailureDeactivate ? "reconnect-failure-deactivate" : "module-deactivate",
-            true
-        );
+        if (isMonitorPauseDeactivate) {
+            parkThmSpeedForReconnect("monitor-pause-deactivate");
+        } else {
+            releaseThmSpeedOwnership(
+                isReconnectFailureDeactivate ? "reconnect-failure-deactivate" : "module-deactivate",
+                true
+            );
+        }
         cleanupKitbotEnclosureOnDeactivate(isMonitorPauseDeactivate ? "monitor-pause-deactivate" : "module-deactivate");
 
         if (!suppressThmHwyMonitorSync) syncThmHwyMonitorOnDeactivate();
@@ -2228,7 +2261,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void syncModuleManagerOnActivate() {
-        if (!manageModuleManager.get()) return;
+        if (!MODULE_MANAGER_INTEGRATION_ENABLED || !manageModuleManager.get()) return;
 
         try {
             ModuleManager manager = Modules.get().get(ModuleManager.class);
@@ -2240,7 +2273,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void syncModuleManagerOnDeactivate() {
-        if (!manageModuleManager.get()) return;
+        if (!MODULE_MANAGER_INTEGRATION_ENABLED || !manageModuleManager.get()) return;
 
         try {
             ModuleManager manager = Modules.get().get(ModuleManager.class);
@@ -2272,6 +2305,7 @@ public class HighwayBuilderTHM extends Module {
 
         resumeStatsSessionOnNextActivate = true;
         monitorPauseDeactivateArmed = true;
+        parkThmSpeedForReconnect("monitor-realign-pause");
         if (!statsSessionTerminalOrFinalizing) persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "monitor-pause-request");
         suppressThmHwyMonitorSync = true;
         try {
@@ -3715,6 +3749,8 @@ public class HighwayBuilderTHM extends Module {
         if (!isActive() || mc.player == null || mc.world == null || !Utils.canUpdate()) return false;
 
         suspended = false;
+        thmSpeedReconnectSuppressed = false;
+        syncThmSpeedOwnership("reconnect-finalized");
         return true;
     }
 
@@ -4489,6 +4525,7 @@ public class HighwayBuilderTHM extends Module {
 
         applyAutosetupSpeedMine();
         applyAutosetupReach();
+        applyAutosetupVelocity();
         placeRange.set(5.4);
     }
 
@@ -4551,6 +4588,32 @@ public class HighwayBuilderTHM extends Module {
 
         Setting<Double> entityReach = reach.settings.get("extra-entity-reach", Double.class);
         if (entityReach != null) entityReach.set(2.0);
+    }
+
+    private void applyAutosetupVelocity() {
+        Velocity velocity = Modules.get().get(Velocity.class);
+        if (velocity == null) return;
+
+        if (!velocity.isActive()) velocity.toggle();
+
+        velocity.knockback.set(true);
+        velocity.knockbackHorizontal.set(0.0);
+        velocity.knockbackVertical.set(0.0);
+
+        velocity.explosions.set(true);
+        velocity.explosionsHorizontal.set(0.0);
+        velocity.explosionsVertical.set(0.0);
+
+        velocity.liquids.set(true);
+        velocity.liquidsHorizontal.set(0.0);
+        velocity.liquidsVertical.set(0.0);
+
+        velocity.entityPush.set(true);
+        velocity.entityPushAmount.set(0.0);
+
+        velocity.blocks.set(true);
+        velocity.sinking.set(false);
+        velocity.fishing.set(false);
     }
 
     @SuppressWarnings("unchecked")
@@ -4642,7 +4705,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private boolean shouldOwnManagedSpeedMine() {
-        return isActive() && doubleMine.get() && speedmine.get();
+        return MANAGED_SPEEDMINE_SETTING_ENABLED && isActive() && doubleMine.get() && speedmine.get();
     }
 
     private void syncManagedSpeedMineOwnership() {
@@ -5291,8 +5354,8 @@ public class HighwayBuilderTHM extends Module {
             tpsThrottlePauseReason = TpsThrottlePauseReason.Settling;
             tpsThrottleSettleUntilMs = System.currentTimeMillis() + TPS_THROTTLE_SETTLE_MS;
         } else {
-            tpsThrottleAdjustedBlocksPerTick = sanitizeActionRate(blocksPerTick.get());
-            tpsThrottleAdjustedPlacementsPerTick = sanitizeActionRate(placementsPerTick.get());
+            tpsThrottleAdjustedBlocksPerTick = sanitizeMineActionRate(blocksPerTick.get());
+            tpsThrottleAdjustedPlacementsPerTick = sanitizePlaceActionRate(placementsPerTick.get());
             tpsThrottlePaused = false;
             tpsThrottlePauseReason = TpsThrottlePauseReason.None;
             tpsThrottleSettleUntilMs = 0L;
@@ -5300,8 +5363,8 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void updateTpsActionThrottle() {
-        double baseBlocksPerTick = sanitizeActionRate(blocksPerTick.get());
-        double basePlacementsPerTick = sanitizeActionRate(placementsPerTick.get());
+        double baseBlocksPerTick = sanitizeMineActionRate(blocksPerTick.get());
+        double basePlacementsPerTick = sanitizePlaceActionRate(placementsPerTick.get());
         boolean wasPaused = tpsThrottlePaused;
         TpsThrottlePauseReason previousReason = tpsThrottlePauseReason;
 
@@ -5723,16 +5786,21 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private double effectiveBlocksPerTickActionRate() {
-        return pauseOnLag.get() ? Math.max(0.0, tpsThrottleAdjustedBlocksPerTick) : sanitizeActionRate(blocksPerTick.get());
+        return pauseOnLag.get() ? Math.max(0.0, tpsThrottleAdjustedBlocksPerTick) : sanitizeMineActionRate(blocksPerTick.get());
     }
 
     private double effectivePlacementsPerTickActionRate() {
-        return pauseOnLag.get() ? Math.max(0.0, tpsThrottleAdjustedPlacementsPerTick) : sanitizeActionRate(placementsPerTick.get());
+        return pauseOnLag.get() ? Math.max(0.0, tpsThrottleAdjustedPlacementsPerTick) : sanitizePlaceActionRate(placementsPerTick.get());
     }
 
-    private double sanitizeActionRate(double value) {
+    private double sanitizeMineActionRate(double value) {
         if (!Double.isFinite(value)) return 1.0;
         return Math.max(1.0, value);
+    }
+
+    private double sanitizePlaceActionRate(double value) {
+        if (!Double.isFinite(value)) return 0.1;
+        return Math.max(0.1, roundToNearestTenth(value));
     }
 
     private double roundToNearestTenth(double value) {
@@ -5770,7 +5838,7 @@ public class HighwayBuilderTHM extends Module {
 
     private int computeEnclosurePlaceCreditGainTenths() {
         double configured = Math.max(0.0, effectivePlacementsPerTickActionRate());
-        int gain = (int) Math.round(configured * (ENCLOSURE_PLACE_CREDIT_SCALE / 2.0));
+        int gain = (int) Math.round(configured * ENCLOSURE_PLACE_CREDIT_SCALE);
         return Math.max(0, Math.min(gain, ENCLOSURE_PLACE_CREDIT_SCALE));
     }
 
@@ -7026,10 +7094,24 @@ public class HighwayBuilderTHM extends Module {
 
     private void syncThmSpeedOwnership(String reason) {
         if (!useThmSpeed.get()) {
+            if (thmSpeedReconnectSuppressed && !isThmSpeedExecutionAllowed()) {
+                parkThmSpeedForReconnect(reason + "-disabled-suppressed");
+                return;
+            }
+            thmSpeedReconnectSuppressed = false;
             releaseThmSpeedOwnership(reason + "-disabled", true);
             return;
         }
-        if (!isThmSpeedExecutionAllowed()) return;
+        if (thmSpeedReconnectSuppressed) {
+            parkThmSpeedForReconnect(reason + "-suppressed");
+            return;
+        }
+        if (!isThmSpeedExecutionAllowed()) {
+            if (thmSpeedOwnershipActive || thmSpeedSnapshot != null) {
+                parkThmSpeedForReconnect(reason + "-not-allowed");
+            }
+            return;
+        }
 
         if (centerSpeedSnapshotOwned) {
             restoreCenterSpeedIfOwned("thm-speed-acquire:" + reason);
@@ -7037,6 +7119,32 @@ public class HighwayBuilderTHM extends Module {
         }
 
         if (acquireThmSpeedOwnership(reason)) enforceThmSpeedOwnership(reason);
+    }
+
+    private void parkThmSpeedForReconnect(String reason) {
+        resetThmSpeedRuntime();
+
+        MeteorSpeedSnapshot snapshot = thmSpeedSnapshot;
+        if (snapshot == null) snapshot = loadThmSpeedSnapshot();
+
+        boolean hasHighwayBuilderSpeedState = thmSpeedOwnershipActive || snapshot != null;
+        thmSpeedReconnectSuppressed = true;
+        thmSpeedOwnershipActive = false;
+        thmSpeedRestorePending = false;
+        thmSpeedSnapshotDeletePending = false;
+        if (snapshot != null) thmSpeedSnapshot = snapshot;
+
+        if (!hasHighwayBuilderSpeedState) return;
+
+        Speed speed = Modules.get().get(Speed.class);
+        if (speed == null || !speed.isActive()) return;
+
+        try {
+            speed.toggle();
+            restockDebug("THM speed ownership parked Meteor Speed off for reconnect (reason=%s).", reason);
+        } catch (Exception e) {
+            restockDebug("THM speed ownership failed to park Meteor Speed off for reconnect (reason=%s, error=%s).", reason, e.getClass().getSimpleName());
+        }
     }
 
     private boolean acquireThmSpeedOwnership(String reason) {
@@ -7092,6 +7200,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void releaseThmSpeedOwnership(String reason, boolean deleteCache) {
+        thmSpeedReconnectSuppressed = false;
         resetThmSpeedRuntime();
 
         MeteorSpeedSnapshot snapshot = thmSpeedSnapshot;
@@ -7177,6 +7286,7 @@ public class HighwayBuilderTHM extends Module {
 
     private void tickDeferredThmSpeedRestore() {
         if (!thmSpeedRestorePending || thmSpeedSnapshot == null) return;
+        if (thmSpeedReconnectSuppressed) return;
         if (useThmSpeed.get() && isActive() && isThmSpeedExecutionAllowed()) return;
         if (!canToggleMeteorSpeedForThmRestore()) return;
 
@@ -7248,6 +7358,7 @@ public class HighwayBuilderTHM extends Module {
 
         return isActive()
             && useThmSpeed.get()
+            && !thmSpeedReconnectSuppressed
             && thmSpeedOwnershipActive
             && thmSpeedSnapshot != null
             && input != null
@@ -10764,6 +10875,8 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private ModuleManager getModuleManager() {
+        if (!MODULE_MANAGER_INTEGRATION_ENABLED) return null;
+
         try {
             return Modules.get().get(ModuleManager.class);
         } catch (Throwable ignored) {

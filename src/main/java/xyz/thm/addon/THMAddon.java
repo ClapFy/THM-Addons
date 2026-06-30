@@ -26,6 +26,7 @@ import org.slf4j.Logger;
 import xyz.thm.addon.commands.Center;
 import xyz.thm.addon.commands.DesyncCommand;
 import xyz.thm.addon.commands.EclipCommand;
+import xyz.thm.addon.commands.THMStashMoverCommand;
 import xyz.thm.addon.commands.UUIDCommand;
 import xyz.thm.addon.gui.themes.*;
 import xyz.thm.addon.hud.*;
@@ -167,7 +168,6 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
 
         // Modules
         Modules.get().add(new HighwayBuilderTHM());
-        Modules.get().add(new ModuleManager());
         Modules.get().add(new AxisViewer());
         Modules.get().add(new DiscordNotifs());
         Modules.get().add(new AntiDrop());
@@ -197,6 +197,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new FriendsSyncModule());
         Modules.get().add(new FlightBypass());
         Modules.get().add(new KitbotFrontend());
+        Modules.get().add(new THMStashMover());
         if (BaritoneUtils.IS_AVAILABLE) {
             LOG.info("Baritone detected. Enabling Baritone-dependent THM modules.");
             Modules.get().add(new THMHwyMonitor());
@@ -212,6 +213,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Commands.add(new EclipCommand());
         Commands.add(new DesyncCommand());
         Commands.add(new UUIDCommand());
+        Commands.add(new THMStashMoverCommand());
 
 
         //Hud
@@ -226,6 +228,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Hud.get().register(ElytraFlightHud.INFO);
         Hud.get().register(AfkLogoutHud.INFO);
         Hud.get().register(ItemCounterHud.INFO);
+        Hud.get().register(THMStashMoverPairHud.INFO);
 
         //Themes
         GuiThemes.add(DarkTheme.INSTANCE);
