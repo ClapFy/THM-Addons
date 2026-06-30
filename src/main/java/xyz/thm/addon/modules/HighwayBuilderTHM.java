@@ -142,6 +142,11 @@ public class HighwayBuilderTHM extends Module {
     private static final long STATS_CHECKPOINT_INTERVAL_MS = 10 * 60 * 1000L;
     private static final int STATS_SCREENSHOT_DELAY_MS = 250;
     private static final long STATS_MEMORY_RETRY_RECHECK_MS = 5_000L;
+    private static final long STATS_CODE_MAX_AGE_MS = 24L * 60L * 60L * 1000L;
+    private static final long STATS_CODE_MAX_FUTURE_SKEW_MS = 5L * 60L * 1000L;
+    private static final String STATS_CODE_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    private static final int STATS_CODE_LENGTH = 7;
+    private static final long STATS_CODE_MAX_VALUE = 2_207_984_167_551L;
     private static final String THM_DEBUG_LOG_DIR_NAME = "thm";
     private static final String HIGHWAYBUILDER_DEBUG_FILE_NAME = "highwaybuilder-debug.log";
     private static final String RESTOCK_DEBUG_FILE_NAME = "highwaybuilder-restock-debug.log";
@@ -1472,6 +1477,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean eChestMemoryReflectionFailureLogged;
     private String activeStatsSessionId;
     private long activeStatsGeneration;
+    private long activeStatsCodeTimestampMs;
     private StatsArtifactSnapshot statsCacheSnapshot;
     private StatsArtifactIdentity loadedStatsArtifactIdentity;
     private final Set<String> consumedStatsArtifactKeys = new HashSet<>();
@@ -1670,6 +1676,7 @@ public class HighwayBuilderTHM extends Module {
         double startZ,
         int blocksBroken,
         int blocksPlaced,
+        long statsCodeTimestampMs,
         boolean displayInfo,
         long lastCheckpointAt,
         long printedAt,
@@ -1722,7 +1729,16 @@ public class HighwayBuilderTHM extends Module {
         long generation,
         Vec3d startPos,
         int blocksBroken,
-        int blocksPlaced
+        int blocksPlaced,
+        long statsCodeTimestampMs
+    ) {}
+
+    private record StatsDisplaySnapshot(
+        double distance,
+        int blocksBroken,
+        int blocksPlaced,
+        String statsCode,
+        boolean restartDistanceWarning
     ) {}
 
     private record ForwardBreakStatCredit(
@@ -7741,6 +7757,7 @@ public class HighwayBuilderTHM extends Module {
         displayInfo = false;
         activeStatsSessionId = null;
         activeStatsGeneration = 0L;
+        activeStatsCodeTimestampMs = 0L;
         lastPrintedStatsSessionId = null;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
@@ -7845,6 +7862,7 @@ public class HighwayBuilderTHM extends Module {
         displayInfo = true;
         activeStatsSessionId = UUID.randomUUID().toString();
         activeStatsGeneration = 0L;
+        activeStatsCodeTimestampMs = 0L;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
         persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "fresh-activate");
@@ -7861,6 +7879,7 @@ public class HighwayBuilderTHM extends Module {
         displayInfo = snapshot.displayInfo();
         activeStatsSessionId = snapshot.sessionId();
         activeStatsGeneration = snapshot.generation();
+        activeStatsCodeTimestampMs = snapshot.statsCodeTimestampMs();
         lastPrintedStatsSessionId = snapshot.printedToChat() ? snapshot.sessionId() : null;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
@@ -7934,6 +7953,7 @@ public class HighwayBuilderTHM extends Module {
             start.z,
             blocksBroken,
             blocksPlaced,
+            activeStatsCodeTimestampMs,
             displayInfo,
             checkpointAt,
             printedAt,
@@ -7981,6 +8001,7 @@ public class HighwayBuilderTHM extends Module {
             snapshot.startZ(),
             snapshot.blocksBroken(),
             snapshot.blocksPlaced(),
+            snapshot.statsCodeTimestampMs(),
             snapshot.displayInfo(),
             System.currentTimeMillis(),
             printedAt,
@@ -7988,6 +8009,36 @@ public class HighwayBuilderTHM extends Module {
             webhookSendCommitted,
             apiSendCommitted,
             finalizationReason,
+            snapshot.reconnectCycleId(),
+            snapshot.reconnectBaselinePayload()
+        );
+    }
+
+    private StatsArtifactSnapshot copyStatsArtifactWithCodeTimestamp(
+        StatsArtifactSnapshot snapshot,
+        long statsCodeTimestampMs,
+        long generation
+    ) {
+        return new StatsArtifactSnapshot(
+            snapshot.kind(),
+            snapshot.sessionId(),
+            generation,
+            snapshot.state(),
+            snapshot.resumeAllowed(),
+            snapshot.workingDirectionName(),
+            snapshot.startX(),
+            snapshot.startY(),
+            snapshot.startZ(),
+            snapshot.blocksBroken(),
+            snapshot.blocksPlaced(),
+            statsCodeTimestampMs,
+            snapshot.displayInfo(),
+            System.currentTimeMillis(),
+            snapshot.printedAt(),
+            snapshot.printedToChat(),
+            snapshot.webhookSendCommitted(),
+            snapshot.apiSendCommitted(),
+            snapshot.finalizationReason(),
             snapshot.reconnectCycleId(),
             snapshot.reconnectBaselinePayload()
         );
@@ -8221,6 +8272,7 @@ public class HighwayBuilderTHM extends Module {
         out.append("meta|startZ|").append(snapshot.startZ()).append('\n');
         out.append("meta|blocksBroken|").append(snapshot.blocksBroken()).append('\n');
         out.append("meta|blocksPlaced|").append(snapshot.blocksPlaced()).append('\n');
+        out.append("meta|statsCodeTimestampMs|").append(snapshot.statsCodeTimestampMs()).append('\n');
         out.append("meta|displayInfo|").append(snapshot.displayInfo()).append('\n');
         out.append("meta|lastCheckpointAt|").append(snapshot.lastCheckpointAt()).append('\n');
         out.append("meta|printedAt|").append(snapshot.printedAt()).append('\n');
@@ -8299,6 +8351,7 @@ public class HighwayBuilderTHM extends Module {
             parseDoubleSafe(meta.get("startZ"), 0.0),
             parseIntSafe(meta.get("blocksBroken"), 0),
             parseIntSafe(meta.get("blocksPlaced"), 0),
+            parseLongSafe(meta.get("statsCodeTimestampMs"), 0L),
             Boolean.parseBoolean(meta.getOrDefault("displayInfo", "true")),
             parseLongSafe(meta.get("lastCheckpointAt"), 0L),
             parseLongSafe(meta.get("printedAt"), 0L),
@@ -8372,13 +8425,21 @@ public class HighwayBuilderTHM extends Module {
             snapshot.generation(),
             new Vec3d(snapshot.startX(), snapshot.startY(), snapshot.startZ()),
             snapshot.blocksBroken(),
-            snapshot.blocksPlaced()
+            snapshot.blocksPlaced(),
+            snapshot.statsCodeTimestampMs()
         );
     }
 
     private RetiredStatsReportSnapshot captureRetiredStatsReportFromLiveSession() {
         if (!hasActiveInMemoryStatsSession()) return null;
-        return new RetiredStatsReportSnapshot(activeStatsSessionId, activeStatsGeneration, start, blocksBroken, blocksPlaced);
+        return new RetiredStatsReportSnapshot(
+            activeStatsSessionId,
+            activeStatsGeneration,
+            start,
+            blocksBroken,
+            blocksPlaced,
+            activeStatsCodeTimestampMs
+        );
     }
 
     private StatsArtifactSnapshot createFinalizationRecord(String reason) {
@@ -8395,6 +8456,7 @@ public class HighwayBuilderTHM extends Module {
             start.z,
             blocksBroken,
             blocksPlaced,
+            activeStatsCodeTimestampMs,
             displayInfo,
             System.currentTimeMillis(),
             0L,
@@ -8451,15 +8513,60 @@ public class HighwayBuilderTHM extends Module {
         return persistFinalizationRecord(updated, reason) != null ? updated : null;
     }
 
+    private boolean shouldRefreshStatsCodeTimestamp(long timestampMs, long nowMs) {
+        if (timestampMs <= 0L) return true;
+        if (timestampMs > nowMs + STATS_CODE_MAX_FUTURE_SKEW_MS) return true;
+        return nowMs - timestampMs > STATS_CODE_MAX_AGE_MS;
+    }
+
+    private long ensureActiveStatsCodeTimestamp(String reason) {
+        if (!hasActiveInMemoryStatsSession()) return 0L;
+
+        long now = System.currentTimeMillis();
+        if (!shouldRefreshStatsCodeTimestamp(activeStatsCodeTimestampMs, now)) return activeStatsCodeTimestampMs;
+
+        activeStatsCodeTimestampMs = now;
+        statsSessionDirty = true;
+        if (!statsSessionTerminalOrFinalizing) {
+            persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, reason + "-stats-code");
+        }
+        return activeStatsCodeTimestampMs;
+    }
+
+    private StatsArtifactSnapshot ensureFinalizationStatsCodeTimestamp(StatsArtifactSnapshot snapshot, String reason) {
+        if (snapshot == null) return null;
+
+        long now = System.currentTimeMillis();
+        if (!shouldRefreshStatsCodeTimestamp(snapshot.statsCodeTimestampMs(), now)) {
+            activeStatsCodeTimestampMs = snapshot.statsCodeTimestampMs();
+            return snapshot;
+        }
+
+        StatsArtifactSnapshot updated = copyStatsArtifactWithCodeTimestamp(
+            snapshot,
+            now,
+            nextStatsGenerationAfter(snapshot.generation())
+        );
+        if (persistFinalizationRecord(updated, reason + "-stats-code") == null) return null;
+
+        activeStatsCodeTimestampMs = now;
+        return updated;
+    }
+
     private boolean completeFinalizationRecord(StatsArtifactSnapshot snapshot, String reason, boolean allowPrinting) {
         if (snapshot == null) return true;
 
-        RetiredStatsReportSnapshot report = createRetiredStatsReportSnapshot(snapshot);
-        if (report == null) return false;
-
         StatsArtifactSnapshot working = snapshot;
         if (allowPrinting && !working.printedToChat()) {
-            if (!tryPrintStatsToChat(working.sessionId(), report.startPos(), report.blocksBroken(), report.blocksPlaced(), reason)) return false;
+            working = ensureFinalizationStatsCodeTimestamp(working, reason);
+            if (working == null) return false;
+        }
+
+        RetiredStatsReportSnapshot report = createRetiredStatsReportSnapshot(working);
+        if (report == null) return false;
+
+        if (allowPrinting && !working.printedToChat()) {
+            if (!tryPrintStatsToChat(report, reason)) return false;
             scheduleStatsProofScreenshotIfEnabled(working.sessionId(), reason);
             working = updateFinalizationRecord(working, System.currentTimeMillis(), true, working.webhookSendCommitted(), working.apiSendCommitted(), reason + "-printed");
             if (working == null) return false;
@@ -8555,6 +8662,7 @@ public class HighwayBuilderTHM extends Module {
     private void scheduleStatsProofScreenshot(String sessionId, String reason) {
         if (statsProofScreenshotScheduled) return;
         statsProofScreenshotScheduled = true;
+        long captureToken = StatsScreenshotChatGuard.getInstance().beginCapture();
 
         Thread thread = new Thread(() -> {
             try {
@@ -8565,14 +8673,23 @@ public class HighwayBuilderTHM extends Module {
 
             mc.execute(() -> {
                 try {
-                    takeStatsProofScreenshot(sessionId, reason);
+                    takeStatsProofScreenshot(sessionId, reason, captureToken);
+                } catch (RuntimeException | Error e) {
+                    StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+                    throw e;
                 } finally {
                     statsProofScreenshotScheduled = false;
                 }
             });
         }, "thm-highwaybuilder-stats-screenshot");
         thread.setDaemon(true);
-        thread.start();
+        try {
+            thread.start();
+        } catch (RuntimeException | Error e) {
+            statsProofScreenshotScheduled = false;
+            StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+            throw e;
+        }
     }
 
     private void scheduleStatsProofScreenshotIfEnabled(String sessionId, String reason) {
@@ -8596,7 +8713,7 @@ public class HighwayBuilderTHM extends Module {
 
             mc.execute(() -> {
                 try {
-                    takeStatsProofScreenshot(sessionId, reason);
+                    takeStatsProofScreenshot(sessionId, reason, 0L);
                 } finally {
                     statsDisconnectScreenshotScheduled = false;
                 }
@@ -8606,12 +8723,28 @@ public class HighwayBuilderTHM extends Module {
         thread.start();
     }
 
-    private void takeStatsProofScreenshot(String sessionId, String reason) {
-        if (mc == null || mc.getFramebuffer() == null) return;
+    private void takeStatsProofScreenshot(String sessionId, String reason, long captureToken) {
+        if (mc == null || mc.getFramebuffer() == null) {
+            if (captureToken > 0L) StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+            return;
+        }
 
         String fileName = buildStatsScreenshotFileName(sessionId);
-        ScreenshotRecorder.saveScreenshot(mc.runDirectory, fileName, mc.getFramebuffer(), 1, message -> info(message.getString()));
-        statsCacheDebug("screenshot saved reason={} session={} file={}",
+        try {
+            ScreenshotRecorder.saveScreenshot(mc.runDirectory, fileName, mc.getFramebuffer(), 1, message -> mc.execute(() -> {
+                if (captureToken > 0L) StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+                info(message.getString());
+                statsCacheDebug("screenshot completed reason={} session={} file={}",
+                    reason,
+                    shortSessionId(sessionId),
+                    fileName
+                );
+            }));
+        } catch (RuntimeException | Error e) {
+            if (captureToken > 0L) StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+            throw e;
+        }
+        statsCacheDebug("screenshot requested reason={} session={} file={}",
             reason,
             shortSessionId(sessionId),
             fileName
@@ -8702,19 +8835,49 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
-    private boolean tryPrintStatsToChat(String sessionId, Vec3d startPos, int broken, int placed, String reason) {
-        if (startPos == null || mc.player == null || mc.world == null) return false;
+    private static String encodeStatsCode(long timestampMs) {
+        if (timestampMs <= 0L || timestampMs > STATS_CODE_MAX_VALUE) return null;
+
+        char[] encoded = new char[STATS_CODE_LENGTH];
+        long value = timestampMs;
+        for (int i = encoded.length - 1; i >= 0; i--) {
+            encoded[i] = STATS_CODE_BASE58_ALPHABET.charAt((int) (value % STATS_CODE_BASE58_ALPHABET.length()));
+            value /= STATS_CODE_BASE58_ALPHABET.length();
+        }
+        return value == 0L ? new String(encoded) : null;
+    }
+
+    private StatsDisplaySnapshot createStatsDisplaySnapshot(Vec3d startPos, int broken, int placed, long statsCodeTimestampMs) {
+        double distance = mc.player != null && startPos != null ? PlayerUtils.distanceTo(startPos) : 0.0;
+        String statsCode = encodeStatsCode(statsCodeTimestampMs);
+        if (statsCode == null) statsCode = "unavailable";
+        return new StatsDisplaySnapshot(distance, broken, placed, statsCode, startPos != null && distance > 50000);
+    }
+
+    private boolean tryPrintStatsToChat(RetiredStatsReportSnapshot report, String reason) {
+        if (report == null || report.startPos() == null || mc.player == null || mc.world == null) return false;
         if (!Utils.canUpdate()) return false;
 
-        info("Distance: (highlight)%.0f", PlayerUtils.distanceTo(startPos));
-        info("Blocks broken: (highlight)%d", broken);
-        info("Blocks placed: (highlight)%d", placed);
-        lastPrintedStatsSessionId = sessionId;
-        statsCacheDebug("printed reason={} session={} broken={} placed={}",
+        StatsDisplaySnapshot display = createStatsDisplaySnapshot(
+            report.startPos(),
+            report.blocksBroken(),
+            report.blocksPlaced(),
+            report.statsCodeTimestampMs()
+        );
+        info("Distance: (highlight)%.0f", display.distance());
+        info("Blocks broken: (highlight)%d", display.blocksBroken());
+        info("Blocks placed: (highlight)%d", display.blocksPlaced());
+        info("Stats code: (highlight)%s", display.statsCode());
+        if (display.restartDistanceWarning()) {
+            warning("Restart Detected. Please calculate the real distance using /calculate in proof-of-work");
+        }
+        lastPrintedStatsSessionId = report.sessionId();
+        statsCacheDebug("printed reason={} session={} broken={} placed={} statsCodeTimestampMs={}",
             reason,
-            shortSessionId(sessionId),
-            broken,
-            placed
+            shortSessionId(report.sessionId()),
+            report.blocksBroken(),
+            report.blocksPlaced(),
+            report.statsCodeTimestampMs()
         );
         return true;
     }
@@ -10330,26 +10493,30 @@ public class HighwayBuilderTHM extends Module {
         Vec3d statsStart = null;
         int statsBroken = 0;
         int statsPlaced = 0;
+        long statsCodeTimestampMs = 0L;
 
         if (hasActiveInMemoryStatsSession()) {
             statsStart = start;
             statsBroken = blocksBroken;
             statsPlaced = blocksPlaced;
+            statsCodeTimestampMs = ensureActiveStatsCodeTimestamp("stats-text");
         } else if (retiredStatsReportSnapshot != null) {
             statsStart = retiredStatsReportSnapshot.startPos();
             statsBroken = retiredStatsReportSnapshot.blocksBroken();
             statsPlaced = retiredStatsReportSnapshot.blocksPlaced();
+            statsCodeTimestampMs = retiredStatsReportSnapshot.statsCodeTimestampMs();
         }
 
-        double distance = 0.0;
-        if (mc.player != null && statsStart != null) distance = PlayerUtils.distanceTo(statsStart);
-
-        MutableText text = Text.literal(String.format("%sDistance: %s%.0f\n", Formatting.GRAY, Formatting.WHITE, distance));
-        text.append(String.format("%sBlocks broken: %s%d\n", Formatting.GRAY, Formatting.WHITE, statsBroken));
-        text.append(String.format("%sBlocks placed: %s%d\n", Formatting.GRAY, Formatting.WHITE, statsPlaced));
-        if (mc.player != null && statsStart != null && distance > 50000) {
-            text.append(String.format("%sRestart Detected. Please calculate the real distance using /calculate in proof-of-work",
-                Formatting.YELLOW));
+        StatsDisplaySnapshot display = createStatsDisplaySnapshot(statsStart, statsBroken, statsPlaced, statsCodeTimestampMs);
+        MutableText text = Text.literal(String.format("%sDistance: %s%.0f\n", Formatting.GRAY, Formatting.WHITE, display.distance()));
+        text.append(String.format("%sBlocks broken: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksBroken()));
+        text.append(String.format("%sBlocks placed: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksPlaced()));
+        text.append(String.format("%sStats code: %s%s\n", Formatting.GRAY, Formatting.WHITE, display.statsCode()));
+        if (display.restartDistanceWarning()) {
+            text.append(String.format(
+                "%sRestart Detected. Please calculate the real distance using /calculate in proof-of-work\n",
+                Formatting.YELLOW
+            ));
         }
 
         return text;

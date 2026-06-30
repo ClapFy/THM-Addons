@@ -16,6 +16,7 @@
     "SplashTextMixin",
     "SystemsMixin",
     "accessor.CameraAccessor",
+    "accessor.ChatHudAccessor",
     "accessor.EntityPositionAccessor",
     "accessor.ExplosionS2CPacketAccessor",
     "accessor.LimbAnimatorAccessor",
