@@ -313,7 +313,7 @@ public final class ThmMembers {
             case "elite highway man" -> 500000;
             case "journeyman"        -> 300000;
             case "highway man"       -> 100000;
-            case "apprentice"        -> 100000;
+            case "apprentice"        -> 75000;
             default                  -> 50000;
         };
     }
