@@ -12408,7 +12408,7 @@ public class HighwayBuilderTHM extends Module {
             private int targetEchestsToBreak;
             private int targetObsidianCount;
             private int lastObservedObsidianCount;
-            private boolean first, primed;
+            private boolean first, primed, breakRequested;
             private boolean stopTimerEnabled;
             private int stopTimer, moveTimer;
             private double returnX, returnY, returnZ;
@@ -12490,6 +12490,7 @@ public class HighwayBuilderTHM extends Module {
 
                 stopTimerEnabled = false;
                 primed = false;
+                breakRequested = false;
                 if (Speedmine.INSTANCE != null && !Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
                 b.applyEChestBreakSpeedOverrideIfPossible("mine-echests-start");
             }
@@ -12598,8 +12599,13 @@ public class HighwayBuilderTHM extends Module {
                         }
                         return;
                     }
-
-                    Speedmine.INSTANCE.requestBreak(bp);
+                    if (!breakRequested) {
+                        b.info("MineEnderChests: requesting first break at %s", bp);
+                        Speedmine.INSTANCE.requestBreak(bp);
+                        breakRequested = true;
+                    } else {
+                        b.restockDebug("MineEnderChests: break already requested, Speedmine autoRebreak handles %s (isMining=%s)", bp, Speedmine.INSTANCE.isMining(bp));
+                    }
                 }
                 else {
                     // Place ender chest
@@ -12613,6 +12619,7 @@ public class HighwayBuilderTHM extends Module {
 
                     if (!first) primed = true;
 
+                    b.restockDebug("MineEnderChests: placing echest at %s (breakRequested=%s, primed=%s)", bp, breakRequested, primed);
                     BlockUtils.place(bp, Hand.MAIN_HAND, slot, b.rotation.get().place, 0, true, true, b.silentRebreakSwap.get());
                 }
             }
