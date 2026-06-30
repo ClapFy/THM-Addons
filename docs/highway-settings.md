@@ -48,6 +48,8 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `tps-safety-enclosure` | `true` | Builds a small safety enclosure during confirmed low/unknown TPS pauses. |
 | `destroy-crystal-traps` | `true` | Uses a bow to safely defuse crystal traps from range. |
 | `manage-thm-highway-monitor` | `true`; shown only when Baritone is installed | Lets HighwayBuilder toggle/manage THM Highway Monitor. |
+| `fall-save-air-place` | `false`; shown when `manage-thm-highway-monitor` is on | Places safety blocks while descending at least 0.25 below the managed paving or digging level with support missing. |
+| `fall-save-distance` | `3`, range `3-5`; shown when fall-save is on | How far below the hitbox fall-save can place. |
 | `autosetup-modules` | `true` | Configures Meteor Speed Mine, Reach, Velocity, and HighwayBuilder place range for highway work. |
 | `toggle-perspective` | `true` | Switches to third person while active, then restores the old camera. |
 | `toggle-hud` | `true` | Toggles the highway HUD integration. |
@@ -74,8 +76,6 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `placements-per-tick` | `1`, range `0.1-100`, slider `0.1-10`, one decimal place | Maximum averaged place throughput; `0.1` performs about one placement every 10 ticks. |
 | `place-range` | `4.5`, slider max `5.5` | Maximum block placement reach. |
 | `place-delay` | `0`, minimum `0` | Delay between place actions. |
-| `fall-save-air-place` | `true` | Places a safety block under you if forward floor disappears. |
-| `fall-save-distance` | `2`, range `1-3`; shown when `fall-save-air-place` is on | How far below the hitbox fall-save can place. |
 | `packet-build` | `false` | Uses direct placement packets for higher forward throughput. |
 | `air-place-mode` | `Never`; options `Never`, `Smart`, `Always`; shown when `packet-build` is on | Controls packet-build air placement. |
 | `packet-build-lookahead` | `true`; shown when `packet-build` is on | Also places upcoming rows in the same tick. |
@@ -94,8 +94,11 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `minimum-empty-slots` | `1`, minimum `0`, slider `0-9` | Empty inventory slots to preserve after mining obsidian. |
 | `mine-ender-chests` | `true` | Mines ender chests to convert them into obsidian. |
 | `save-ender-chests` | `4`, range `4-64` | Loose ender chest reserve to keep in inventory. |
+| `new-breaking` | `true`; shown when `mine-ender-chests` is on | On uses THM Speedmine with the normal obby-restock target amount while preserving the saved e-chest reserve. Off uses the legacy packet breaker, the selected target, and the saved reserve. |
+| `instantly-rebreak-echests` | `true`; shown when new breaking is off | Repeatedly sends the legacy instant-rebreak packet after replacing an e-chest. |
+| `rebreak-delay` | `0`, slider max `20`; shown when legacy instant rebreak is on | Ticks between legacy instant-rebreak attempts. |
 | `use-break-speed-multiplier` | `true`; shown when `mine-ender-chests` is on | Temporarily boosts Timer while mining ender chests. |
-| `silent-rebreak-swap` | `true`; shown when `mine-ender-chests` is on | Silently swaps to the best pick when placing ender chests for restock. |
+| `silent-rebreak-swap` | `true`; shown for new breaking or legacy instant rebreak | Silently swaps for legacy rebreak packets and e-chest placement. |
 
 ### KitBot Updates
 
@@ -139,6 +142,8 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `pause-on-lag` | `false` | Always | Throttles mining/placing from TPS and pauses below 10 TPS. |
 | `destroy-crystal-traps` | `true` | Always | Uses a bow to defuse crystal traps safely from distance. |
 | `manage-thm-highway-monitor` | `true` when Baritone is installed | Baritone is installed | Lets HighwayBuilder enable and manage THM Highway Monitor while active. |
+| `fall-save-air-place` | `false` | `manage-thm-highway-monitor` is on | Places one safety block per tick while the player remains below the managed operating level, is still descending by position and velocity, and has no direct support. Turning monitor management off also turns fall-save off. |
+| `fall-save-distance` | `3`, range `3-5` | Monitor management and `fall-save-air-place` are on | Vertical distance below the hitbox used by fall-save placement. |
 | `autosetup-modules` | `true` | Always | Automatically configures Meteor Speed Mine, Reach, Velocity, and HighwayBuilder place range for highway work. |
 | `packet-mode` | `false` | Always | Enables Packet Build and Packet Borer, leaving already-enabled pieces alone. |
 | `check-behind` | `true` | Always | Checks and repairs missing floor or railings behind the player. |
@@ -171,8 +176,6 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `blocks-to-place` | `Obsidian`; full-cube blocks only | Always | Blocks HighwayBuilder is allowed to place. |
 | `place-range` | `4.5`, slider max `5.5` | Always | Maximum distance for block placement. |
 | `place-delay` | `0`, minimum `0` | Always | Delay in ticks between place actions. |
-| `fall-save-air-place` | `true` | Always | Places a safety block below your hitbox during forward building if the floor disappears. |
-| `fall-save-distance` | `2`, range `1-3` | `fall-save-air-place` is on | Vertical distance below your hitbox used by fall-save placement. |
 | `tps-safety-enclosure` | `true` | Always | Builds a small enclosure during confirmed low or unknown TPS pauses after TPS settling. |
 | `packet-build` | `false` | Always | Sends forward placement packets directly and automatically enables Packet Limiter on activation. |
 | `air-place-mode` | `Never`; options `Never`, `Smart`, `Always` | `packet-build` is on | `Never` skips no-face placements, `Smart` packet-air-places only when needed, and `Always` always uses packet air placement. |
@@ -200,9 +203,12 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `minimum-empty-slots` | `1`, minimum `0`, slider `0-9` | Always | Empty inventory slots to preserve after obsidian mining. |
 | `mine-ender-chests` | `true` | Always | Mines ender chests to create obsidian. |
 | `save-ender-chests` | `4`, range `4-64` | Always | Loose ender chests to reserve; falling one below this queues restock, and failure to replenish can hard-fail the module. |
+| `new-breaking` | `true` | `mine-ender-chests` is on | Selects the e-chest breaking method for the next mining cycle. On uses THM Speedmine while keeping the normal obby-restock target amount and stopping at the saved reserve. Off restores the legacy normal/instant-rebreak method and also stops at the saved reserve. |
+| `instantly-rebreak-echests` | `true` | `mine-ender-chests` is on and `new-breaking` is off | Repeatedly sends legacy `STOP_DESTROY_BLOCK` packets after placing an e-chest; after 60 ticks without success the cycle falls back to a normal break. |
+| `rebreak-delay` | `0`, slider max `20` | Legacy instant rebreak is on | Delay in ticks between legacy instant-rebreak attempts. |
 | `use-break-speed-multiplier` | `true` | `mine-ender-chests` is on | Temporarily boosts Timer while mining ender chests, then restores the previous Timer state. |
 | `break-speed-multiplier` | `1.5`, range `1-3` | `mine-ender-chests` and `use-break-speed-multiplier` are on | Timer multiplier used during ender chest mining. |
-| `silent-rebreak-swap` | `true` | `mine-ender-chests` is on | Silently swaps to the best pickaxe when placing ender chests for restock. |
+| `silent-rebreak-swap` | `true` | `mine-ender-chests` is on and either new breaking or legacy instant rebreak is enabled | Silently swaps to the best pickaxe for legacy instant-rebreak packets and when placing e-chests for restock. |
 
 ### THM-HighwayBuilder: KitBot Updates
 
