@@ -25,7 +25,6 @@ public interface CapeHolder {
         BasicSimulation simulation = getSimulation();
         if (simulation == null || simulation.empty()) return;
 
-        // Cape attachment point lags one tick behind player position
         double xCloak = entity.lastX;
         double zCloak = entity.lastZ;
 
@@ -45,6 +44,9 @@ public interface CapeHolder {
         simulation.setGravity(entity.isSubmergedInWater()
             ? WaveyCapesConfig.gravity / 10f
             : WaveyCapesConfig.gravity);
+        simulation.setDamping(WaveyCapesConfig.damping);
+        simulation.setStiffness(WaveyCapesConfig.stiffness);
+        simulation.setMaxBend(WaveyCapesConfig.maxBend);
 
         Vector3 gravity = new Vector3(0, -1, 0);
 
