@@ -210,6 +210,36 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
+    public final Setting<Double> wavyDamping = sgWavyCapes.add(new DoubleSetting.Builder()
+        .name("damping")
+        .description("Velocity damping per tick — lower = more floaty.")
+        .defaultValue(0.85)
+        .min(0).max(1).sliderRange(0, 1)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
+    public final Setting<Integer> wavyStiffness = sgWavyCapes.add(new IntSetting.Builder()
+        .name("stiffness")
+        .description("Constraint solver iterations — higher = stiffer cape.")
+        .defaultValue(3)
+        .min(1).max(10).sliderRange(1, 10)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
+    public final Setting<Double> wavyMaxBend = sgWavyCapes.add(new DoubleSetting.Builder()
+        .name("max-bend")
+        .description("Maximum bend angle between cape segments (degrees).")
+        .defaultValue(20)
+        .min(1).max(90).sliderRange(1, 90)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
     // Store original values
     private int savedWidth = -1;
     private int savedHeight = -1;
