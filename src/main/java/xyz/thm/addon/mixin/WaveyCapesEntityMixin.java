@@ -1,0 +1,46 @@
+package xyz.thm.addon.mixin;
+
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.world.World;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import xyz.thm.addon.waveycapes.CapeHolder;
+import xyz.thm.addon.waveycapes.WaveyCapesConfig;
+import xyz.thm.addon.waveycapes.sim.BasicSimulation;
+import net.minecraft.client.network.AbstractClientPlayerEntity;
+
+@Mixin(LivingEntity.class)
+public abstract class WaveyCapesEntityMixin extends Entity implements CapeHolder {
+
+    @Unique private BasicSimulation thm$simulation;
+    @Unique private boolean thm$dirty;
+
+    public WaveyCapesEntityMixin(EntityType<?> type, World world) {
+        super(type, world);
+    }
+
+    @Override public BasicSimulation getSimulation() { return thm$simulation; }
+    @Override public void setSimulation(BasicSimulation sim) { thm$simulation = sim; }
+    @Override public void setDirty() { thm$dirty = true; }
+
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void thm$wavyCapesTick(CallbackInfo ci) {
+        if (!((Object) this instanceof AbstractClientPlayerEntity)) return;
+        AbstractClientPlayerEntity player = (AbstractClientPlayerEntity) (Object) this;
+        if (!WaveyCapesConfig.enabled) return;
+        if (player.getSkin().cape() == null) return;
+
+        updateSimulation(16);
+        if (thm$dirty) {
+            thm$dirty = false;
+            getSimulation().applyMovement(new xyz.thm.addon.waveycapes.util.Vector3(1f, 1f, 0));
+            for (int i = 0; i < 5; i++) simulate(player);
+        }
+        simulate(player);
+    }
+}

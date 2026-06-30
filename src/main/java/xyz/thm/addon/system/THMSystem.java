@@ -4,6 +4,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.System;
 import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.nbt.NbtCompound;
@@ -12,6 +13,9 @@ import xyz.thm.addon.modules.HighwayBuilderTHM;
 import xyz.thm.addon.utils.APIUtils;
 import xyz.thm.addon.utils.KitbotChatRouter;
 import xyz.thm.addon.utils.ThmMembers;
+import xyz.thm.addon.waveycapes.CapeStyle;
+import xyz.thm.addon.waveycapes.WaveyCapesConfig;
+import xyz.thm.addon.waveycapes.WindMode;
 
 public class THMSystem extends System<THMSystem> {
     public final Settings settings = new Settings();
@@ -22,6 +26,10 @@ public class THMSystem extends System<THMSystem> {
     private final SettingGroup sgPvp = settings.createGroup("PVP");
     private final SettingGroup sgRender = settings.createGroup("THM Rendering");
     private final SettingGroup sgKitbot = settings.createGroup("KitBot");
+
+    // Separate settings object for the Wavy Capes screen (not shown in the main THM tab)
+    public final Settings wavyCapesSettings = new Settings();
+    private final SettingGroup sgWavyCapes = wavyCapesSettings.createGroup("Wavy Capes");
 
     // General Settings
     public final Setting<Boolean> screenshotToClipboard = sgGeneral.add(new BoolSetting.Builder()
@@ -136,12 +144,69 @@ public class THMSystem extends System<THMSystem> {
         .description("Cape shown on yourself and other THM members.")
         .defaultValue(CapeType.None)
         .onChanged(ct -> {
+            if (FabricLoader.getInstance().isDevelopmentEnvironment()) return;
             MinecraftClient mc = MinecraftClient.getInstance();
             if (mc == null || mc.player == null) return;
             if (!ThmMembers.isThmMember(mc.player)) return;
             String username = mc.player.getGameProfile().name();
             APIUtils.postCapeSelection(username, ct.toApiId(), getHash());
         })
+        .build()
+    );
+
+    public final Setting<Boolean> wavyCapes = sgWavyCapes.add(new BoolSetting.Builder()
+        .name("wavy-capes")
+        .description("Replaces the vanilla stiff cape with rope physics. Off = vanilla behavior.")
+        .defaultValue(false)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
+    public final Setting<CapeStyle> wavyCapeStyle = sgWavyCapes.add(new EnumSetting.Builder<CapeStyle>()
+        .name("rendering")
+        .description("Blocky: 16 rigid segments. Smooth: interpolated quads between segments.")
+        .defaultValue(CapeStyle.SMOOTH)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
+    public final Setting<WindMode> wavyWindMode = sgWavyCapes.add(new EnumSetting.Builder<WindMode>()
+        .name("wind")
+        .description("None: cape only moves from player motion. Waves: adds a gentle idle sway.")
+        .defaultValue(WindMode.NONE)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
+    public final Setting<Double> wavyGravity = sgWavyCapes.add(new DoubleSetting.Builder()
+        .name("gravity")
+        .description("How hard gravity pulls the cape down. Higher = heavier cape.")
+        .defaultValue(25)
+        .min(0).max(100).sliderRange(0, 100)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
+    public final Setting<Double> wavyHeightMultiplier = sgWavyCapes.add(new DoubleSetting.Builder()
+        .name("vertical-response")
+        .description("How much jumping or falling tosses the cape upward.")
+        .defaultValue(6)
+        .min(0).max(20).sliderRange(0, 20)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
+        .build()
+    );
+
+    public final Setting<Double> wavyStraveMultiplier = sgWavyCapes.add(new DoubleSetting.Builder()
+        .name("strafe-response")
+        .description("How much strafing flares the cape sideways.")
+        .defaultValue(2)
+        .min(0).max(10).sliderRange(0, 10)
+        .visible(wavyCapes::get)
+        .onChanged(v -> WaveyCapesConfig.syncFromSystem())
         .build()
     );
 
@@ -155,6 +220,7 @@ public class THMSystem extends System<THMSystem> {
     public THMSystem() {
         super("THM-Addon");
         KitbotChatRouter.setEnabled(kitbotChatRouterEnabled.get());
+        WaveyCapesConfig.syncFromSystem();
     }
 
     public static THMSystem get() {
@@ -234,6 +300,7 @@ public class THMSystem extends System<THMSystem> {
         NbtCompound tag = new NbtCompound();
         tag.putString("version", THMAddon.VERSION);
         tag.put("settings", settings.toTag());
+        tag.put("wavyCapesSettings", wavyCapesSettings.toTag());
         return tag;
     }
 
@@ -242,7 +309,11 @@ public class THMSystem extends System<THMSystem> {
         if (tag.contains("settings")) {
             settings.fromTag(tag.getCompound("settings").orElse(new NbtCompound()));
         }
+        if (tag.contains("wavyCapesSettings")) {
+            wavyCapesSettings.fromTag(tag.getCompound("wavyCapesSettings").orElse(new NbtCompound()));
+        }
         KitbotChatRouter.setEnabled(kitbotChatRouterEnabled.get());
+        WaveyCapesConfig.syncFromSystem();
         return this;
     }
 

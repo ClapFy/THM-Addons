@@ -16,6 +16,7 @@ import xyz.thm.addon.utils.ThmMembers;
 
 @Mixin(AbstractClientPlayerEntity.class)
 public abstract class ThmCapeRenderMixin {
+
     @Inject(method = "getSkin", at = @At("RETURN"), cancellable = true)
     private void thm$injectCape(CallbackInfoReturnable<SkinTextures> cir) {
         THMSystem system = THMSystem.get();
@@ -26,12 +27,10 @@ public abstract class ThmCapeRenderMixin {
 
         String capeId;
         if (mc.player == (Object) self) {
-            // Self: always show the locally selected cape for instant feedback
             THMSystem.CapeType ct = system.cape.get();
             if (ct == THMSystem.CapeType.None) return;
             capeId = ct.toApiId();
         } else {
-            // Others: use API cache; in prod also require THM membership
             capeId = ThmMembers.getCapeByMcName(self.getGameProfile().name());
             if (capeId == null) return;
             if (!FabricLoader.getInstance().isDevelopmentEnvironment() && !ThmMembers.isThmMember(self)) return;
@@ -40,7 +39,6 @@ public abstract class ThmCapeRenderMixin {
         SkinTextures original = cir.getReturnValue();
         if (original == null) return;
 
-        // ponytail: dynamic path — to add a cape just add the enum value + drop the PNG in assets/thm-addon/cape/
         AssetInfo.TextureAssetInfo capeAsset = new AssetInfo.TextureAssetInfo(
             Identifier.of("thm-addon", "cape/" + capeId + ".png"),
             Identifier.of("thm-addon", "cape/" + capeId + ".png")

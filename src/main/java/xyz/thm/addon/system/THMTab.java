@@ -8,6 +8,7 @@ import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.Settings;
 import meteordevelopment.meteorclient.utils.misc.NbtUtils;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import xyz.thm.addon.utils.ThmMembers;
 
@@ -27,6 +28,8 @@ public class THMTab extends Tab {
     public boolean isScreen(Screen screen) {
         return screen instanceof THMScreen;
     }
+
+    // ---- Main THM screen ----
 
     private static class THMScreen extends WindowTabScreen {
         private final Settings settings;
@@ -48,11 +51,18 @@ public class THMTab extends Tab {
         public boolean toClipboard() {
             return NbtUtils.toClipboard(THMSystem.get());
         }
+
         @Override
         public void initWidgets() {
             thmTabOpen = true;
             settingsContainer = add(theme.verticalList()).expandX().widget();
             settingsContainer.add(theme.settings(settings)).expandX();
+
+            add(theme.horizontalSeparator()).expandX();
+
+            WButton wavyCapesBtn = add(theme.button("Wavy Capes Settings")).expandX().widget();
+            wavyCapesBtn.action = () ->
+                MinecraftClient.getInstance().setScreen(WaveyCapesTab.INSTANCE.createScreen(theme));
 
             add(theme.horizontalSeparator()).expandX();
 
@@ -75,6 +85,55 @@ public class THMTab extends Tab {
         public boolean fromClipboard() {
             return NbtUtils.fromClipboard(THMSystem.get());
         }
+    }
+
+    // ---- Wavy Capes sub-screen tab (not registered in the tab bar) ----
+
+    public static class WaveyCapesTab extends Tab {
+        public static final WaveyCapesTab INSTANCE = new WaveyCapesTab();
+
+        public WaveyCapesTab() {
+            super("Wavy Capes Settings");
+        }
+
+        @Override
+        public TabScreen createScreen(GuiTheme theme) {
+            return new WaveyCapesScreen(theme, this);
+        }
+
+        @Override
+        public boolean isScreen(Screen screen) {
+            return screen instanceof WaveyCapesScreen;
+        }
+    }
+
+    private static class WaveyCapesScreen extends WindowTabScreen {
+        private final Settings wavySettings;
+        private WVerticalList settingsContainer;
+
+        public WaveyCapesScreen(GuiTheme theme, Tab tab) {
+            super(theme, tab);
+            wavySettings = THMSystem.get().wavyCapesSettings;
+            wavySettings.onActivated();
+        }
+
+        @Override
+        public void tick() {
+            super.tick();
+            wavySettings.tick(settingsContainer, theme);
+        }
+
+        @Override
+        public void initWidgets() {
+            settingsContainer = add(theme.verticalList()).expandX().widget();
+            settingsContainer.add(theme.settings(wavySettings)).expandX();
+        }
+
+        @Override
+        public boolean toClipboard() { return false; }
+
+        @Override
+        public boolean fromClipboard() { return false; }
     }
 
     public static boolean isThmTabOpen() {
