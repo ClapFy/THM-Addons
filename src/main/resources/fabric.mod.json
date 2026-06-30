@@ -3,9 +3,10 @@
   "id": "thm-addon",
   "version": "${version}",
   "name": "THM Addon",
-  "description": "THM Addon for Meteor Client",
+  "description": "The Addon by THM for Meteor Client",
   "authors": [
-    "Leonn170709"
+    "Leonn170709",
+    "DaReapsta"
   ],
   "contact": {
     "repo": "https://github.com/Leonn170709/THM-Addons",
