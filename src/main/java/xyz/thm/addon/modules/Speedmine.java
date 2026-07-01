@@ -31,6 +31,8 @@ import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
+import static xyz.thm.addon.THMAddon.THMColor;
+
 //Thank you very much mushek
 /**
  * Grim-safe packet miner.
@@ -119,7 +121,7 @@ public class Speedmine extends Module {
 
     private final Setting<SettingColor> renderColor = sgRender.add(new ColorSetting.Builder()
         .name("color")
-        .defaultValue(new SettingColor(0, 225, 255, 200))
+        .defaultValue(THMColor)
         .build());
 
     // ── State ─────────────────────────────────────────────────────────────────
