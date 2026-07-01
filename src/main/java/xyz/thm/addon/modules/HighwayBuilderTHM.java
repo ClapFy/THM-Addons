@@ -208,6 +208,9 @@ public class HighwayBuilderTHM extends Module {
     private static final int FORWARD_BREAK_CREDIT_TTL_TICKS = 60;
     private static final int HIGHWAY_FLOOR_Y = 120;
     private static final int HIGHWAY_RAILING_Y = 121;
+    private static final double FALL_SAVE_PAVING_OPERATING_Y = 120.0;
+    private static final double FALL_SAVE_DIGGING_OPERATING_Y = 119.0;
+    private static final double FALL_SAVE_TRIGGER_DEPTH = 0.25;
     private static final int HIGHWAY_END_SCAN_DISTANCE = 24;
     private static final int HIGHWAY_END_NEAR_THRESHOLD = 10;
     private static final int PAVED_END_REQUIRED_CONSECUTIVE_MISSES = 2;
@@ -679,12 +682,26 @@ public class HighwayBuilderTHM extends Module {
         .name("manage-thm-highway-monitor")
         .description("Manages HighwayBuilder to reduce highway-building drift and auto-aligns the user on the current highway when HighwayBuilder is on.")
         .defaultValue(THMUtils.isBaritoneInstalled())
-        .onChanged(value -> {
-            if (!isActive()) return;
-            if (value) syncThmHwyMonitorOnActivate();
-            else disableThmHwyMonitorIfActive();
-        })
+        .onChanged(this::onManageThmHwyMonitorChanged)
         .visible(THMUtils::isBaritoneInstalled)
+        .build()
+    );
+
+    private final Setting<Boolean> fallSaveAirPlace = sgGeneral.add(new BoolSetting.Builder()
+        .name("fall-save-air-place")
+        .description("Places a safety block below your hitbox while descending below the managed highway operating level.")
+        .defaultValue(false)
+        .visible(manageThmHwyMonitor::get)
+        .build()
+    );
+
+    private final Setting<Integer> fallSaveDistance = sgGeneral.add(new IntSetting.Builder()
+        .name("fall-save-distance")
+        .description("Vertical distance below your hitbox for fall-save air placement.")
+        .defaultValue(3)
+        .range(3, 5)
+        .sliderRange(3, 5)
+        .visible(() -> manageThmHwyMonitor.get() && fallSaveAirPlace.get())
         .build()
     );
 
@@ -873,23 +890,6 @@ public class HighwayBuilderTHM extends Module {
         .description("The delay between placing blocks.")
         .defaultValue(0)
         .min(0)
-        .build()
-    );
-
-    private final Setting<Boolean> fallSaveAirPlace = sgPaving.add(new BoolSetting.Builder()
-        .name("fall-save-air-place")
-        .description("Places a safety block below your hitbox while forward-building if the floor disappears.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Integer> fallSaveDistance = sgPaving.add(new IntSetting.Builder()
-        .name("fall-save-distance")
-        .description("Vertical distance below your hitbox for fall-save air placement.")
-        .defaultValue(2)
-        .range(1, 3)
-        .sliderRange(1, 3)
-        .visible(fallSaveAirPlace::get)
         .build()
     );
 
@@ -1128,6 +1128,30 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
+    private final Setting<Boolean> newBreaking = sgInventory.add(new BoolSetting.Builder()
+        .name("new-breaking")
+        .description("Uses THM Speedmine for ender chest breaking. When off, uses the legacy normal and instant-rebreak packet method. Both modes preserve the saved ender chest reserve.")
+        .defaultValue(true)
+        .visible(mineEnderChests::get)
+        .build()
+    );
+
+    private final Setting<Boolean> rebreakEchests = sgInventory.add(new BoolSetting.Builder()
+        .name("instantly-rebreak-echests")
+        .description("Uses the legacy instant-rebreak packet method after placing an ender chest.")
+        .defaultValue(true)
+        .visible(() -> mineEnderChests.get() && !newBreaking.get())
+        .build()
+    );
+
+    private final Setting<Integer> rebreakTimer = sgInventory.add(new IntSetting.Builder()
+        .name("rebreak-delay")
+        .description("Delay in ticks between legacy instant-rebreak attempts.")
+        .defaultValue(0)
+        .sliderMax(20)
+        .visible(() -> mineEnderChests.get() && !newBreaking.get() && rebreakEchests.get())
+        .build()
+    );
 
     private final Setting<Boolean> useBreakSpeedMultiplier = sgInventory.add(new BoolSetting.Builder()
         .name("use-break-speed-multiplier")
@@ -1149,9 +1173,9 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> silentRebreakSwap = sgInventory.add(new BoolSetting.Builder()
         .name("silent-rebreak-swap")
-        .description("Silently swaps to the best pick when placing ender chests for restock.")
+        .description("Silently swaps for legacy instant-rebreak packets and when placing ender chests for restock.")
         .defaultValue(true)
-        .visible(mineEnderChests::get)
+        .visible(() -> mineEnderChests.get() && (newBreaking.get() || rebreakEchests.get()))
         .build()
     );
 
@@ -1922,6 +1946,7 @@ public class HighwayBuilderTHM extends Module {
     private void enforceDisabledHighwayBuilderSettings() {
         if (!MANAGED_SPEEDMINE_SETTING_ENABLED && speedmine.get()) speedmine.set(false);
         if (!MODULE_MANAGER_INTEGRATION_ENABLED && manageModuleManager.get()) manageModuleManager.set(false);
+        if (!manageThmHwyMonitor.get() && fallSaveAirPlace.get()) fallSaveAirPlace.set(false);
     }
 
     public void normalizeAfterThmProfileLoad() {
@@ -2077,7 +2102,7 @@ public class HighwayBuilderTHM extends Module {
             warning("With rotations enabled, you can place at most 1 block per tick.");
         //all modules that may cause error now print errors/warnings
         if (Modules.get().get(InstantRebreak.class).isActive())
-            warning("It's recommended to disable the Instant Rebreak module and instead use the 'instantly-rebreak-echests' setting to avoid errors.");
+            warning("It's recommended to disable the Instant Rebreak module because HighwayBuilder manages ender chest rebreaking internally.");
         SpeedMine speedMine = Modules.get().get(SpeedMine.class);
         Setting<SpeedMine.ListMode> speedMineBlocksFilter = speedMine.settings.get("blocks-filter", SpeedMine.ListMode.class);
         @SuppressWarnings("unchecked")
@@ -2259,6 +2284,15 @@ public class HighwayBuilderTHM extends Module {
         } catch (NoClassDefFoundError | ExceptionInInitializerError ignored) {
             // Baritone-dependent monitor not available.
         }
+    }
+
+    private void onManageThmHwyMonitorChanged(Boolean value) {
+        boolean enabled = Boolean.TRUE.equals(value);
+        if (!enabled && fallSaveAirPlace != null && fallSaveAirPlace.get()) fallSaveAirPlace.set(false);
+        if (!isActive()) return;
+
+        if (enabled) syncThmHwyMonitorOnActivate();
+        else disableThmHwyMonitorIfActive();
     }
 
     private void syncModuleManagerOnActivate() {
@@ -5652,10 +5686,19 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private boolean tryFallSaveAirPlace() {
-        if (!fallSaveAirPlace.get()) return false;
+        if (!manageThmHwyMonitor.get() || !fallSaveAirPlace.get()) return false;
         if (isTpsSettlingPause()) return false;
         if (!isSafetyForwardEligible()) return false;
         if (mc.player == null || mc.world == null) return false;
+
+        double operatingY = blocksToPlace.get().contains(Blocks.NETHERRACK)
+            ? FALL_SAVE_DIGGING_OPERATING_Y
+            : FALL_SAVE_PAVING_OPERATING_Y;
+        double currentY = mc.player.getY();
+        double descentDepth = operatingY - currentY;
+        boolean positionDescending = currentY < mc.player.lastY;
+        boolean velocityDescending = mc.player.getVelocity().y < 0.0;
+        if (descentDepth < FALL_SAVE_TRIGGER_DEPTH || !positionDescending || !velocityDescending) return false;
 
         Box hitbox = mc.player.getBoundingBox();
         BlockPos dominantColumn = dominantHitboxColumn(hitbox, MathHelper.floor(hitbox.minY));
@@ -5664,8 +5707,7 @@ public class HighwayBuilderTHM extends Module {
         int supportY = MathHelper.floor(hitbox.minY - 0.01);
         BlockPos supportPos = new BlockPos(dominantColumn.getX(), supportY, dominantColumn.getZ());
         boolean supportMissing = mc.world.getBlockState(supportPos).isReplaceable();
-        boolean falling = mc.player.getVelocity().y < -0.03 || mc.player.fallDistance > 0.0f;
-        if (!supportMissing && !falling) return false;
+        if (!supportMissing) return false;
 
         int feetY = MathHelper.floor(hitbox.minY);
         int minY = feetY - fallSaveDistance.get();
@@ -5685,12 +5727,13 @@ public class HighwayBuilderTHM extends Module {
             if (trySafetyAirPlaceBlock(target, slot, "fall-save")) {
                 if (debugLog.get()) {
                     highwayDebug(
-                        "HB fall-save placed %s (supportMissing=%s, falling=%s, velocityY=%.3f, fallDistance=%.2f).",
+                        "HB fall-save placed %s (operatingY=%.2f, descentDepth=%.3f, previousY=%.3f, currentY=%.3f, velocityY=%.3f).",
                         formatBlockPos(target),
-                        supportMissing,
-                        falling,
-                        mc.player.getVelocity().y,
-                        mc.player.fallDistance
+                        operatingY,
+                        descentDepth,
+                        mc.player.lastY,
+                        currentY,
+                        mc.player.getVelocity().y
                     );
                 }
                 return true;
@@ -12689,9 +12732,9 @@ public class HighwayBuilderTHM extends Module {
             private int targetEchestsToBreak;
             private int targetObsidianCount;
             private int lastObservedObsidianCount;
-            private boolean first, primed, breakRequested;
+            private boolean first, primed, breakRequested, newBreakingMode;
             private boolean stopTimerEnabled;
-            private int stopTimer, moveTimer;
+            private int stopTimer, moveTimer, rebreakTimer, timeout;
             private double returnX, returnY, returnZ;
             private boolean returnAnchorSaved;
             @Override
@@ -12738,17 +12781,12 @@ public class HighwayBuilderTHM extends Module {
                 }
 
                 RestockTask.RestockSession session = b.restockTask.getSession();
+                newBreakingMode = b.newBreaking.get();
                 session.refreshProgress();
                 b.restockTask.clampObsidianTargetToMineableEChests("mine-echests-start");
                 session.refreshProgress();
                 targetEchestsToBreak = session.getTargetEchestsToBreak();
                 targetObsidianCount = session.getMiningGoalObsidianCount();
-                if (targetEchestsToBreak > 0) {
-                    session.markGreatestAvailable();
-                    session.refreshProgress();
-                    targetEchestsToBreak = session.getTargetEchestsToBreak();
-                    targetObsidianCount = session.getMiningGoalObsidianCount();
-                }
                 if (targetEchestsToBreak <= 0) {
                     b.restockTask.markCurrentSourceExhausted(RestockTask.SourcePhase.MineEnderChests);
                     if (b.restockTask.isCurrentTaskSuccessful()) {
@@ -12762,7 +12800,7 @@ public class HighwayBuilderTHM extends Module {
                 }
                 if (b.prioritizePickaxeRestockBeforeEChestMining(targetEchestsToBreak, "mine-echests-start durability preflight")) return;
                 first = true;
-                moveTimer = 0;
+                moveTimer = rebreakTimer = timeout = 0;
                 lastObservedObsidianCount = 0;
                 returnX = b.mc.player.getX();
                 returnY = b.mc.player.getY();
@@ -12772,7 +12810,7 @@ public class HighwayBuilderTHM extends Module {
                 stopTimerEnabled = false;
                 primed = false;
                 breakRequested = false;
-                if (Speedmine.INSTANCE != null && !Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
+                if (newBreakingMode && Speedmine.INSTANCE != null && !Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
                 b.applyEChestBreakSpeedOverrideIfPossible("mine-echests-start");
             }
 
@@ -12866,7 +12904,7 @@ public class HighwayBuilderTHM extends Module {
                     // Mine ender chest
                     int slot = findAndMoveBestToolToHotbar(b, blockState, true);
                     if (slot == -1) {
-                        if (Speedmine.INSTANCE != null && Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
+                        if (newBreakingMode && Speedmine.INSTANCE != null && Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
                         if (b.restockTask.isActiveMaterials() && b.restockTask.hasPendingPickaxes()) {
                             completeAndReturnToAnchor(b);
                         } else if (!b.restockTask.pickaxes
@@ -12880,18 +12918,62 @@ public class HighwayBuilderTHM extends Module {
                         }
                         return;
                     }
-                    if (!breakRequested) {
-                        b.info("MineEnderChests: requesting first break at %s", bp);
-                        Speedmine.INSTANCE.requestBreak(bp);
-                        breakRequested = true;
+
+                    if (newBreakingMode && Speedmine.INSTANCE != null) {
+                        if (!breakRequested) {
+                            b.info("MineEnderChests: requesting first break at %s", bp);
+                            Speedmine.INSTANCE.requestBreak(bp);
+                            breakRequested = true;
+                        } else {
+                            b.restockDebug("MineEnderChests: break already requested, Speedmine autoRebreak handles %s (isMining=%s)", bp, Speedmine.INSTANCE.isMining(bp));
+                        }
                     } else {
-                        b.restockDebug("MineEnderChests: break already requested, Speedmine autoRebreak handles %s (isMining=%s)", bp, Speedmine.INSTANCE.isMining(bp));
+                        int selectedSlot = b.mc.player.getInventory().getSelectedSlot();
+                        boolean swappedForRebreak = false;
+
+                        if (b.rebreakEchests.get() && primed) {
+                            timeout++;
+                            if (timeout > 60) {
+                                primed = false;
+                                timeout = 0;
+                                return;
+                            }
+
+                            if (rebreakTimer > 0) {
+                                rebreakTimer--;
+                                return;
+                            }
+
+                            Runnable sendRebreakPackets = () ->
+                                b.mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, bp, BlockUtils.getDirection(bp)));
+                            rebreakTimer = b.rebreakTimer.get();
+
+                            if (b.silentRebreakSwap.get()) {
+                                if (selectedSlot != slot) {
+                                    InvUtils.swap(slot, false);
+                                    swappedForRebreak = true;
+                                }
+                            } else if (selectedSlot != slot) {
+                                InvUtils.swap(slot, false);
+                            }
+
+                            if (b.rotation.get().mine) Rotations.rotate(Rotations.getYaw(bp), Rotations.getPitch(bp), sendRebreakPackets);
+                            else sendRebreakPackets.run();
+
+                            if (swappedForRebreak) InvUtils.swap(selectedSlot, false);
+                        } else {
+                            if (selectedSlot != slot) InvUtils.swap(slot, false);
+                            if (b.rotation.get().mine) Rotations.rotate(Rotations.getYaw(bp), Rotations.getPitch(bp), () -> BlockUtils.breakBlock(bp, true));
+                            else BlockUtils.breakBlock(bp, true);
+                        }
                     }
                 }
                 else {
                     // Place ender chest
                     int slot = findAndMoveToHotbar(b, itemStack -> itemStack.getItem() == Items.ENDER_CHEST);
-                    if (slot == -1 || countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) <= 0) {
+                    RestockTask.RestockSession session = b.restockTask.getSession();
+                    int minimumRemainingEChests = session != null ? session.saveEchestsReserve : b.saveEchests.get();
+                    if (slot == -1 || countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) <= minimumRemainingEChests) {
                         b.restockTask.markCurrentSourceExhausted(RestockTask.SourcePhase.MineEnderChests);
                         stopTimerEnabled = true;
                         stopTimer = 12;
@@ -12900,13 +12982,17 @@ public class HighwayBuilderTHM extends Module {
 
                     if (!first) primed = true;
 
-                    b.restockDebug("MineEnderChests: placing echest at %s (breakRequested=%s, primed=%s)", bp, breakRequested, primed);
+                    if (newBreakingMode) {
+                        b.restockDebug("MineEnderChests: placing echest at %s (breakRequested=%s, primed=%s)", bp, breakRequested, primed);
+                    } else {
+                        timeout = 0;
+                    }
                     BlockUtils.place(bp, Hand.MAIN_HAND, slot, b.rotation.get().place, 0, true, true, b.silentRebreakSwap.get());
                 }
             }
 
             private void completeAndReturnToAnchor(HighwayBuilderTHM b) {
-                if (Speedmine.INSTANCE != null && Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
+                if (newBreakingMode && Speedmine.INSTANCE != null && Speedmine.INSTANCE.isActive()) Speedmine.INSTANCE.toggle();
                 if (returnAnchorSaved) {
                     b.input.stop();
                     b.mc.player.setPosition(returnX, returnY, returnZ);
