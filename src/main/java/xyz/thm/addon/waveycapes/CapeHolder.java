@@ -1,11 +1,11 @@
 package xyz.thm.addon.waveycapes;
 
+import net.minecraft.entity.LivingEntity;
 import xyz.thm.addon.waveycapes.sim.BasicSimulation;
 import xyz.thm.addon.waveycapes.sim.StickSimulation3d;
 import xyz.thm.addon.waveycapes.util.Mth;
 import xyz.thm.addon.waveycapes.util.Vector2;
 import xyz.thm.addon.waveycapes.util.Vector3;
-import net.minecraft.entity.LivingEntity;
 
 public interface CapeHolder {
     BasicSimulation getSimulation();

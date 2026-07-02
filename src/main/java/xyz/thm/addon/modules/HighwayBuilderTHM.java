@@ -89,7 +89,6 @@ import org.joml.Vector3d;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.accessor.StuckEatingRetryBridge;
 import xyz.thm.addon.accessor.StuckEatingRetryResult;
-import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.*;
 import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
@@ -114,8 +113,8 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
-import static xyz.thm.addon.utils.THMUtils.*;
 import static xyz.thm.addon.utils.APIUtils.*;
+import static xyz.thm.addon.utils.THMUtils.*;
 
 @SuppressWarnings("ConstantConditions")
 public class HighwayBuilderTHM extends Module {

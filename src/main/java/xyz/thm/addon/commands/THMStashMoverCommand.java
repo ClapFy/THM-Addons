@@ -2,10 +2,10 @@ package xyz.thm.addon.commands;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import xyz.thm.addon.modules.THMStashMover;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.command.CommandSource;
+import xyz.thm.addon.modules.THMStashMover;
 
 public class THMStashMoverCommand extends Command {
     public THMStashMoverCommand() {

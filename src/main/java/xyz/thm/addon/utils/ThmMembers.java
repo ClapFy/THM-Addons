@@ -17,13 +17,15 @@ public final class ThmMembers {
         public final String rank;
         public final String rankId;
         public final String branch;
+        public final String discordName;
 
-        public Member(String name, String[] mcNames, String rank, String rankId, String branch) {
+        public Member(String name, String[] mcNames, String rank, String rankId, String branch, String discordName) {
             this.name = name;
             this.mcNames = mcNames;
             this.rank = rank;
             this.rankId = rankId;
             this.branch = branch;
+            this.discordName = discordName;
         }
     }
 

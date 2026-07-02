@@ -1,12 +1,12 @@
 package xyz.thm.addon.hud;
 
-import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.modules.THMStashMover;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.render.color.Color;
+import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.modules.THMStashMover;
 
 import java.util.List;
 
