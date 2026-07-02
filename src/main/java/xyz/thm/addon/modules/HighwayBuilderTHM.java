@@ -5832,6 +5832,8 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private int computePlaceActionsThisTick() {
+        if (packetBuild.get()) return Integer.MAX_VALUE;
+
         double configured = Math.max(0.0, effectivePlacementsPerTickActionRate());
         int whole = (int) Math.floor(configured);
         double fractional = configured - whole;
