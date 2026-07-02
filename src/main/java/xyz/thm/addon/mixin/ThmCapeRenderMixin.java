@@ -40,8 +40,8 @@ public abstract class ThmCapeRenderMixin {
         if (original == null) return;
 
         AssetInfo.TextureAssetInfo capeAsset = new AssetInfo.TextureAssetInfo(
-            Identifier.of("thm-addon", "cape/" + capeId + ".png"),
-            Identifier.of("thm-addon", "cape/" + capeId + ".png")
+            Identifier.of("thm-addon", "cape/" + capeId + ".webp"),
+            Identifier.of("thm-addon", "cape/" + capeId + ".webp")
         );
         cir.setReturnValue(new SkinTextures(
             original.body(),

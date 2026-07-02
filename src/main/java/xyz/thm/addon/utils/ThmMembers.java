@@ -309,7 +309,7 @@ public final class ThmMembers {
     public static double getDistanceLimit(Member member) {
         if (member == null || member.rank == null) return 50000;
         String rank = member.rank.trim().toLowerCase(Locale.ROOT);
-        if (rank.contains("mayor") || rank.contains("king") || rank.contains("prince")
+        if (rank.contains("king") || rank.contains("prince")
             || rank.contains("major") || rank.contains("chosen")) return Double.MAX_VALUE;
         return switch (rank) {
             case "elite highway man" -> 500000;

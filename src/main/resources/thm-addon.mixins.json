@@ -12,6 +12,7 @@
     "HighwayBuilderBowMixin",
     "HighwayBuilderCameraMixin",
     "HighwayBuilderEntityMixin",
+    "NativeImageWebpMixin",
     "ScreenshotClipboardMixin",
     "SplashTextMixin",
     "SystemsMixin",
