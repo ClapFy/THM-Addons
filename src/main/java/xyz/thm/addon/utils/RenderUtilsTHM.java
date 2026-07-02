@@ -8,13 +8,18 @@ import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.systems.modules.render.blockesp.ESPBlockData;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.world.Dir;
+import net.minecraft.block.BlockState;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.BufferAllocator;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.math.*;
+import net.minecraft.util.shape.VoxelShape;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -81,6 +86,48 @@ public class RenderUtilsTHM {
     /** Lines only (alias for clarity). */
     public static void renderBlockOutline(Render3DEvent event, BlockPos pos, Color color) {
         event.renderer.box(pos, color, color, ShapeMode.Lines, 0);
+    }
+
+    // =========================================================
+    // Block shapes — renders a block's actual outline shape (e.g. a sign's post + plank,
+    // not a full cube) instead of approximating every block as a unit cube.
+    // =========================================================
+
+    /** The block's outline shape as world-space boxes. Falls back to a full unit cube if the shape is empty (e.g. air-like blocks). */
+    public static List<Box> getBlockShapeBoxes(BlockPos pos, BlockState state) {
+        VoxelShape shape = state.getOutlineShape(mc.world, pos);
+        List<Box> boxes = shape.isEmpty() ? List.of(new Box(0, 0, 0, 1, 1, 1)) : shape.getBoundingBoxes();
+        if (boxes.isEmpty()) boxes = List.of(new Box(0, 0, 0, 1, 1, 1));
+
+        List<Box> worldBoxes = new ArrayList<>(boxes.size());
+        for (Box box : boxes) worldBoxes.add(box.offset(pos));
+        return worldBoxes;
+    }
+
+    /** Renders every box of the block's actual shape (e.g. a sign renders its post + plank, not a full cube). */
+    public static void renderBlockShape(Render3DEvent event, BlockPos pos, BlockState state,
+                                        Color sideColor, Color lineColor, ShapeMode shapeMode) {
+        for (Box box : getBlockShapeBoxes(pos, state)) {
+            event.renderer.box(box, sideColor, lineColor, shapeMode, 0);
+        }
+    }
+
+    /** Like {@link #renderBlockShape}, but each shape box is scaled toward its own center by {@code scale} (1.0 = full size, 0.0 = a point). Useful for mining-progress shrink effects on non-cube blocks. */
+    public static void renderBlockShapeScaled(Render3DEvent event, BlockPos pos, BlockState state, double scale,
+                                              Color sideColor, Color lineColor, ShapeMode shapeMode) {
+        for (Box box : getBlockShapeBoxes(pos, state)) {
+            event.renderer.box(scaleTowardCenter(box, scale), sideColor, lineColor, shapeMode, 0);
+        }
+    }
+
+    private static Box scaleTowardCenter(Box box, double scale) {
+        double centerX = (box.minX + box.maxX) / 2.0;
+        double centerY = (box.minY + box.maxY) / 2.0;
+        double centerZ = (box.minZ + box.maxZ) / 2.0;
+        double halfX = (box.maxX - box.minX) / 2.0 * scale;
+        double halfY = (box.maxY - box.minY) / 2.0 * scale;
+        double halfZ = (box.maxZ - box.minZ) / 2.0 * scale;
+        return new Box(centerX - halfX, centerY - halfY, centerZ - halfZ, centerX + halfX, centerY + halfY, centerZ + halfZ);
     }
 
     // =========================================================
