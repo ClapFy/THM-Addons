@@ -120,6 +120,16 @@ public class THMUtils {
         };
     }
 
+    public static double getBlockCenterCoordinate(int blockCoordinate) {
+        return blockCoordinate + 0.5;
+    }
+
+    /** Collapses two opposing movement flags into a single signed amount, e.g. for WASD-style input. */
+    public static float movementAmount(boolean positive, boolean negative) {
+        if (positive == negative) return 0.0f;
+        return positive ? 1.0f : -1.0f;
+    }
+
     // Highway Axes
 
     public static int getHighway() {
