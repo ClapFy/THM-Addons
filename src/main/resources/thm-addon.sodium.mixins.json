@@ -1,0 +1,11 @@
+{
+  "required": false,
+  "package": "xyz.thm.addon.mixin.sodium",
+  "compatibilityLevel": "JAVA_21",
+  "injectors": {
+    "defaultRequire": 0
+  },
+  "mixins": [
+    "SodiumEdgeRenderMixin"
+  ]
+}
