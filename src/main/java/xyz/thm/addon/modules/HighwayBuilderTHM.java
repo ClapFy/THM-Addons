@@ -1908,10 +1908,7 @@ public class HighwayBuilderTHM extends Module {
         }
 
         clearMainServerResumeGate();
-        if (thmSpeedReconnectSuppressed && !suspended) {
-            thmSpeedReconnectSuppressed = false;
-            syncThmSpeedOwnership("main-server-settle");
-        }
+        resumeThmSpeedAfterReconnectIfReady("main-server-settle");
         return true;
     }
 
@@ -3784,8 +3781,7 @@ public class HighwayBuilderTHM extends Module {
         if (!isActive() || mc.player == null || mc.world == null || !Utils.canUpdate()) return false;
 
         suspended = false;
-        thmSpeedReconnectSuppressed = false;
-        syncThmSpeedOwnership("reconnect-finalized");
+        resumeThmSpeedAfterReconnectIfReady("reconnect-finalized");
         return true;
     }
 
@@ -3970,6 +3966,7 @@ public class HighwayBuilderTHM extends Module {
         } else {
             executionPausedByServerState = false;
         }
+        resumeThmSpeedAfterReconnectIfReady("tick-execution-allowed");
         tickDeferredThmSpeedRestore();
         if (useThmSpeed.get() || thmSpeedOwnershipActive || thmSpeedSnapshot != null) syncThmSpeedOwnership("tick");
         tickDeferredCenterSpeedRestore();
@@ -4006,6 +4003,7 @@ public class HighwayBuilderTHM extends Module {
             if (inventory && Utils.canUpdate()) {
                 updateVariables();
                 suspended = false;
+                resumeThmSpeedAfterReconnectIfReady("tick-unsuspended");
             }
             else return;
         }
@@ -7136,6 +7134,19 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
+    private void resumeThmSpeedAfterReconnectIfReady(String reason) {
+        if (!thmSpeedReconnectSuppressed) return;
+        if (!useThmSpeed.get()) return;
+        if (!isActive() || suspended) return;
+        if (mc.player == null || mc.world == null || !Utils.canUpdate()) return;
+        if (mainServerResumeGateActive) return;
+        if (!isNot6B6T() && getCommittedServerState() != ServerState.MAIN_SERVER) return;
+        if (!isThmSpeedExecutionAllowed()) return;
+
+        thmSpeedReconnectSuppressed = false;
+        syncThmSpeedOwnership(reason);
+    }
+
     private void syncThmSpeedOwnership(String reason) {
         if (!useThmSpeed.get()) {
             if (thmSpeedReconnectSuppressed && !isThmSpeedExecutionAllowed()) {
@@ -8710,15 +8721,21 @@ public class HighwayBuilderTHM extends Module {
         RetiredStatsReportSnapshot report = createRetiredStatsReportSnapshot(working);
         if (report == null) return false;
 
-        if (allowPrinting && !working.printedToChat()) {
-            if (!tryPrintStatsToChat(report, reason)) return false;
-            scheduleStatsProofScreenshotIfEnabled(working.sessionId(), reason);
-            working = updateFinalizationRecord(working, System.currentTimeMillis(), true, working.webhookSendCommitted(), working.apiSendCommitted(), reason + "-printed");
-            if (working == null) return false;
-        }
+        logFinalStatsRecoverySnapshot(working, report, reason + "-finalization-ready");
 
         working = commitAndSendFinalExternalStats(working, report, reason);
         if (working == null) return false;
+
+        if (allowPrinting && !working.printedToChat()) {
+            if (!tryPrintStatsToChat(report, reason)) {
+                logFinalStatsRecoverySnapshot(working, report, reason + "-print-failed");
+                return false;
+            }
+            scheduleStatsProofScreenshotIfEnabled(working.sessionId(), reason);
+            working = updateFinalizationRecord(working, System.currentTimeMillis(), true, working.webhookSendCommitted(), working.apiSendCommitted(), reason + "-printed");
+            if (working == null) return false;
+            logFinalStatsRecoverySnapshot(working, report, reason + "-printed");
+        }
 
         if (!closeAndRetireStatsSession(working, reason)) return false;
 
@@ -8756,8 +8773,14 @@ public class HighwayBuilderTHM extends Module {
                         );
                         APIUtils.sendToWebhook(webhookUrl, statsMessage);
                         working = committed;
+                        logExternalStatsDecision(working, report, reason, "webhook", "queued", distance);
                     }
-                } else warning("Statistics NOT sent to webhook! Distance too small: (highlight)%.0f", distance);
+                } else {
+                    warning("Statistics NOT sent to webhook! Distance too small: (highlight)%.0f", distance);
+                    logExternalStatsDecision(working, report, reason, "webhook", "skipped-distance-too-small", distance);
+                }
+            } else {
+                logExternalStatsDecision(working, report, reason, "webhook", "skipped-invalid-url", 0.0);
             }
         }
 
@@ -8770,9 +8793,13 @@ public class HighwayBuilderTHM extends Module {
                 if (distance < distLimit) {
                     if (report.blocksPlaced() < 300 && report.blocksBroken() < 1000) {
                         warning("Repair detected. Use the /calculate repair command to calculate the distance.");
-                    } else if (isNot6B6T()) warning("API not sent. You are not on 6B6T");
-                    else if (THMSystem.get().getHash() == null || Objects.equals(THMSystem.get().getHash(), "SetYourHash") || Objects.equals(THMSystem.get().getHash(), "")) {
+                        logExternalStatsDecision(working, report, reason, "api", "skipped-repair-detected", distance);
+                    } else if (isNot6B6T()) {
+                        warning("API not sent. You are not on 6B6T");
+                        logExternalStatsDecision(working, report, reason, "api", "skipped-not-6b6t", distance);
+                    } else if (THMSystem.get().getHash() == null || Objects.equals(THMSystem.get().getHash(), "SetYourHash") || Objects.equals(THMSystem.get().getHash(), "")) {
                         warning("API not sent. No Hash set.");
+                        logExternalStatsDecision(working, report, reason, "api", "skipped-missing-hash", distance);
                     } else {
                         StatsArtifactSnapshot committed = updateFinalizationRecord(
                             working,
@@ -8797,10 +8824,17 @@ public class HighwayBuilderTHM extends Module {
                             );
                             sendStatistics(statsMessageapi);
                             working = committed;
+                            logExternalStatsDecision(working, report, reason, "api", "queued", distance);
                         }
                     }
-                } else warning("Statistics NOT sent to Api! Please Calculate the real Distance using the /calculate command in proof-of-work");
-            } else warning("Statistics NOT sent to Api! Distance too small: (highlight)%.0f", distance);
+                } else {
+                    warning("Statistics NOT sent to Api! Please Calculate the real Distance using the /calculate command in proof-of-work");
+                    logExternalStatsDecision(working, report, reason, "api", "skipped-distance-limit", distance);
+                }
+            } else {
+                warning("Statistics NOT sent to Api! Distance too small: (highlight)%.0f", distance);
+                logExternalStatsDecision(working, report, reason, "api", "skipped-distance-too-small", distance);
+            }
         }
 
         return working;
@@ -9001,6 +9035,89 @@ public class HighwayBuilderTHM extends Module {
         return new StatsDisplaySnapshot(distance, broken, placed, statsCode, startPos != null && distance > 50000);
     }
 
+    private MutableText createStatsText(Vec3d statsStart, int statsBroken, int statsPlaced, long statsCodeTimestampMs) {
+        StatsDisplaySnapshot display = createStatsDisplaySnapshot(statsStart, statsBroken, statsPlaced, statsCodeTimestampMs);
+        MutableText text = Text.literal(String.format("%sDistance: %s%.0f\n", Formatting.GRAY, Formatting.WHITE, display.distance()));
+        text.append(String.format("%sBlocks broken: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksBroken()));
+        text.append(String.format("%sBlocks placed: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksPlaced()));
+        text.append(String.format("%sStats code: %s%s\n", Formatting.GRAY, Formatting.WHITE, display.statsCode()));
+        if (display.restartDistanceWarning()) {
+            text.append(String.format(
+                "%sRestart Detected. Please calculate the real distance using /calculate in proof-of-work\n",
+                Formatting.YELLOW
+            ));
+        }
+
+        return text;
+    }
+
+    private MutableText getFinalizedStatsText() {
+        if (retiredStatsReportSnapshot == null) return null;
+        return createStatsText(
+            retiredStatsReportSnapshot.startPos(),
+            retiredStatsReportSnapshot.blocksBroken(),
+            retiredStatsReportSnapshot.blocksPlaced(),
+            retiredStatsReportSnapshot.statsCodeTimestampMs()
+        );
+    }
+
+    private void logFinalStatsRecoverySnapshot(StatsArtifactSnapshot snapshot, RetiredStatsReportSnapshot report, String reason) {
+        if (snapshot == null || report == null) return;
+
+        StatsDisplaySnapshot display = createStatsDisplaySnapshot(
+            report.startPos(),
+            report.blocksBroken(),
+            report.blocksPlaced(),
+            report.statsCodeTimestampMs()
+        );
+        statsCacheDebug(
+            "final-report reason={} session={} generation={} state={} resumeAllowed={} broken={} placed={} distance={} statsCode={} statsCodeTimestampMs={} printed={} webhookCommitted={} apiCommitted={} finalizationReason={}",
+            reason,
+            shortSessionId(snapshot.sessionId()),
+            snapshot.generation(),
+            snapshot.state(),
+            snapshot.resumeAllowed(),
+            report.blocksBroken(),
+            report.blocksPlaced(),
+            String.format(Locale.ROOT, "%.0f", display.distance()),
+            display.statsCode(),
+            report.statsCodeTimestampMs(),
+            snapshot.printedToChat(),
+            snapshot.webhookSendCommitted(),
+            snapshot.apiSendCommitted(),
+            snapshot.finalizationReason() == null ? "" : snapshot.finalizationReason()
+        );
+    }
+
+    private void logExternalStatsDecision(
+        StatsArtifactSnapshot snapshot,
+        RetiredStatsReportSnapshot report,
+        String reason,
+        String target,
+        String decision,
+        double distance
+    ) {
+        if (snapshot == null || report == null) return;
+
+        String statsCode = encodeStatsCode(report.statsCodeTimestampMs());
+        if (statsCode == null) statsCode = "unavailable";
+        statsCacheDebug(
+            "external-stats reason={} target={} decision={} session={} generation={} distance={} broken={} placed={} direction={} statsCode={} webhookCommitted={} apiCommitted={}",
+            reason,
+            target,
+            decision,
+            shortSessionId(snapshot.sessionId()),
+            snapshot.generation(),
+            String.format(Locale.ROOT, "%.0f", distance),
+            report.blocksBroken(),
+            report.blocksPlaced(),
+            snapshot.workingDirectionName() == null || snapshot.workingDirectionName().isBlank() ? "unknown" : snapshot.workingDirectionName(),
+            statsCode,
+            snapshot.webhookSendCommitted(),
+            snapshot.apiSendCommitted()
+        );
+    }
+
     private boolean tryPrintStatsToChat(RetiredStatsReportSnapshot report, String reason) {
         if (report == null || report.startPos() == null || mc.player == null || mc.world == null) return false;
         if (!Utils.canUpdate()) return false;
@@ -9088,7 +9205,9 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void statsCacheDebug(String message, Object... args) {
-        writeThmDebugLog(FORWARD_STATS_DEBUG_FILE_NAME, formatThmDebugLine("[highway-stats-cache] " + message.replace("{}", "%s"), args));
+        String line = formatThmDebugLine("[highway-stats-cache] " + message.replace("{}", "%s"), args);
+        writeThmDebugLog(FORWARD_STATS_DEBUG_FILE_NAME, line);
+        THMAddon.LOG.info("[HighwayBuilder Stats Cache] {}", line.trim());
     }
 
     private String describeStatsDecisionReason(boolean eligible, boolean alreadyCounted, boolean countedNow) {
@@ -10620,16 +10739,13 @@ public class HighwayBuilderTHM extends Module {
             .styled(style -> style.withColor(Formatting.WHITE))
             .append(Text.literal(title).styled(style -> style.withColor(Formatting.BLUE)))
             .append(Text.literal("] ").styled(style -> style.withColor(Formatting.WHITE)))
-            .append(Text.literal(String.format(message, args)).styled(style -> style.withColor(Formatting.RED)))
-            .append("\n")
-            .append(getStatsText());
+            .append(Text.literal(String.format(message, args)).styled(style -> style.withColor(Formatting.RED)));
 
-        String screenshotSessionId = lastPrintedStatsSessionId;
-        if ((screenshotSessionId == null || screenshotSessionId.isBlank()) && retiredStatsReportSnapshot != null) {
+        MutableText finalizedStatsText = getFinalizedStatsText();
+        String screenshotSessionId = null;
+        if (finalizedStatsText != null && retiredStatsReportSnapshot != null) {
+            text.append("\n").append(finalizedStatsText);
             screenshotSessionId = retiredStatsReportSnapshot.sessionId();
-        }
-        if ((screenshotSessionId == null || screenshotSessionId.isBlank()) && activeStatsSessionId != null && !activeStatsSessionId.isBlank()) {
-            screenshotSessionId = activeStatsSessionId;
         }
 
         mc.getNetworkHandler().getConnection().disconnect(text);
@@ -10654,19 +10770,7 @@ public class HighwayBuilderTHM extends Module {
             statsCodeTimestampMs = retiredStatsReportSnapshot.statsCodeTimestampMs();
         }
 
-        StatsDisplaySnapshot display = createStatsDisplaySnapshot(statsStart, statsBroken, statsPlaced, statsCodeTimestampMs);
-        MutableText text = Text.literal(String.format("%sDistance: %s%.0f\n", Formatting.GRAY, Formatting.WHITE, display.distance()));
-        text.append(String.format("%sBlocks broken: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksBroken()));
-        text.append(String.format("%sBlocks placed: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksPlaced()));
-        text.append(String.format("%sStats code: %s%s\n", Formatting.GRAY, Formatting.WHITE, display.statsCode()));
-        if (display.restartDistanceWarning()) {
-            text.append(String.format(
-                "%sRestart Detected. Please calculate the real distance using /calculate in proof-of-work\n",
-                Formatting.YELLOW
-            ));
-        }
-
-        return text;
+        return createStatsText(statsStart, statsBroken, statsPlaced, statsCodeTimestampMs);
     }
 
     public MutableText getReconnectSafetyStopText(String reason, long reconnectCycleId) {
@@ -10682,7 +10786,9 @@ public class HighwayBuilderTHM extends Module {
         }
 
         MutableText text = Text.literal("THMHwyMonitor Safety Stop: " + (reason == null ? "unknown" : reason));
-        text.append("\n").append(getStatsText());
+        MutableText finalizedStatsText = getFinalizedStatsText();
+        if (finalizedStatsText != null) text.append("\n").append(finalizedStatsText);
+        else text.append("\n");
         text.append(String.format("%sCached direction: %s%s\n",
             Formatting.GRAY,
             Formatting.WHITE,
