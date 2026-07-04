@@ -65,6 +65,7 @@ val generateAPIUtils by tasks.registering {
         val plainA1 = req("api.memberHud"); val plainA2 = req("api.highway")
         val plainA3 = req("api.status");    val plainA4 = req("api.highwayStatus")
         val plainA5 = req("api.cape");      val plainA6 = req("api.capePost")
+        val plainA7 = req("api.capeIndex")
 
         // ── Per-build unique name pool ────────────────────────────────────────────────────
         // Every build generates different identifier names; no two builds share a signature.
@@ -101,6 +102,7 @@ val generateAPIUtils by tasks.registering {
         val encA1 = encryptUrl(plainA1); val encA2 = encryptUrl(plainA2)
         val encA3 = encryptUrl(plainA3); val encA4 = encryptUrl(plainA4)
         val encA5 = encryptUrl(plainA5); val encA6 = encryptUrl(plainA6)
+        val encA7 = encryptUrl(plainA7)
 
         // ── Encoding scheme ───────────────────────────────────────────────────────────────
         // Encode per byte: XOR(k0) → ROTL(rot) → ADD(k1) → XOR(k2)
@@ -145,7 +147,7 @@ val generateAPIUtils by tasks.registering {
 
         // ── Payload fragmentation ─────────────────────────────────────────────────────────
         // Each payload split into two XOR-parts; neither fragment alone is the encoded payload.
-        val payloads = listOf(password, encA1, encA2, encA3, encA4, encA5, encA6).map { encodePayload(it) }
+        val payloads = listOf(password, encA1, encA2, encA3, encA4, encA5, encA6, encA7).map { encodePayload(it) }
         data class Frag(val f0: IntArray, val f1: IntArray)
         val splits = payloads.map { enc ->
             val mask = IntArray(enc.size) { rng.nextInt(256) }
@@ -179,7 +181,7 @@ val generateAPIUtils by tasks.registering {
         // ── Name assignments ──────────────────────────────────────────────────────────────
         val NA = rn(); val NB = rn(); val NC = rn()
         val NDA = rn(); val NDB = rn(); val NDC = rn()
-        val PF  = Array(7) { Pair(rn(), rn()) }          // (frag0, frag1) per payload
+        val PF  = Array(8) { Pair(rn(), rn()) }          // (frag0, frag1) per payload
         val DEC = Array(8) { rn() }                       // pure decoy field names
         val decoyData = Array(8) { ByteArray(if (it % 3 == 0) 32 else if (it % 3 == 1) 16 else 8).also { a -> rng.nextBytes(a) } }
 
@@ -190,6 +192,7 @@ val generateAPIUtils by tasks.registering {
         val MSA  = rn(); val MSW = rn(); val MFAR = rn()  // post/webhook/fetch helpers
         val MAMH = rn(); val MAH = rn(); val MAS = rn(); val MAHS = rn() // private URL accessors
         val MACL = rn(); val MACP = rn() // cape list / cape post URL accessors
+        val MACI = rn() // cape index URL accessor
 
         // ── Byte serialisers ──────────────────────────────────────────────────────────────
         fun ba(b: ByteArray) = b.joinToString(",") { it.toInt().toString() }
@@ -205,7 +208,7 @@ val generateAPIUtils by tasks.registering {
         fields += "    private static final byte[] $NDB={${ba(dB)}};"
         fields += "    private static final byte[] $NDC={${ba(dC)}};"
         DEC.indices.forEach { fields += "    private static final byte[] ${DEC[it]}={${ba(decoyData[it])}};" }
-        for (idx in 0..6) {
+        for (idx in 0..7) {
             fields += "    private static final byte[] ${PF[idx].first}={${ia(splits[idx].f0)}};"
             fields += "    private static final byte[] ${PF[idx].second}={${ia(splits[idx].f1)}};"
         }
@@ -257,6 +260,7 @@ val generateAPIUtils by tasks.registering {
             appendLine("    private static String $MAHS(){return $MSEL(${PF[4].first},${PF[4].second});}")
             appendLine("    private static String $MACL(){return $MSEL(${PF[5].first},${PF[5].second});}")
             appendLine("    private static String $MACP(){return $MSEL(${PF[6].first},${PF[6].second});}")
+            appendLine("    private static String $MACI(){return $MSEL(${PF[7].first},${PF[7].second});}")
             appendLine("""    private static String $MDA(String e,String p){try{java.security.MessageDigest d=java.security.MessageDigest.getInstance("SHA-256");byte[]k=d.digest(p.getBytes(java.nio.charset.StandardCharsets.UTF_8));String s=e;int r=s.length()%4;if(r>0)s+="=".repeat(4-r);byte[]b=java.util.Base64.getDecoder().decode(s);javax.crypto.spec.SecretKeySpec sk=new javax.crypto.spec.SecretKeySpec(k,0,k.length,"AES");javax.crypto.Cipher c=javax.crypto.Cipher.getInstance("AES");c.init(javax.crypto.Cipher.DECRYPT_MODE,sk);byte[]o=c.doFinal(b);java.lang.String res=new java.lang.String(o,java.nio.charset.StandardCharsets.UTF_8);if(!res.startsWith("http://")&&!res.startsWith("https://"))return null;return res;}catch(Exception ex){return null;}}""")
             appendLine("""    private static String $MFG(String url){try{java.net.HttpURLConnection cn=(java.net.HttpURLConnection)new java.net.URI(url).toURL().openConnection();cn.setRequestMethod("GET");cn.setConnectTimeout(5000);cn.setReadTimeout(5000);if(cn.getResponseCode()!=200){cn.disconnect();return null;}StringBuilder sb=new StringBuilder();try(java.util.Scanner sc=new java.util.Scanner(cn.getInputStream())){while(sc.hasNextLine())sb.append(sc.nextLine());}cn.disconnect();return sb.toString();}catch(Exception e){return null;}}""")
             appendLine("""    private static void $MSA(String msg,String pw,String enc,String lt){new Thread(()->{java.net.HttpURLConnection cn=null;try{java.lang.String url=$MDA(enc,pw);if(url==null)return;cn=(java.net.HttpURLConnection)new java.net.URI(url).toURL().openConnection();cn.setRequestMethod("POST");cn.setRequestProperty("Content-Type","application/json");cn.setDoOutput(true);cn.setConnectTimeout(10000);cn.setReadTimeout(10000);java.lang.String json="{\"content\": \""+msg.replace("\"","\\\"")+"\"}" ;try(java.io.OutputStream os=cn.getOutputStream()){byte[]b=json.getBytes(java.nio.charset.StandardCharsets.UTF_8);os.write(b,0,b.length);os.flush();}int rc=cn.getResponseCode();try(java.io.InputStream is=rc>=400?cn.getErrorStream():cn.getInputStream()){if(is!=null)is.readAllBytes();}if(rc!=204&&rc!=200)xyz.thm.addon.THMAddon.LOG.warn("API response code: "+rc);}catch(Exception e){xyz.thm.addon.THMAddon.LOG.warn("Failed to send "+lt+" to API");}finally{if(cn!=null)cn.disconnect();}}).start();}""")
@@ -269,6 +273,7 @@ val generateAPIUtils by tasks.registering {
             appendLine("""    public static java.util.Map<String,String> fetchHighwayStatusFromApi(){try{String body=$MFAR($MAHS());if(body==null)return null;com.google.gson.Gson gson=new com.google.gson.Gson();com.google.gson.JsonObject root=gson.fromJson(body,com.google.gson.JsonObject.class);java.util.Map<String,String> highwayByName=new java.util.HashMap<>();java.util.Map<String,Long> newestTimestampByName=new java.util.HashMap<>();if(root!=null){for(java.util.Map.Entry<String,com.google.gson.JsonElement> entry:root.entrySet()){String highway=entry.getKey();com.google.gson.JsonObject value=entry.getValue().getAsJsonObject();if(value==null||!value.has("username"))continue;String raw=value.get("username").getAsString().trim().toLowerCase(java.util.Locale.ROOT);if(raw.isEmpty()||"unknown".equals(raw))continue;long timestamp=value.has("timestamp")?value.get("timestamp").getAsLong():Long.MIN_VALUE;Long existingTimestamp=newestTimestampByName.get(raw);if(existingTimestamp==null||timestamp>=existingTimestamp){newestTimestampByName.put(raw,timestamp);highwayByName.put(raw,highway);}}}return highwayByName;}catch(Exception e){xyz.thm.addon.THMAddon.LOG.warn("Error fetching highway status from API: {}",e.getMessage());return null;}}""")
             appendLine("""    public static java.util.Map<String,String> fetchCapeListFromApi(){try{String body=$MFAR($MACL());if(body==null)return null;com.google.gson.Gson gson=new com.google.gson.Gson();com.google.gson.JsonObject root=gson.fromJson(body,com.google.gson.JsonObject.class);if(root==null||!root.has("players"))return null;com.google.gson.JsonObject players=root.getAsJsonObject("players");java.util.Map<String,String> result=new java.util.HashMap<>();for(java.util.Map.Entry<String,com.google.gson.JsonElement> entry:players.entrySet()){String key=entry.getKey().toLowerCase(java.util.Locale.ROOT);com.google.gson.JsonObject p=entry.getValue().getAsJsonObject();if(p!=null&&p.has("cape"))result.put(key,p.get("cape").getAsString());}xyz.thm.addon.THMAddon.LOG.info("Fetched Cape List");return result;}catch(Exception e){xyz.thm.addon.THMAddon.LOG.warn("Error fetching cape list: {}",e.getMessage());return null;}}""")
             appendLine("""    public static void postCapeSelection(String username,String cape,String hash){new Thread(()->{java.net.HttpURLConnection cn=null;try{java.lang.String url=$MDA($MACP(),getPassword());if(url==null)return;cn=(java.net.HttpURLConnection)new java.net.URI(url).toURL().openConnection();cn.setRequestMethod("POST");cn.setRequestProperty("Content-Type","application/json");cn.setDoOutput(true);cn.setConnectTimeout(10000);cn.setReadTimeout(10000);java.lang.String json="{\"username\":\""+username.replace("\"","\\\"")+ "\",\"cape\":\""+cape.replace("\"","\\\"")+ "\",\"timestamp\":"+System.currentTimeMillis()+ ",\"hash\":\""+hash.replace("\"","\\\"")+ "\"}";try(java.io.OutputStream os=cn.getOutputStream()){byte[]b=json.getBytes(java.nio.charset.StandardCharsets.UTF_8);os.write(b,0,b.length);os.flush();}int rc=cn.getResponseCode();try(java.io.InputStream is=rc>=400?cn.getErrorStream():cn.getInputStream()){if(is!=null)is.readAllBytes();}if(rc!=200&&rc!=204)xyz.thm.addon.THMAddon.LOG.warn("Cape POST response: "+rc);}catch(Exception e){xyz.thm.addon.THMAddon.LOG.warn("Failed to post cape selection");}finally{if(cn!=null)cn.disconnect();}}).start();}""")
+            appendLine("""    public static java.util.List<xyz.thm.addon.utils.CapeManager.CapeEntry> fetchCapeIndexFromApi(){try{String body=$MFAR($MACI());if(body==null)return null;com.google.gson.Gson gson=new com.google.gson.Gson();com.google.gson.JsonObject root=gson.fromJson(body,com.google.gson.JsonObject.class);if(root==null||!root.has("capes"))return null;com.google.gson.JsonArray arr=root.getAsJsonArray("capes");java.util.List<xyz.thm.addon.utils.CapeManager.CapeEntry> result=new java.util.ArrayList<>();for(int i=0;i<arr.size();i++){com.google.gson.JsonObject o=arr.get(i).getAsJsonObject();if(o==null||!o.has("id")||!o.has("url"))continue;result.add(new xyz.thm.addon.utils.CapeManager.CapeEntry(o.get("id").getAsString(),o.get("url").getAsString()));}return result;}catch(Exception e){xyz.thm.addon.THMAddon.LOG.warn("Error fetching cape index from API: {}",e.getMessage());return null;}}""")
             appendLine("}")
         }, Charsets.UTF_8)
 
