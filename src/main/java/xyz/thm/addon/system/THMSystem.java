@@ -10,6 +10,7 @@ import net.minecraft.nbt.NbtCompound;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.modules.HighwayBuilderTHM;
 import xyz.thm.addon.utils.APIUtils;
+import xyz.thm.addon.utils.CapeManager;
 import xyz.thm.addon.utils.KitbotChatRouter;
 import xyz.thm.addon.utils.ThmMembers;
 import xyz.thm.addon.waveycapes.CapeStyle;
@@ -143,17 +144,18 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    public final Setting<CapeType> cape = sgRender.add(new EnumSetting.Builder<CapeType>()
+    public final Setting<String> cape = sgRender.add(new ProvidedStringSetting.Builder()
         .name("thm-cape")
         .description("Cape shown on yourself and other THM members.")
-        .defaultValue(CapeType.None)
-        .onChanged(ct -> {
+        .defaultValue("None")
+        .supplier(CapeManager::availableCapeIds)
+        .onChanged(id -> {
             if (FabricLoader.getInstance().isDevelopmentEnvironment()) return;
             MinecraftClient mc = MinecraftClient.getInstance();
             if (mc == null || mc.player == null) return;
             if (!ThmMembers.isThmMember(mc.player)) return;
             String username = mc.player.getGameProfile().name();
-            APIUtils.postCapeSelection(username, ct.toApiId(), getHash());
+            APIUtils.postCapeSelection(username, id, getHash());
         })
         .build()
     );
@@ -400,13 +402,4 @@ public class THMSystem extends System<THMSystem> {
         TransparentBlack
     }
 
-    public enum CapeType {
-        None,
-        Thm3,
-        Thm4;
-
-        public String toApiId() {
-            return this.name().toLowerCase(java.util.Locale.ROOT);
-        }
-    }
 }

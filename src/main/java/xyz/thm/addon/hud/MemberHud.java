@@ -103,6 +103,14 @@ public class MemberHud extends HudElement {
         .build()
     );
 
+    public final Setting<Boolean> showAccountCount = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-account-count")
+        .description("In grouped Discord mode, shows how many of this member's accounts are currently online, e.g. Discordname x3.")
+        .defaultValue(false)
+        .visible(groupByDiscordName::get)
+        .build()
+    );
+
     // Color settings for text display
     public final Setting<SettingColor> colorHeader = sgColors.add(new ColorSetting.Builder()
         .name("header-color")
@@ -179,6 +187,7 @@ public class MemberHud extends HudElement {
                 }
             } else {
                 String label = member.discordName != null && !member.discordName.isBlank() ? member.discordName : member.name;
+                if (showAccountCount.get()) label += " x" + visibleUsernames.size();
                 String statuses = visibleUsernames.stream()
                     .map(username -> showHighwayStatus.get() ? ThmMembers.getHighwayStatusByMcName(username) : null)
                     .filter(status -> status != null && !status.isBlank())

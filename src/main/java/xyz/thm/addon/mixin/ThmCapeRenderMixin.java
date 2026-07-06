@@ -12,6 +12,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import xyz.thm.addon.system.THMSystem;
+import xyz.thm.addon.utils.CapeManager;
 import xyz.thm.addon.utils.ThmMembers;
 
 @Mixin(AbstractClientPlayerEntity.class)
@@ -27,9 +28,8 @@ public abstract class ThmCapeRenderMixin {
 
         String capeId;
         if (mc.player == (Object) self) {
-            THMSystem.CapeType ct = system.cape.get();
-            if (ct == THMSystem.CapeType.None) return;
-            capeId = ct.toApiId();
+            capeId = system.cape.get();
+            if (capeId == null || capeId.equals("None")) return;
         } else {
             capeId = ThmMembers.getCapeByMcName(self.getGameProfile().name());
             if (capeId == null) return;
@@ -39,10 +39,10 @@ public abstract class ThmCapeRenderMixin {
         SkinTextures original = cir.getReturnValue();
         if (original == null) return;
 
-        AssetInfo.TextureAssetInfo capeAsset = new AssetInfo.TextureAssetInfo(
-            Identifier.of("thm-addon", "cape/" + capeId + ".webp"),
-            Identifier.of("thm-addon", "cape/" + capeId + ".webp")
-        );
+        Identifier capeTexture = CapeManager.getCapeTexture(capeId);
+        if (capeTexture == null) return;
+
+        AssetInfo.TextureAssetInfo capeAsset = new AssetInfo.TextureAssetInfo(capeTexture, capeTexture);
         cir.setReturnValue(new SkinTextures(
             original.body(),
             capeAsset,

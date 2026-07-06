@@ -146,7 +146,6 @@ public class HighwayBuilderTHM extends Module {
     private static final long STATS_CODE_MAX_FUTURE_SKEW_MS = 5L * 60L * 1000L;
     private static final String STATS_CODE_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     private static final int STATS_CODE_LENGTH = 7;
-    private static final long STATS_CODE_MAX_VALUE = 2_207_984_167_551L;
     private static final String THM_DEBUG_LOG_DIR_NAME = "thm";
     private static final String HIGHWAYBUILDER_DEBUG_FILE_NAME = "highwaybuilder-debug.log";
     private static final String RESTOCK_DEBUG_FILE_NAME = "highwaybuilder-restock-debug.log";
@@ -8898,21 +8897,18 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private static String encodeStatsCode(long timestampMs) {
-        if (timestampMs <= 0L || timestampMs > STATS_CODE_MAX_VALUE) return null;
-
         char[] encoded = new char[STATS_CODE_LENGTH];
         long value = timestampMs;
         for (int i = encoded.length - 1; i >= 0; i--) {
             encoded[i] = STATS_CODE_BASE58_ALPHABET.charAt((int) (value % STATS_CODE_BASE58_ALPHABET.length()));
             value /= STATS_CODE_BASE58_ALPHABET.length();
         }
-        return value == 0L ? new String(encoded) : null;
+        return new String(encoded);
     }
 
     private StatsDisplaySnapshot createStatsDisplaySnapshot(Vec3d startPos, int broken, int placed, long statsCodeTimestampMs) {
         double distance = mc.player != null && startPos != null ? PlayerUtils.distanceTo(startPos) : 0.0;
         String statsCode = encodeStatsCode(statsCodeTimestampMs);
-        if (statsCode == null) statsCode = "unavailable";
         return new StatsDisplaySnapshot(distance, broken, placed, statsCode, startPos != null && distance > 50000);
     }
 
