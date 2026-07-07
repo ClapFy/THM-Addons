@@ -3,6 +3,9 @@ package xyz.thm.addon.modules;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFly;
+import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFlightModes;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.EndPortalBlock;
 import net.minecraft.block.FluidBlock;
@@ -34,7 +37,7 @@ public class HighwayTraveler extends Module {
         public String toString() { return label; }
     }
 
-    private enum TravelState { FORWARD, PATH_FOLLOW, BACKUP }
+    private enum TravelState { FORWARD, STOPPED, PATH_FOLLOW, BACKUP }
     private enum ObstacleKind { CLEAR, JUMPABLE, WALL }
 
     private final SettingGroup sgGeneral  = settings.getDefaultGroup();
@@ -52,6 +55,14 @@ public class HighwayTraveler extends Module {
         new BoolSetting.Builder()
             .name("sprint")
             .description("Sprint continuously while traveling.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Boolean> bounceModeOnStart = sgGeneral.add(
+        new BoolSetting.Builder()
+            .name("force-bounce-mode")
+            .description("Sets Elytra Fly's mode to Bounce whenever this module is started, since Bounce mode is best for highway travel.")
             .defaultValue(true)
             .build()
     );
@@ -92,6 +103,8 @@ public class HighwayTraveler extends Module {
             .build()
     );
 
+    private static final int OBSTACLE_WAIT_TICKS = 10;
+
     private TravelState     travelState = TravelState.FORWARD;
     private TravelDirection activeDir   = TravelDirection.POS_Z;
     private float           hwYaw       = 0f;
@@ -100,9 +113,10 @@ public class HighwayTraveler extends Module {
 
     private final Deque<BlockPos> path = new ArrayDeque<>();
 
-    private int   backupTicks = 0;
-    private Vec3d prevPos     = Vec3d.ZERO;
-    private int   noMoveTicks = 0;
+    private int   backupTicks      = 0;
+    private Vec3d prevPos          = Vec3d.ZERO;
+    private int   noMoveTicks      = 0;
+    private int   obstacleWaitTicks = 0;
 
     public HighwayTraveler() {
         super(THMAddon.MAIN, "highway-traveler",
@@ -113,12 +127,18 @@ public class HighwayTraveler extends Module {
     public void onActivate() {
         if (mc.player == null) return;
 
+        if (bounceModeOnStart.get()) {
+            ElytraFly elytraFly = Modules.get().get(ElytraFly.class);
+            elytraFly.flightMode.set(ElytraFlightModes.Bounce);
+        }
+
         applyDirectionSetting();
 
         travelState = TravelState.FORWARD;
         path.clear();
-        noMoveTicks = 0;
-        backupTicks = 0;
+        noMoveTicks       = 0;
+        backupTicks       = 0;
+        obstacleWaitTicks = 0;
         prevPos     = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
 
         info("Heading " + activeDir.label + " (yaw " + (int) hwYaw + ")");
@@ -150,18 +170,19 @@ public class HighwayTraveler extends Module {
         noMoveTicks = pos.subtract(prevPos).lengthSquared() < 1e-4 ? noMoveTicks + 1 : 0;
         prevPos     = pos;
 
-        if (noMoveTicks > 25 && travelState != TravelState.BACKUP) {
+        if (noMoveTicks > 25 && travelState != TravelState.BACKUP && travelState != TravelState.STOPPED) {
             beginBackup();
             return;
         }
 
         switch (travelState) {
             case FORWARD     -> tickForward(p);
+            case STOPPED     -> tickStopped(p);
             case PATH_FOLLOW -> tickPathFollow(p);
             case BACKUP      -> tickBackup(p);
         }
 
-        if (sprintSetting.get() && travelState != TravelState.BACKUP) {
+        if (sprintSetting.get() && travelState != TravelState.BACKUP && travelState != TravelState.STOPPED) {
             p.setSprinting(true);
         }
 
@@ -180,39 +201,65 @@ public class HighwayTraveler extends Module {
                     pressFwd();
                     return;
                 }
-                Deque<BlockPos> route = bfsRoute(p);
-                if (route != null && !route.isEmpty()) {
-                    path.clear();
-                    path.addAll(route);
-                    travelState = TravelState.PATH_FOLLOW;
-                } else {
-                    beginBackup();
-                }
+                releaseAll();
+                p.setSprinting(false);
+                obstacleWaitTicks = 0;
+                travelState = TravelState.STOPPED;
             }
         }
     }
 
+    private void tickStopped(ClientPlayerEntity p) {
+        releaseAll();
+        p.setSprinting(false);
+
+        if (++obstacleWaitTicks < OBSTACLE_WAIT_TICKS) return;
+
+        obstacleWaitTicks = 0;
+
+        Deque<BlockPos> route = bfsRoute(p);
+        if (route != null && !route.isEmpty()) {
+            path.clear();
+            path.addAll(route);
+            travelState = TravelState.PATH_FOLLOW;
+        } else {
+            beginBackup();
+        }
+    }
+
+    private static final int STEER_LOOKAHEAD = 3; 
+
     private void tickPathFollow(ClientPlayerEntity p) {
+        Vec3d pos = new Vec3d(p.getX(), p.getY(), p.getZ());
+
+        while (!path.isEmpty()) {
+            BlockPos wp = path.peek();
+            double   dx = (wp.getX() + 0.5) - pos.x;
+            double   dz = (wp.getZ() + 0.5) - pos.z;
+            if (dx * dx + dz * dz < 0.49) path.poll();
+            else break;
+        }
+
         if (path.isEmpty()) {
             p.setYaw(hwYaw);
             travelState = TravelState.FORWARD;
             return;
         }
 
-        BlockPos wp  = path.peek();
-        Vec3d    pos = new Vec3d(p.getX(), p.getY(), p.getZ());
-        double   dx  = (wp.getX() + 0.5) - pos.x;
-        double   dz  = (wp.getZ() + 0.5) - pos.z;
 
-        if (dx * dx + dz * dz < 0.49) {
-            path.poll();
-            tickPathFollow(p);
-            return;
+        BlockPos aim = null;
+        int      i   = 0;
+        for (BlockPos wp : path) {
+            aim = wp;
+            if (++i >= STEER_LOOKAHEAD) break;
         }
 
+        double dx = (aim.getX() + 0.5) - pos.x;
+        double dz = (aim.getZ() + 0.5) - pos.z;
         p.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
 
-        if (wp.getY() > p.getBlockPos().getY() && p.isOnGround()) p.jump();
+        BlockPos nextWp = path.peek();
+        if (nextWp.getY() > p.getBlockPos().getY() && p.isOnGround()) p.jump();
 
         pressFwd();
     }
@@ -234,36 +281,34 @@ public class HighwayTraveler extends Module {
     }
 
     private ObstacleKind detectObstacle(ClientPlayerEntity p) {
-        BlockPos feet      = p.getBlockPos();
-        int      steps     = lookAheadSetting.get();
-        boolean  foundJump = false;
+        BlockPos feet  = p.getBlockPos();
+        int      steps = lookAheadSetting.get();
 
         for (int step = 1; step <= steps; step++) {
-            for (BlockPos col : fwdColumns(feet, step)) {
-                boolean fBlocked = solid(col);
-                boolean bBlocked = solid(col.up());
-                boolean hBlocked = solid(col.up(2));
+            BlockPos diag = new BlockPos(feet.getX() + fwdX * step, feet.getY(), feet.getZ() + fwdZ * step);
 
-                if (fBlocked || bBlocked) {
-                    if (!hBlocked && !solid(col.up(3))) {
-                        if (step == 1) foundJump = true;
-                    } else {
-                        return ObstacleKind.WALL;
-                    }
-                }
+            boolean blocked;
+            if (fwdX != 0 && fwdZ != 0) {
+
+                BlockPos cornerX = new BlockPos(feet.getX() + fwdX * step, feet.getY(), feet.getZ());
+                BlockPos cornerZ = new BlockPos(feet.getX(), feet.getY(), feet.getZ() + fwdZ * step);
+                blocked = solid(diag) || (solid(cornerX) && solid(cornerZ));
+            } else {
+                blocked = solid(diag);
             }
-        }
-        return foundJump ? ObstacleKind.JUMPABLE : ObstacleKind.CLEAR;
-    }
 
-    private List<BlockPos> fwdColumns(BlockPos feet, int step) {
-        List<BlockPos> cols = new ArrayList<>(3);
-        if (fwdX != 0 && fwdZ != 0) {
-            cols.add(new BlockPos(feet.getX() + fwdX * step, feet.getY(), feet.getZ()));
-            cols.add(new BlockPos(feet.getX(), feet.getY(), feet.getZ() + fwdZ * step));
+            if (!blocked) continue;
+
+            boolean headBlocked  = solid(diag.up());
+            boolean aboveBlocked = solid(diag.up(2));
+
+            if (step == 1) {
+                if (!headBlocked && !aboveBlocked) return ObstacleKind.JUMPABLE;
+                return ObstacleKind.WALL;
+            }
+            if (headBlocked || aboveBlocked) return ObstacleKind.WALL;
         }
-        cols.add(new BlockPos(feet.getX() + fwdX * step, feet.getY(), feet.getZ() + fwdZ * step));
-        return cols;
+        return ObstacleKind.CLEAR;
     }
 
     private static final int[][] DIRS4 = {{1,0},{-1,0},{0,1},{0,-1}};
@@ -284,16 +329,17 @@ public class HighwayTraveler extends Module {
         Queue<long[]> queue  = new ArrayDeque<>();
         queue.add(new long[]{sx, sy, sz});
 
-        long goalKey = Long.MIN_VALUE;
-        int  iter    = 0;
-        int  maxIter = W * W * 8;
+        long   goalKey = Long.MIN_VALUE;
+        int    iter    = 0;
+        int    maxIter = W * W * 8;
+        double dirLen = Math.sqrt((double)(fwdX * fwdX + fwdZ * fwdZ));
 
         while (!queue.isEmpty() && iter++ < maxIter) {
             long[] cur = queue.poll();
             int cx = (int) cur[0], cy = (int) cur[1], cz = (int) cur[2];
 
-            int fwd = (cx - sx) * fwdX + (cz - sz) * fwdZ;
-            int lat = (cx - sx) * fwdZ - (cz - sz) * fwdX;
+            double fwd = ((cx - sx) * fwdX + (cz - sz) * fwdZ) / dirLen;
+            double lat = ((cx - sx) * fwdZ - (cz - sz) * fwdX) / dirLen;
 
             if (fwd >= 4 && Math.abs(lat) <= 1) {
                 goalKey = xzKey(cx, cz);
