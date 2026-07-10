@@ -77,6 +77,8 @@ public final class CapeManager {
 
     /** Resolves (loading + registering the texture on first use) the render Identifier for a cape id, or null if unavailable. */
     public static synchronized Identifier getCapeTexture(String id) {
+        if (id == null || id.isBlank() || id.equalsIgnoreCase("None")) return null;
+
         Identifier cached = textureCache.get(id);
         if (cached != null) return cached == MISSING ? null : cached;
 

@@ -1,0 +1,143 @@
+package xyz.thm.addon.shaders;
+
+import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.systems.CommandEncoder;
+import com.mojang.blaze3d.systems.GpuDevice;
+import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.GpuTextureView;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.Framebuffer;
+import net.minecraft.client.gl.RenderPipelines;
+import net.minecraft.client.gl.UniformType;
+import net.minecraft.client.util.Window;
+import net.minecraft.util.Identifier;
+import org.lwjgl.system.MemoryStack;
+import xyz.thm.addon.THMAddon;
+
+import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.OptionalInt;
+
+// Renders the currently active .fsh background as the title screen's panorama replacement.
+// Unlike the raw-GL approach this replaced, this goes through Blaze3D's actual RenderPipeline/
+// RenderPass API (the same machinery vanilla's own post-processing effects, e.g. the menu
+// blur, use), reusing vanilla's attributeless "core/screenquad" vertex shader. The .fsh files
+// were adapted from RusherHack (see assets/thm-addon/shaders/) to declare their time/mouse/
+// resolution uniforms as a single std140 block ("ThmShaderData") instead of individual
+// uniforms, since Blaze3D only supports whole-uniform-buffer bindings, not per-scalar
+// glUniform calls. Every shader was validated with glslangValidator before shipping.
+public class ShaderBackground {
+    private static final Identifier VERTEX_SHADER = Identifier.ofVanilla("core/screenquad");
+    private static final long UNIFORM_BUFFER_SIZE = 32L; // std140: float time, pad, vec2 mouse, vec2 resolution
+
+    private static final long START_NANOS = System.nanoTime();
+    private static final Map<String, RenderPipeline> pipelines = new HashMap<>();
+    private static final Map<String, Boolean> valid = new HashMap<>();
+    private static GpuBuffer uniformBuffer;
+    private static boolean blurBroken;
+
+    /** @return true if a shader was drawn (caller should skip the vanilla panorama). */
+    public static boolean render() {
+        String name = ShaderManager.active();
+        if (name == null) return false;
+
+        try {
+            RenderPipeline pipeline = pipelineFor(name);
+            if (pipeline == null) return false;
+
+            MinecraftClient mc = MinecraftClient.getInstance();
+            Framebuffer framebuffer = mc.getFramebuffer();
+            GpuTextureView colorView = framebuffer.getColorAttachmentView();
+            if (colorView == null) return false;
+
+            drawInto(pipeline, colorView, framebuffer.textureWidth, framebuffer.textureHeight);
+            return true;
+        } catch (Throwable t) {
+            THMAddon.LOG.warn("[THM] Main-menu shader '{}' failed to render, disabling it", name, t);
+            valid.put(name, false);
+            return false;
+        }
+    }
+
+    /**
+     * "Frosted glass" blur applied only within the given window rectangle (GUI-scaled screen
+     * coordinates), not the whole shader background - see BlurBackground. Call this before
+     * drawing window chrome on top, so the chrome's translucent fill sits over the blurred
+     * patch instead of the sharp shader.
+     */
+    public static boolean renderBlurredRegion(int x1, int y1, int x2, int y2, int strength) {
+        if (strength <= 0 || blurBroken) return false;
+
+        String name = ShaderManager.active();
+        if (name == null) return false;
+
+        RenderPipeline pipeline = pipelineFor(name);
+        if (pipeline == null) return false;
+
+        try {
+            return BlurBackground.renderRegion(pipeline, strength, x1, y1, x2, y2);
+        } catch (Throwable t) {
+            THMAddon.LOG.warn("[THM] Main-menu window blur failed, disabling it for this session", t);
+            blurBroken = true;
+            return false;
+        }
+    }
+
+    private static RenderPipeline pipelineFor(String name) {
+        if (valid.getOrDefault(name, true) == Boolean.FALSE) return null;
+
+        return pipelines.computeIfAbsent(name, n -> {
+            RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_EFFECT_PROCESSOR_SNIPPET)
+                .withLocation(Identifier.of(THMAddon.MOD_ID, "bg_" + n))
+                .withVertexShader(VERTEX_SHADER)
+                .withFragmentShader(Identifier.of(THMAddon.MOD_ID, n))
+                .withUniform("ThmShaderData", UniformType.UNIFORM_BUFFER)
+                .build();
+
+            CompiledRenderPipeline compiled = RenderSystem.getDevice().precompilePipeline(pipeline);
+            if (!compiled.isValid()) {
+                THMAddon.LOG.warn("[THM] Main-menu shader '{}' failed to compile, disabling it", n);
+                valid.put(n, false);
+                return null;
+            }
+
+            valid.put(n, true);
+            return pipeline;
+        });
+    }
+
+    /** Draws the given (already-compiled) shader pipeline into an arbitrary render target. */
+    static void drawInto(RenderPipeline pipeline, GpuTextureView target, int width, int height) {
+        GpuDevice device = RenderSystem.getDevice();
+        CommandEncoder encoder = device.createCommandEncoder();
+
+        if (uniformBuffer == null) {
+            uniformBuffer = device.createBuffer(() -> "THM shader background", GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, UNIFORM_BUFFER_SIZE);
+        }
+
+        Window window = MinecraftClient.getInstance().getWindow();
+        float mouseScaleX = width / (float) window.getFramebufferWidth();
+        float mouseScaleY = height / (float) window.getFramebufferHeight();
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            ByteBuffer data = stack.calloc((int) UNIFORM_BUFFER_SIZE);
+            float time = (System.nanoTime() - START_NANOS) / 1_000_000_000f;
+            data.putFloat(0, time);
+            data.putFloat(8, (float) MinecraftClient.getInstance().mouse.getX() * mouseScaleX);
+            data.putFloat(12, height - (float) MinecraftClient.getInstance().mouse.getY() * mouseScaleY);
+            data.putFloat(16, (float) width);
+            data.putFloat(20, (float) height);
+            encoder.writeToBuffer(uniformBuffer.slice(), data);
+        }
+
+        try (RenderPass pass = encoder.createRenderPass(() -> "THM shader background", target, OptionalInt.empty())) {
+            pass.setPipeline(pipeline);
+            pass.setUniform("ThmShaderData", uniformBuffer);
+            pass.draw(0, 3);
+        }
+    }
+}

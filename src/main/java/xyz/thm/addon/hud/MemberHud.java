@@ -8,6 +8,7 @@ import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.settings.StringMultiSelect;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.ThmMembers;
 
@@ -59,12 +60,18 @@ public class MemberHud extends HudElement {
         .build()
     );
 
-    public final Setting<List<String>> visibleRoles = sgFilters.add(new StringListSetting.Builder()
+    public final Setting<StringMultiSelect> visibleRoles = sgFilters.add(new GenericSetting.Builder<StringMultiSelect>()
         .name("visible-roles")
         .description("Roles to display in the member HUD.")
-        .defaultValue(RANK_HIERARCHY)
+        .defaultValue(defaultVisibleRoles())
         .build()
     );
+
+    private static StringMultiSelect defaultVisibleRoles() {
+        StringMultiSelect select = new StringMultiSelect("Visible Roles", () -> RANK_HIERARCHY);
+        select.selected().addAll(RANK_HIERARCHY);
+        return select;
+    }
 
     public final Setting<Boolean> showUnknownRoles = sgFilters.add(new BoolSetting.Builder()
         .name("show-unknown-roles")
@@ -250,7 +257,7 @@ public class MemberHud extends HudElement {
     private boolean isRoleVisible(String rank) {
         if (rank == null) return showUnknownRoles.get();
 
-        for (String selectedRole : visibleRoles.get()) {
+        for (String selectedRole : visibleRoles.get().selected()) {
             if (rank.equalsIgnoreCase(selectedRole)) return true;
         }
 

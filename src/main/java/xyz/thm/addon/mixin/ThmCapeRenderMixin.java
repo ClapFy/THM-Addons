@@ -32,7 +32,7 @@ public abstract class ThmCapeRenderMixin {
             if (capeId == null || capeId.equals("None")) return;
         } else {
             capeId = ThmMembers.getCapeByMcName(self.getGameProfile().name());
-            if (capeId == null) return;
+            if (capeId == null || capeId.equalsIgnoreCase("None")) return;
             if (!FabricLoader.getInstance().isDevelopmentEnvironment() && !ThmMembers.isThmMember(self)) return;
         }
 

@@ -45,20 +45,27 @@ dependencies {
 
 val generateAPIUtils by tasks.registering {
     val secretsFile = file("secrets.properties")
+    val secretsExampleFile = file("secrets.properties.example")
+    // Falls back to the example (placeholder example.com URLs) so contributors without the
+    // real secrets.properties can still build - real API calls just won't resolve to anything.
+    val activeSecretsFile = if (secretsFile.exists()) secretsFile else secretsExampleFile
     val outputFile  = file("src/main/java/xyz/thm/addon/utils/APIUtils.java")
 
-    inputs.file(secretsFile)
+    inputs.file(activeSecretsFile)
     outputs.file(outputFile)
     outputs.upToDateWhen { false }
 
     doLast {
         file("src/main/java/xyz/thm/addon/utils/password.java").delete()
-        if (!secretsFile.exists()) error(
-            "secrets.properties not found. Copy secrets.properties.example, fill in your API URLs, then rebuild."
+        if (!activeSecretsFile.exists()) error(
+            "Neither secrets.properties nor secrets.properties.example found."
         )
+        if (activeSecretsFile == secretsExampleFile) {
+            logger.lifecycle("secrets.properties not found - building with placeholder URLs from secrets.properties.example. Copy it to secrets.properties and fill in real URLs for working API calls.")
+        }
 
         val props = Properties()
-        secretsFile.bufferedReader(Charsets.UTF_8).use<java.io.Reader, Unit> { props.load(it) }
+        activeSecretsFile.bufferedReader(Charsets.UTF_8).use<java.io.Reader, Unit> { props.load(it) }
 
         fun req(k: String) = props.getProperty(k) ?: error("secrets.properties missing key: $k")
 
