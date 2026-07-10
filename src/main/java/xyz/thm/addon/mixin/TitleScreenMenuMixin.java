@@ -1,5 +1,6 @@
 package xyz.thm.addon.mixin;
 
+import net.minecraft.SharedConstants;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.Element;
@@ -96,6 +97,19 @@ public abstract class TitleScreenMenuMixin extends Screen {
         }
 
         MainMenuFx.renderWindow(context, this.textRenderer, this.width, this.height);
+    }
+
+    // Belt-and-suspenders: vanilla's own bottom-left "Minecraft <version>" text (drawn at the
+    // very end of TitleScreen#render, after the logo/splash we suppress above) has stopped
+    // showing up at some point while iterating on the window/blur rendering, for a reason not
+    // fully root-caused. Redrawing it ourselves - guaranteed to run, since our own version text
+    // inside the window is confirmed visible - is a lot more reliable than continuing to guess
+    // at whichever of our render calls is responsible.
+    @Inject(method = "render", at = @At("TAIL"))
+    private void thm$restoreVersionText(DrawContext context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
+        if (!THMSystem.get().mainMenuRainbowTitle.get()) return;
+        String text = "Minecraft " + SharedConstants.getGameVersion().name();
+        context.drawTextWithShadow(this.textRenderer, text, 2, this.height - 10, -1);
     }
 
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/LogoDrawer;draw(Lnet/minecraft/client/gui/DrawContext;IF)V"))

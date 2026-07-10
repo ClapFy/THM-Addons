@@ -2,11 +2,7 @@ package xyz.thm.addon.gui;
 
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Text;
-import net.minecraft.text.TextColor;
 import net.minecraft.util.math.ColorHelper;
-import net.minecraft.util.math.MathHelper;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.system.THMSystem;
 
@@ -31,12 +27,17 @@ public class MainMenuFx {
     private static final int BORDER_BOTTOM = THM_COLOR;
     private static final int TITLEBAR_LEFT = ColorHelper.lerp(0.75f, 0xff000000, THM_COLOR);
     private static final int TITLEBAR_RIGHT = ColorHelper.lerp(0.55f, 0xff000000, THM_COLOR);
-    // Dark + mostly opaque so button/body text stays readable against a busy shader behind it
-    // (THM_SIDE alone is too see-through for that - it's designed for block-ESP fills, not text
-    // backdrops). renderBlur() softens the shader too, but this is the belt-and-suspenders part.
-    private static final int BODY_FILL = withAlpha(ColorHelper.lerp(0.8f, 0xff000000, THM_COLOR), 0xd0);
+    // Genuinely see-through now that the backdrop behind it is actually blurred (see
+    // ShaderBackground.renderBlurredRegion) - a soft, low-contrast blurred image can sit behind
+    // a much more transparent pane than a sharp/busy one without hurting text readability.
+    private static final int BODY_FILL = withAlpha(ColorHelper.lerp(0.8f, 0xff000000, THM_COLOR), 0x70);
     private static final int BUTTON_FILL = withAlpha(ColorHelper.lerp(0.7f, 0xff000000, THM_COLOR), 0xe0);
     private static final int BUTTON_FILL_HOVER = withAlpha(THM_COLOR, 0xe0);
+
+    // Header text above the buttons - edit this to change it. Defaults to "Minecraft" (the
+    // word the vanilla logo it replaces used to show).
+    private static final String HEADER_TEXT = "Minecraft";
+    private static final float HEADER_SCALE = 2f;
 
     private static final List<Particle> particles = new ArrayList<>();
     private static final Random RAND = new Random();
@@ -69,7 +70,7 @@ public class MainMenuFx {
         renderBigTitle(context, tr, centerX, headerY);
 
         String version = "v" + THMAddon.VERSION;
-        context.drawTextWithShadow(tr, version, centerX - tr.getWidth(version) / 2, headerY + 20, THM_COLOR);
+        context.drawTextWithShadow(tr, version, centerX - tr.getWidth(version) / 2, headerY + (int) (10 * HEADER_SCALE) + 2, THM_COLOR);
     }
 
     /** Mouse particle trail - draw this AFTER the screen's buttons so it drifts over everything. */
@@ -98,23 +99,19 @@ public class MainMenuFx {
         context.drawTextWithShadow(tr, text, x1 + (x2 - x1) / 2 - textWidth / 2, y1 + (y2 - y1) / 2 - 4, color);
     }
 
+    // Found it: both earlier attempts here passed 0xffffff as the text color, which is only
+    // 6 hex digits - i.e. alpha byte 0x00, fully transparent. Every OTHER text draw in this
+    // file (version/button/title text, all confirmed visible in screenshots) uses a color with
+    // alpha explicitly set (THM_COLOR, -1, ...). Scaled via the same pushMatrix/translate/scale
+    // wrapper as before, just with that one-byte bug fixed and a plain String instead of a
+    // MutableText (no need for per-character styling here).
     private static void renderBigTitle(DrawContext context, TextRenderer tr, int centerX, int y) {
-        String title = "THM Addons";
-        float scale = 3f;
-
-        MutableText text = Text.literal("");
-        int i = 0;
-        for (char c : title.toCharArray()) {
-            int offset = i++ * 40;
-            text.append(Text.literal(String.valueOf(c)).styled(s -> s.withColor(TextColor.fromRgb(rainbow(offset)))));
-        }
-
-        float x = centerX - tr.getWidth(text) * scale / 2f;
+        float textWidth = tr.getWidth(HEADER_TEXT) * HEADER_SCALE;
 
         context.getMatrices().pushMatrix();
-        context.getMatrices().translate(x, (float) y);
-        context.getMatrices().scale(scale, scale);
-        context.drawTextWithShadow(tr, text, 0, 0, 0xffffff);
+        context.getMatrices().translate(centerX - textWidth / 2f, (float) y);
+        context.getMatrices().scale(HEADER_SCALE, HEADER_SCALE);
+        context.drawTextWithShadow(tr, HEADER_TEXT, 0, 0, THM_COLOR);
         context.getMatrices().popMatrix();
     }
 
@@ -148,11 +145,6 @@ public class MainMenuFx {
             float t = width <= 1 ? 0f : (float) i / (width - 1);
             context.fill(x1 + i, y1, x1 + i + 1, y2, ColorHelper.lerp(t, color1, color2));
         }
-    }
-
-    private static int rainbow(int offset) {
-        double state = Math.ceil((System.currentTimeMillis() + offset) / 10.0) % 360;
-        return 0xff000000 | MathHelper.hsvToRgb((float) (state / 360.0), 0.5f, 1f);
     }
 
     private static int withAlpha(int argb, int alpha) {

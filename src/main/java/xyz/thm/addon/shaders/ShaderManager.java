@@ -14,15 +14,9 @@ import java.util.Random;
 public class ShaderManager {
     private static final String BASE_PATH = "shaders";
     private static final Random RANDOM = new Random();
-    // Screens don't always re-init when navigating back to them (e.g. cancelling out of the
-    // multiplayer/singleplayer screen can reuse the same TitleScreen instance), which made
-    // "random" look stuck on one shader. This is a time-based safety net on top of the
-    // per-TitleScreen#init reroll, so it reliably varies regardless of screen reuse.
-    private static final long REROLL_INTERVAL_MS = 20_000;
 
     private static List<String> cached;
     private static String activeRoll;
-    private static long lastRollAt;
 
     public static List<String> availableShaders() {
         if (cached == null) {
@@ -45,11 +39,11 @@ public class ShaderManager {
         return Identifier.of(THMAddon.MOD_ID, BASE_PATH + "/" + shaderName + ".fsh");
     }
 
-    /** Re-rolls which shader is active. Safe to call often - see REROLL_INTERVAL_MS. */
+    /** Re-rolls which shader is active. Called once per TitleScreen#init - i.e. each time the
+     *  main menu is (re)opened, not on any kind of timer. */
     public static void reroll() {
         THMSystem system = THMSystem.get();
         List<String> all = availableShaders();
-        lastRollAt = System.currentTimeMillis();
 
         if (all.isEmpty()) {
             activeRoll = null;
@@ -79,9 +73,6 @@ public class ShaderManager {
 
     /** @return the currently active shader name, or null for the vanilla panorama. */
     public static String active() {
-        if (activeRoll == null || System.currentTimeMillis() - lastRollAt > REROLL_INTERVAL_MS) {
-            reroll();
-        }
         return activeRoll;
     }
 }

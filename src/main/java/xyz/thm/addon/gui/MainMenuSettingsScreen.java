@@ -86,7 +86,9 @@ public class MainMenuSettingsScreen extends Screen {
         options.addAll(ShaderManager.availableShaders());
         String current = options.contains(system.shaderChoice.get()) ? system.shaderChoice.get() : "None";
 
-        CyclingButtonWidget<String> widget = CyclingButtonWidget.builder((String s) -> Text.literal("Shader: " + s), current)
+        // CyclingButtonWidget already composes "<optionText>: <value>" itself (build()'s
+        // optionText param below) - a valueToText that also prepends "Shader: " doubles it up.
+        CyclingButtonWidget<String> widget = CyclingButtonWidget.builder(Text::literal, current)
             .values(options)
             .build(x, y, width, 20, Text.literal("Shader"), (btn, value) -> system.shaderChoice.set(value));
         this.addDrawableChild(widget);
