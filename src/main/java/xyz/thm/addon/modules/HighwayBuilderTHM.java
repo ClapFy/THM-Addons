@@ -70,6 +70,7 @@ import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.s2c.play.EntityPositionSyncS2CPacket;
 import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
+import net.minecraft.registry.Registries;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.Slot;
@@ -454,6 +455,7 @@ public class HighwayBuilderTHM extends Module {
     private final SettingGroup sgDebugging = settings.createGroup("Debugging", true);
     private final SettingGroup sgRenderDigging = settings.createGroup("Render Digging");
     private final SettingGroup sgRenderPaving = settings.createGroup("Render Paving");
+    private final SettingGroup sgAutoTravel = settings.createGroup("Auto Travel Handoff");
 
     public final Setting<Integer> width = sgGeneral.add(new IntSetting.Builder()
         .name("width")
@@ -499,6 +501,23 @@ public class HighwayBuilderTHM extends Module {
         .name("mine-above-railings")
         .description("Mines blocks above railings.")
         .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> autoHandoffToTraveler = sgAutoTravel.add(new BoolSetting.Builder()
+        .name("auto-handoff-to-traveler")
+        .description("Once the highway ahead is fully repaired for as far as can be scanned, automatically disable this module and enable Highway Traveler.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Integer> handoffCleanScanBlocks = sgAutoTravel.add(new IntSetting.Builder()
+        .name("handoff-clean-scan")
+        .description("How many blocks ahead must be fully repaired before handing off to Highway Traveler.")
+        .defaultValue(64)
+        .min(8)
+        .sliderMax(256)
+        .visible(autoHandoffToTraveler::get)
         .build()
     );
 
@@ -1982,6 +2001,7 @@ public class HighwayBuilderTHM extends Module {
 
     @Override
     public void onActivate() {
+        travelHandoffPaused = false;
         if (mc.player == null || mc.world == null) return;
         if (!Utils.canUpdate()) return;
         ReconnectResumeContext reconnectResume = reconnectResumeContext;
@@ -2643,6 +2663,75 @@ public class HighwayBuilderTHM extends Module {
 
     private boolean isNetherrack(BlockState state) {
         return state.isOf(Blocks.NETHERRACK);
+    }
+
+    /**
+     * Checks one full-width cross-section, {@code step} blocks ahead of {@code origin} along
+     * {@code travelDir}, against the currently configured profile: floor fully obsidian (paved)
+     * or fully a diggable floor block (dug), and the interior above the floor fully clear.
+     * Used to detect a repaired-vs-broken highway for the Highway Traveler auto handoff.
+     * {@code origin}'s Y is the highway's interior base (one block above the floor) — same
+     * convention as {@link meteordevelopment.meteorclient.utils.misc.MBlockPos#coerceBlockLevel},
+     * i.e. relative to wherever the player currently is, not a fixed absolute Y.
+     */
+    public boolean isCrossSectionHealthy(BlockPos origin, HorizontalDirection travelDir, int step, boolean pavedProfile) {
+        if (mc.world == null) return false;
+
+        int cx = origin.getX() + travelDir.offsetX * step;
+        int cz = origin.getZ() + travelDir.offsetZ * step;
+        int floorY = origin.getY() - 1;
+        HorizontalDirection lateral = travelDir.rotateLeftSkipOne();
+        int half = width.get() / 2;
+
+        for (int w = -half; w < width.get() - half; w++) {
+            int x = cx + lateral.offsetX * w;
+            int z = cz + lateral.offsetZ * w;
+
+            BlockState floorState = mc.world.getBlockState(new BlockPos(x, floorY, z));
+            boolean floorOk = pavedProfile
+                ? isObsidian(floorState)
+                : (isNetherrack(floorState) || blocksToPlace.get().contains(floorState.getBlock()));
+            if (!floorOk) return false;
+
+            for (int h = 0; h < height.get(); h++) {
+                BlockState interior = mc.world.getBlockState(new BlockPos(x, origin.getY() + h, z));
+                if (!isExcavatedSpace(interior)) return false;
+            }
+        }
+        return true;
+    }
+
+    /** True if every cross-section from 1 up to {@code maxSteps} ahead of the player is healthy. */
+    public boolean isHighwayAheadClean(HorizontalDirection travelDir, int maxSteps) {
+        return isHighwayAheadClean(travelDir, maxSteps, 0);
+    }
+
+    /**
+     * Same as {@link #isHighwayAheadClean(HorizontalDirection, int)}, but for each step also
+     * accepts a healthy cross-section anywhere within {@code verticalTolerance} blocks above or
+     * below the caller's current height. Elytra-bounce travel constantly bobs up and down, so a
+     * strict single-Y check would misread normal bounce altitude as a broken highway; a small
+     * tolerance lets the check ride out that bob instead of chasing it.
+     */
+    public boolean isHighwayAheadClean(HorizontalDirection travelDir, int maxSteps, int verticalTolerance) {
+        if (mc.player == null || travelDir == null) return false;
+        boolean pavedProfile = THMSystem.get().mode.get() == THMSystem.Mode.HighwayBuilding;
+        int baseX = mc.player.getBlockX();
+        int baseY = (int) Math.round(mc.player.getY());
+        int baseZ = mc.player.getBlockZ();
+
+        for (int step = 1; step <= maxSteps; step++) {
+            boolean stepHealthy = false;
+            for (int dy = -verticalTolerance; dy <= verticalTolerance; dy++) {
+                BlockPos origin = new BlockPos(baseX, baseY + dy, baseZ);
+                if (isCrossSectionHealthy(origin, travelDir, step, pavedProfile)) {
+                    stepHealthy = true;
+                    break;
+                }
+            }
+            if (!stepHealthy) return false;
+        }
+        return true;
     }
 
     private List<BlockPos> snapshotTemplate(MBPIterator iterator) {
@@ -3891,9 +3980,23 @@ public class HighwayBuilderTHM extends Module {
         toggle();
     }
 
+    /**
+     * True while Highway Traveler is flying the already-repaired stretch this module just
+     * finished. Unlike {@link #toggle()}, this does not run {@link #onDeactivate()} and does
+     * not touch the stats session — the module is fully frozen (nothing below this point in
+     * {@link #onTick} runs) but stays {@link #isActive()}, so stats persist across repeated
+     * travel/repair handoffs and only reset once the user actually disables this module.
+     */
+    private boolean travelHandoffPaused = false;
+
+    public void resumeAfterTravelHandoff() {
+        travelHandoffPaused = false;
+    }
+
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
+        if (travelHandoffPaused) return;
         safetyPlacedThisTick = false;
 
         maybeCheckpointStatsSession();
@@ -4026,6 +4129,15 @@ public class HighwayBuilderTHM extends Module {
         maybeQueueFoodRestock();
         boolean restockWatchdogOwnedTick = restockWatchdog.tickBeforeState();
         if (!restockWatchdogOwnedTick) {
+            if (autoHandoffToTraveler.get() && state == State.Forward
+                    && isHighwayAheadClean(dir, handoffCleanScanBlocks.get())) {
+                HighwayTraveler traveler = Modules.get().get(HighwayTraveler.class);
+                if (traveler != null) {
+                    travelHandoffPaused = true;
+                    if (!traveler.isActive()) traveler.toggle();
+                    return;
+                }
+            }
             state.tick(this);
             restockWatchdog.tickAfterState();
         }
@@ -5756,11 +5868,28 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private int findSafetyBlockHotbarSlot() {
-        return State.Forward.findAndMoveToHotbar(
+        int slot = State.Forward.findAndMoveToHotbar(
             this,
             itemStack -> itemStack.getItem() instanceof BlockItem blockItem && blocksToPlace.get().contains(blockItem.getBlock()),
             false
         );
+        return slot != -1 ? slot : giveCreativePlacementBlock();
+    }
+
+    /**
+     * Creative players don't carry real stacks of the placement block, so the normal
+     * inventory-search paths always fail for them. Give a stack of the configured
+     * placement block directly into a hotbar slot instead, same as opening the
+     * creative inventory and dragging it in by hand.
+     */
+    private int giveCreativePlacementBlock() {
+        if (mc.player == null || !mc.player.isCreative() || blocksToPlace.get().isEmpty()) return -1;
+
+        int slot = State.Forward.findHotbarSlot(this, false, false);
+        if (slot == -1) return -1;
+
+        mc.interactionManager.clickCreativeStack(new ItemStack(blocksToPlace.get().get(0), 64), SlotUtils.indexToId(slot));
+        return slot;
     }
 
     private boolean trySafetyAirPlaceBlock(BlockPos target, int slot, String source) {
@@ -10351,7 +10480,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean isProtectedItem(Item item) {
         return item != null
             && item != Items.AIR
-            && protectedItems.get().contains(item);
+            && (Registries.ITEM.getEntry(item).isIn(ItemTags.PICKAXES) || protectedItems.get().contains(item));
     }
 
     private boolean isProtectedItemStack(ItemStack itemStack) {
@@ -16239,6 +16368,8 @@ public class HighwayBuilderTHM extends Module {
         protected int findBlocksToPlace(HighwayBuilderTHM b) {
             // find a block and move it to your hotbar
             int slot = findAndMoveToHotbar(b, itemStack -> itemStack.getItem() instanceof BlockItem blockItem && b.blocksToPlace.get().contains(blockItem.getBlock()));
+
+            if (slot == -1) slot = b.giveCreativePlacementBlock();
 
             if (slot == -1) {
                 if (b.restockDebugLog.get()) {

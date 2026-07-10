@@ -1,16 +1,23 @@
 package xyz.thm.addon.modules;
 
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFly;
-import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraFlightModes;
+import meteordevelopment.meteorclient.utils.misc.HorizontalDirection;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.BlockState;
 import net.minecraft.block.EndPortalBlock;
 import net.minecraft.block.FluidBlock;
 import net.minecraft.block.NetherPortalBlock;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
+import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import xyz.thm.addon.THMAddon;
@@ -42,6 +49,8 @@ public class HighwayTraveler extends Module {
 
     private final SettingGroup sgGeneral  = settings.getDefaultGroup();
     private final SettingGroup sgObstacle = settings.createGroup("Obstacle Avoidance");
+    private final SettingGroup sgAutoRepair = settings.createGroup("Auto Repair Handoff");
+    private final SettingGroup sgBounce = settings.createGroup("Elytra Bounce", false);
 
     private final Setting<TravelDirection> dirSetting = sgGeneral.add(
         new EnumSetting.Builder<TravelDirection>()
@@ -55,14 +64,6 @@ public class HighwayTraveler extends Module {
         new BoolSetting.Builder()
             .name("sprint")
             .description("Sprint continuously while traveling.")
-            .defaultValue(true)
-            .build()
-    );
-
-    private final Setting<Boolean> bounceModeOnStart = sgGeneral.add(
-        new BoolSetting.Builder()
-            .name("force-bounce-mode")
-            .description("Sets Elytra Fly's mode to Bounce whenever this module is started, since Bounce mode is best for highway travel.")
             .defaultValue(true)
             .build()
     );
@@ -103,7 +104,113 @@ public class HighwayTraveler extends Module {
             .build()
     );
 
+    private final Setting<Boolean> autoRepairSwap = sgAutoRepair.add(
+        new BoolSetting.Builder()
+            .name("auto-repair-swap")
+            .description("When the highway ahead is broken (missing floor block or an obstruction), hand control to Highway Builder to repair it, then resume traveling.")
+            .defaultValue(false)
+            .build()
+    );
+
+    private final Setting<Integer> repairScanBlocks = sgAutoRepair.add(
+        new IntSetting.Builder()
+            .name("repair-scan")
+            .description("How many blocks ahead to check for a broken highway.")
+            .defaultValue(20)
+            .min(5)
+            .sliderMax(64)
+            .visible(autoRepairSwap::get)
+            .build()
+    );
+
+    private final Setting<Integer> repairCheckInterval = sgAutoRepair.add(
+        new IntSetting.Builder()
+            .name("repair-check-interval")
+            .description("How often (in ticks) to re-scan the highway ahead for breaks. Lower is more accurate but more expensive.")
+            .defaultValue(10)
+            .min(1)
+            .sliderMax(40)
+            .visible(autoRepairSwap::get)
+            .build()
+    );
+
+    private final Setting<Boolean> repairToleratesBounce = sgAutoRepair.add(
+        new BoolSetting.Builder()
+            .name("tolerate-bounce")
+            .description("Also accepts a healthy highway a couple blocks above/below your current height, so normal elytra-bounce altitude changes aren't mistaken for a broken highway.")
+            .defaultValue(true)
+            .visible(autoRepairSwap::get)
+            .build()
+    );
+
+    private final Setting<Boolean> autoBounce = sgBounce.add(
+        new BoolSetting.Builder()
+            .name("auto-bounce")
+            .description("Deploys and continuously recasts your elytra the same way Elytra Fly's Bounce mode does, so traveling doesn't depend on Elytra Fly being separately configured.")
+            .defaultValue(true)
+            .build()
+    );
+
+    private final Setting<Boolean> bounceAutoJump = sgBounce.add(
+        new BoolSetting.Builder()
+            .name("auto-jump")
+            .description("Automatically jumps to keep the elytra bounce going.")
+            .defaultValue(true)
+            .visible(autoBounce::get)
+            .build()
+    );
+
+    private final Setting<Boolean> bounceLockPitch = sgBounce.add(
+        new BoolSetting.Builder()
+            .name("pitch-lock")
+            .description("Whether to lock your pitch angle while bouncing.")
+            .defaultValue(true)
+            .visible(autoBounce::get)
+            .build()
+    );
+
+    private final Setting<Double> bouncePitch = sgBounce.add(
+        new DoubleSetting.Builder()
+            .name("pitch")
+            .description("The pitch angle to look at while bouncing.")
+            .defaultValue(85)
+            .range(0, 90)
+            .sliderRange(0, 90)
+            .visible(() -> autoBounce.get() && bounceLockPitch.get())
+            .build()
+    );
+
+    private final Setting<Boolean> bounceRestart = sgBounce.add(
+        new BoolSetting.Builder()
+            .name("restart")
+            .description("Restarts flying with the elytra when rubberbanding.")
+            .defaultValue(true)
+            .visible(autoBounce::get)
+            .build()
+    );
+
+    private final Setting<Integer> bounceRestartDelay = sgBounce.add(
+        new IntSetting.Builder()
+            .name("restart-delay")
+            .description("How many ticks to wait before restarting the elytra again after rubberbanding.")
+            .defaultValue(7)
+            .min(0)
+            .sliderRange(0, 20)
+            .visible(() -> autoBounce.get() && bounceRestart.get())
+            .build()
+    );
+
+    private final Setting<Boolean> bounceManualTakeoff = sgBounce.add(
+        new BoolSetting.Builder()
+            .name("manual-takeoff")
+            .description("Does not automatically take off; you still have to jump to start gliding.")
+            .defaultValue(false)
+            .visible(autoBounce::get)
+            .build()
+    );
+
     private static final int OBSTACLE_WAIT_TICKS = 10;
+    private static final int BOUNCE_Y_TOLERANCE = 2;
 
     private TravelState     travelState = TravelState.FORWARD;
     private TravelDirection activeDir   = TravelDirection.POS_Z;
@@ -113,10 +220,13 @@ public class HighwayTraveler extends Module {
 
     private final Deque<BlockPos> path = new ArrayDeque<>();
 
-    private int   backupTicks      = 0;
-    private Vec3d prevPos          = Vec3d.ZERO;
-    private int   noMoveTicks      = 0;
-    private int   obstacleWaitTicks = 0;
+    private int     backupTicks       = 0;
+    private Vec3d   prevPos           = Vec3d.ZERO;
+    private int     noMoveTicks       = 0;
+    private int     obstacleWaitTicks = 0;
+    private int     repairCheckTicks  = 0;
+    private boolean bounceRubberbanded = false;
+    private int     bounceRestartTicks = 0;
 
     public HighwayTraveler() {
         super(THMAddon.MAIN, "highway-traveler",
@@ -127,19 +237,19 @@ public class HighwayTraveler extends Module {
     public void onActivate() {
         if (mc.player == null) return;
 
-        if (bounceModeOnStart.get()) {
-            ElytraFly elytraFly = Modules.get().get(ElytraFly.class);
-            elytraFly.flightMode.set(ElytraFlightModes.Bounce);
-        }
-
         applyDirectionSetting();
 
         travelState = TravelState.FORWARD;
         path.clear();
-        noMoveTicks       = 0;
-        backupTicks       = 0;
-        obstacleWaitTicks = 0;
+        noMoveTicks        = 0;
+        backupTicks        = 0;
+        obstacleWaitTicks  = 0;
+        repairCheckTicks   = 0;
+        bounceRubberbanded = false;
+        bounceRestartTicks = bounceRestartDelay.get();
         prevPos     = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
+
+        if (autoBounce.get()) bounceRecast(mc.player);
 
         info("Heading " + activeDir.label + " (yaw " + (int) hwYaw + ")");
     }
@@ -147,6 +257,8 @@ public class HighwayTraveler extends Module {
     @Override
     public void onDeactivate() {
         releaseAll();
+        mc.options.jumpKey.setPressed(false);
+        bounceRubberbanded = false;
         if (mc.player != null) {
             mc.player.setPitch(0);
         }
@@ -161,6 +273,11 @@ public class HighwayTraveler extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
         ClientPlayerEntity p = mc.player;
+
+        if (autoRepairSwap.get() && ++repairCheckTicks >= repairCheckInterval.get()) {
+            repairCheckTicks = 0;
+            if (checkForBrokenHighwayAndHandoff()) return;
+        }
 
         if (travelState != TravelState.PATH_FOLLOW) {
             p.setYaw(hwYaw);
@@ -186,7 +303,90 @@ public class HighwayTraveler extends Module {
             p.setSprinting(true);
         }
 
-        p.setPitch(0);
+        // Bounce owns pitch (needs to dive to build speed) while it's active; otherwise keep it level.
+        if (!autoBounce.get()) p.setPitch(0);
+    }
+
+    /**
+     * Auto elytra bounce, ported from Elytra Fly's Bounce mode (same recast-on-rubberband
+     * mechanics) so traveling doesn't depend on that module being separately active. Traveler
+     * already owns yaw/forward-key steering itself, so (unlike Elytra Fly's Bounce) this only
+     * drives takeoff, pitch and the rubberband recast — not direction or movement keys.
+     */
+    @EventHandler
+    private void onBouncePostTick(TickEvent.Post event) {
+        if (!autoBounce.get() || mc.player == null) return;
+        ClientPlayerEntity p = mc.player;
+
+        if (mc.options.jumpKey.isPressed() && !p.isGliding() && !bounceManualTakeoff.get()) {
+            mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(p, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+        }
+
+        if (!bounceConditionsMet(p)) return;
+
+        if (!bounceRubberbanded) {
+            if (bounceAutoJump.get()) mc.options.jumpKey.setPressed(true);
+            if (bounceLockPitch.get()) p.setPitch(bouncePitch.get().floatValue());
+        }
+
+        if (!sprintSetting.get()) {
+            p.setSprinting(p.isGliding() ? p.isOnGround() : true);
+        }
+
+        if (bounceRubberbanded && bounceRestart.get()) {
+            if (bounceRestartTicks > 0) {
+                bounceRestartTicks--;
+            } else {
+                mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(p, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+                bounceRubberbanded = false;
+                bounceRestartTicks = bounceRestartDelay.get();
+            }
+        }
+    }
+
+    @EventHandler
+    private void onBouncePreTick(TickEvent.Pre event) {
+        if (!autoBounce.get() || mc.player == null || sprintSetting.get()) return;
+        if (bounceConditionsMet(mc.player)) mc.player.setSprinting(true);
+    }
+
+    @EventHandler
+    private void onBouncePacketReceive(PacketEvent.Receive event) {
+        if (!autoBounce.get() || mc.player == null) return;
+        if (event.packet instanceof PlayerPositionLookS2CPacket) {
+            bounceRubberbanded = true;
+            mc.player.stopGliding();
+        }
+    }
+
+    @EventHandler
+    private void onBouncePacketSend(PacketEvent.Send event) {
+        if (!autoBounce.get() || mc.player == null || sprintSetting.get()) return;
+        if (event.packet instanceof ClientCommandC2SPacket cmd && cmd.getMode() == ClientCommandC2SPacket.Mode.START_FALL_FLYING) {
+            mc.player.setSprinting(true);
+        }
+    }
+
+    private boolean bounceConditionsMet(ClientPlayerEntity p) {
+        BlockState blockState = p.getBlockStateAtPos();
+        boolean isClimbing = blockState.isIn(BlockTags.CLIMBABLE) && !blockState.isIn(BlockTags.CAN_GLIDE_THROUGH);
+        return !p.getAbilities().flying && !p.hasVehicle() && !isClimbing && !p.isTouchingWater() && !p.hasStatusEffect(StatusEffects.LEVITATION);
+    }
+
+    private boolean bounceStartGliding(ClientPlayerEntity p) {
+        for (EquipmentSlot slot : EquipmentSlot.VALUES) {
+            if (LivingEntity.canGlideWith(p.getEquippedStack(slot), slot)) {
+                mc.executeSync(p::startGliding);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void bounceRecast(ClientPlayerEntity p) {
+        if (bounceConditionsMet(p) && bounceStartGliding(p)) {
+            mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(p, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+        }
     }
 
     private void tickForward(ClientPlayerEntity p) {
@@ -278,6 +478,24 @@ public class HighwayTraveler extends Module {
             mc.options.backKey.setPressed(false);
             travelState = TravelState.FORWARD;
         }
+    }
+
+    /** Returns true and hands control to Highway Builder if the highway ahead is broken. */
+    private boolean checkForBrokenHighwayAndHandoff() {
+        HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
+        if (builder == null) return false;
+
+        HorizontalDirection travelDir = HorizontalDirection.get(hwYaw);
+        int tolerance = repairToleratesBounce.get() ? BOUNCE_Y_TOLERANCE : 0;
+        if (builder.isHighwayAheadClean(travelDir, repairScanBlocks.get(), tolerance)) return false;
+
+        releaseAll();
+        if (isActive()) toggle();
+        // Builder is usually already active but paused from the previous handoff — just resume
+        // it so its stats session keeps running. If it was never on, start it fresh.
+        if (builder.isActive()) builder.resumeAfterTravelHandoff();
+        else builder.toggle();
+        return true;
     }
 
     private ObstacleKind detectObstacle(ClientPlayerEntity p) {
