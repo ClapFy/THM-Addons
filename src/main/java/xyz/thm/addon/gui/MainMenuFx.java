@@ -69,7 +69,7 @@ public class MainMenuFx {
         renderChrome(context, tr, x1, y1, x2, y2, "THM Addons");
         renderBigTitle(context, tr, centerX, headerY);
 
-        String version = "v" + THMAddon.VERSION;
+        String version = "THM Addon v" + THMAddon.VERSION;
         context.drawTextWithShadow(tr, version, centerX - tr.getWidth(version) / 2, headerY + (int) (10 * HEADER_SCALE) + 2, THM_COLOR);
     }
 
