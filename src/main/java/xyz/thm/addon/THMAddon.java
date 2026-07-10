@@ -164,6 +164,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         CapeManager.initialize();
 
         // Modules
+        Modules.get().add(new HighwayTraveler());
         Modules.get().add(new HighwayBuilderTHM());
         Modules.get().add(new AxisViewer());
         Modules.get().add(new DiscordNotifs());
