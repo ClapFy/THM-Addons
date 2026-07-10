@@ -1,4 +1,5 @@
 #version 330 core
+// Adapted from RusherHack for THM Addons - thanks!
 layout(std140) uniform ThmShaderData {
     float time;
     vec2 mouse;
@@ -6,7 +7,6 @@ layout(std140) uniform ThmShaderData {
 };
 
 out vec4 fragColor;
-#extension GL_OES_standard_derivatives : enable
 
 // Necip's transf. https://www.shadertoy.com/view/MdlGz4
 

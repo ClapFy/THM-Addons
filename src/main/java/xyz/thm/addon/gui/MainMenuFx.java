@@ -37,7 +37,7 @@ public class MainMenuFx {
     // Header text above the buttons - edit this to change it. Defaults to "Minecraft" (the
     // word the vanilla logo it replaces used to show).
     private static final String HEADER_TEXT = "Minecraft";
-    private static final float HEADER_SCALE = 2f;
+    private static final float HEADER_SCALE = 3f;
 
     private static final List<Particle> particles = new ArrayList<>();
     private static final Random RAND = new Random();
@@ -59,7 +59,7 @@ public class MainMenuFx {
 
     /** Window frame + big title - draw this BEFORE the screen's buttons so they sit on top of it. */
     public static void renderWindow(DrawContext context, TextRenderer tr, int screenWidth, int screenHeight) {
-        if (!THMSystem.get().mainMenuRainbowTitle.get()) return;
+        if (!THMSystem.get().mainMenuWindow.get()) return;
 
         int[] bounds = windowBounds(screenWidth, screenHeight);
         int x1 = bounds[0], y1 = bounds[1], x2 = bounds[2], y2 = bounds[3];
@@ -116,7 +116,9 @@ public class MainMenuFx {
     }
 
     // Same chrome as BleachHack's Window, recolored to the THM gold accent: gradient border,
-    // title bar, translucent body, decorative minimize/close glyphs (not wired to anything).
+    // title bar, translucent body, close/minimize glyphs (wired up - see isCloseButton/
+    // isMinimizeButton below, hit-tested by callers against the same coordinates used to draw
+    // them here).
     // Public so MainMenuSettingsScreen (the non-Meteor settings screen) can reuse the same look.
     public static void renderChrome(DrawContext context, TextRenderer tr, int x1, int y1, int x2, int y2, String title) {
         context.fill(x1, y1 + 1, x1 + 1, y2 - 1, BORDER_TOP);
@@ -133,6 +135,16 @@ public class MainMenuFx {
         context.drawText(tr, "x", x2 - 11, y1 + 2, -1, false);
         context.drawText(tr, "_", x2 - 21, y1 + 2, 0, false);
         context.drawText(tr, "_", x2 - 22, y1 + 1, -1, false);
+    }
+
+    /** Hit-box for the "x" glyph drawn by renderChrome, in the same x1/y1/x2/y2 coordinates. */
+    public static boolean isCloseButton(int x1, int y1, int x2, int y2, double mouseX, double mouseY) {
+        return mouseX >= x2 - 11 && mouseX < x2 - 1 && mouseY >= y1 && mouseY < y1 + 11;
+    }
+
+    /** Hit-box for the "_" glyph drawn by renderChrome, in the same x1/y1/x2/y2 coordinates. */
+    public static boolean isMinimizeButton(int x1, int y1, int x2, int y2, double mouseX, double mouseY) {
+        return mouseX >= x2 - 23 && mouseX < x2 - 12 && mouseY >= y1 && mouseY < y1 + 11;
     }
 
     // 1.21.11's DrawContext.fillGradient(...) only interpolates vertically - see BleachHack's

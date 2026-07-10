@@ -67,16 +67,15 @@ public class ShaderBackground {
      * "Frosted glass" blur applied only within the given window rectangle (GUI-scaled screen
      * coordinates), not the whole shader background - see BlurBackground. Call this before
      * drawing window chrome on top, so the chrome's translucent fill sits over the blurred
-     * patch instead of the sharp shader.
+     * patch instead of the sharp shader. Works whether or not a custom shader is active - with
+     * none active (e.g. "None" chosen, or random with no candidates), BlurBackground falls back
+     * to blurring whatever's already in that region of the framebuffer (the vanilla panorama).
      */
     public static boolean renderBlurredRegion(int x1, int y1, int x2, int y2, int strength) {
         if (strength <= 0 || blurBroken) return false;
 
         String name = ShaderManager.active();
-        if (name == null) return false;
-
-        RenderPipeline pipeline = pipelineFor(name);
-        if (pipeline == null) return false;
+        RenderPipeline pipeline = name != null ? pipelineFor(name) : null;
 
         try {
             return BlurBackground.renderRegion(pipeline, strength, x1, y1, x2, y2);

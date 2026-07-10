@@ -100,7 +100,14 @@ class BlurBackground {
     private static GpuTextureView viewA, viewB;
     private static int texWidth = -1, texHeight = -1;
 
+    private static GpuTexture captureTexture;
+    private static GpuTextureView captureView;
+    private static int captureWidth = -1, captureHeight = -1;
+
     /**
+     * @param shaderPipeline the active custom shader, or null to blur whatever's already
+     *                       rendered there instead (the vanilla panorama, when no shader is
+     *                       selected/available).
      * @param x1 x2 y1 y2 window bounds in GUI-scaled screen coordinates (same space as
      *           MainMenuFx.windowBounds).
      * @return true if it drew.
@@ -126,13 +133,29 @@ class BlurBackground {
         // scissored region and the fragment shader's sampling agree with where the window
         // actually is, instead of a several-pixel seam at the top/bottom from the mismatch.
         int py1 = (int) Math.round(framebuffer.textureHeight - y2 * scaleY);
+        // Top-down Y (unlike py1 above) - GpuTexture-level copies address texture storage the
+        // same way NativeImage/screenshots do (top-left origin), not raw window-space GL calls
+        // like scissor/gl_FragCoord, so this is deliberately the *other* convention.
+        int py1TopDown = (int) Math.round(y1 * scaleY);
 
         int workW = Math.max(MIN_TEXTURE_SIZE, pw / WORK_SCALE);
         int workH = Math.max(MIN_TEXTURE_SIZE, ph / WORK_SCALE);
         ensureTextures(device, workW, workH);
 
-        // Pass 1: render the active shader at (downscaled) working resolution into A.
-        ShaderBackground.drawInto(shaderPipeline, viewA, workW, workH);
+        if (shaderPipeline != null) {
+            // Pass 1: render the active shader at (downscaled) working resolution into A.
+            ShaderBackground.drawInto(shaderPipeline, viewA, workW, workH);
+        } else {
+            // No custom shader active (e.g. "None" chosen) - blur whatever's already behind the
+            // window instead (the vanilla panorama), by copying that region out of the main
+            // framebuffer (GPU-side, no shader re-execution) and downscaling it into A.
+            ensureCaptureTexture(device, pw, ph);
+            device.createCommandEncoder().copyTextureToTexture(mainView.texture(), captureTexture, 0, 0, 0, px1, py1TopDown, pw, ph);
+
+            CommandEncoder resizeEncoder = device.createCommandEncoder();
+            writeBlurParams(resizeEncoder, 0f, 0f, 0f); // radius 0 = single passthrough sample, i.e. a plain resize
+            drawFullscreen(resizeEncoder, blurPipeline, viewA, "BlurParams", blurParamsBuffer, captureView);
+        }
 
         float radius = Math.max(1f, strength / 100f * MAX_RADIUS);
         CommandEncoder encoder = device.createCommandEncoder();
@@ -227,6 +250,19 @@ class BlurBackground {
         if (id.equals(BLUR_FSH_ID)) return BLUR_FSH_SRC;
         if (id.equals(BLIT_FSH_ID)) return BLIT_FSH_SRC;
         return null;
+    }
+
+    private static void ensureCaptureTexture(GpuDevice device, int w, int h) {
+        if (captureTexture != null && captureWidth == w && captureHeight == h) return;
+
+        if (captureView != null) captureView.close();
+        if (captureTexture != null) captureTexture.close();
+
+        captureTexture = device.createTexture(() -> "THM blur capture",
+            GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_TEXTURE_BINDING, TextureFormat.RGBA8, w, h, 1, 1);
+        captureView = device.createTextureView(captureTexture);
+        captureWidth = w;
+        captureHeight = h;
     }
 
     private static void ensureTextures(GpuDevice device, int w, int h) {

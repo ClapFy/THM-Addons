@@ -1,4 +1,5 @@
 #version 330 core
+// Adapted from RusherHack for THM Addons - thanks!
 layout(std140) uniform ThmShaderData {
     float time;
     vec2 mouse;

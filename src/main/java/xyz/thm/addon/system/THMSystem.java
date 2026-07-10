@@ -255,9 +255,9 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    public final Setting<Boolean> mainMenuRainbowTitle = sgMainMenu.add(new BoolSetting.Builder()
-        .name("rainbow-title")
-        .description("Shows a rainbow-colored THM Addons watermark on the title screen.")
+    public final Setting<Boolean> mainMenuWindow = sgMainMenu.add(new BoolSetting.Builder()
+        .name("styled-window")
+        .description("Shows the BleachHack-styled window frame on the title screen instead of vanilla's own layout.")
         .defaultValue(true)
         .build()
     );
