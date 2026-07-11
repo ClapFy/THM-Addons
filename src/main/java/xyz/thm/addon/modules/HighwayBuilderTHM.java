@@ -445,17 +445,22 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
+    // Group declaration order is display order (Meteor renders settings groups in insertion
+    // order - see Settings.groups/Settings.tick). Kept General-first, then the automation group
+    // that matters most up top, then each mode paired with its own render group for locality,
+    // and the niche/advanced groups (KitBot Integration, Debugging) pushed to the bottom and
+    // collapsed by default so they don't bury the settings people actually look for.
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgDigging = settings.createGroup("Digging");
-    private final SettingGroup sgPaving = settings.createGroup("Paving");
-    private final SettingGroup sgInventory = settings.createGroup("Inventory");
-    private final SettingGroup sgKitBotIntegration = settings.createGroup("KitBot Integration", true);
-    private final SettingGroup sgStatistics = settings.createGroup("Logging");
-    private final SettingGroup sgNotifies = settings.createGroup("Notifies");
-    private final SettingGroup sgDebugging = settings.createGroup("Debugging", true);
-    private final SettingGroup sgRenderDigging = settings.createGroup("Render Digging");
-    private final SettingGroup sgRenderPaving = settings.createGroup("Render Paving");
     private final SettingGroup sgAutoTravel = settings.createGroup("Auto Travel Handoff");
+    private final SettingGroup sgDigging = settings.createGroup("Digging");
+    private final SettingGroup sgRenderDigging = settings.createGroup("Render Digging");
+    private final SettingGroup sgPaving = settings.createGroup("Paving");
+    private final SettingGroup sgRenderPaving = settings.createGroup("Render Paving");
+    private final SettingGroup sgInventory = settings.createGroup("Inventory");
+    private final SettingGroup sgNotifies = settings.createGroup("Notifies");
+    private final SettingGroup sgStatistics = settings.createGroup("Logging");
+    private final SettingGroup sgKitBotIntegration = settings.createGroup("KitBot Integration", false);
+    private final SettingGroup sgDebugging = settings.createGroup("Debugging", false);
 
     public final Setting<Integer> width = sgGeneral.add(new IntSetting.Builder()
         .name("width")
@@ -1497,6 +1502,8 @@ public class HighwayBuilderTHM extends Module {
     private boolean reconnectFailureDeactivateArmed;
     private boolean autoLogTerminalDeactivateArmed;
     private ReconnectResumeContext reconnectResumeContext;
+    // travelHandoffDeactivateArmed is declared near the Auto Travel Handoff onTick check (its
+    // javadoc lives there); it's used in onDeactivate alongside these other deactivate-mode flags.
     private long lastReconnectResumeFailureCycleId;
     private String lastReconnectResumeFailureReason = "";
     private String lastReconnectResumeSelectedDirectionName = "";
@@ -2001,7 +2008,6 @@ public class HighwayBuilderTHM extends Module {
 
     @Override
     public void onActivate() {
-        travelHandoffPaused = false;
         if (mc.player == null || mc.world == null) return;
         if (!Utils.canUpdate()) return;
         ReconnectResumeContext reconnectResume = reconnectResumeContext;
@@ -2180,16 +2186,20 @@ public class HighwayBuilderTHM extends Module {
         lastForwardDesyncWiggleEpisodeId = Integer.MIN_VALUE;
         restockWatchdog.reset("module-deactivate");
         boolean isMonitorPauseDeactivate = monitorPauseDeactivateArmed;
+        boolean isTravelHandoffDeactivate = travelHandoffDeactivateArmed;
         boolean isReconnectFailureDeactivate = reconnectFailureDeactivateArmed;
         boolean isAutoLogTerminalDeactivate = autoLogTerminalDeactivateArmed;
         monitorPauseDeactivateArmed = false;
+        travelHandoffDeactivateArmed = false;
         reconnectFailureDeactivateArmed = false;
         autoLogTerminalDeactivateArmed = false;
         if (isMonitorPauseDeactivate) {
             parkThmSpeedForReconnect("monitor-pause-deactivate");
         } else {
             releaseThmSpeedOwnership(
-                isReconnectFailureDeactivate ? "reconnect-failure-deactivate" : "module-deactivate",
+                isReconnectFailureDeactivate ? "reconnect-failure-deactivate"
+                    : isTravelHandoffDeactivate ? "travel-handoff-deactivate"
+                    : "module-deactivate",
                 true
             );
         }
@@ -2226,8 +2236,9 @@ public class HighwayBuilderTHM extends Module {
 
         if (mc.player == null || mc.world == null || !Utils.canUpdate()) {
             if (hasActiveInMemoryStatsSession()) {
-                if (isMonitorPauseDeactivate) {
-                    persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "monitor-pause-deactivate-no-world");
+                if (isMonitorPauseDeactivate || isTravelHandoffDeactivate) {
+                    persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L,
+                        isMonitorPauseDeactivate ? "monitor-pause-deactivate-no-world" : "travel-handoff-deactivate-no-world");
                 } else {
                     StatsArtifactSnapshot finalizationRecord = persistFinalizationRecord(createFinalizationRecord("deactivate-pending-print-no-world"), "deactivate-pending-print-no-world");
                     if (finalizationRecord == null) warning("Unable to persist pending HighwayBuilder statistics safely before deactivate.");
@@ -2252,8 +2263,9 @@ public class HighwayBuilderTHM extends Module {
             return;
         }
 
-        if (isMonitorPauseDeactivate) {
-            persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "monitor-pause-deactivate");
+        if (isMonitorPauseDeactivate || isTravelHandoffDeactivate) {
+            persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L,
+                isMonitorPauseDeactivate ? "monitor-pause-deactivate" : "travel-handoff-deactivate");
             return;
         }
 
@@ -3981,22 +3993,29 @@ public class HighwayBuilderTHM extends Module {
     }
 
     /**
-     * True while Highway Traveler is flying the already-repaired stretch this module just
-     * finished. Unlike {@link #toggle()}, this does not run {@link #onDeactivate()} and does
-     * not touch the stats session — the module is fully frozen (nothing below this point in
-     * {@link #onTick} runs) but stays {@link #isActive()}, so stats persist across repeated
-     * travel/repair handoffs and only reset once the user actually disables this module.
+     * True (armed right before calling {@link #toggle()}) when the handoff to Highway Traveler is
+     * what's deactivating this module — a real, full {@link #onDeactivate()} (module shows/behaves
+     * as genuinely off: {@code mc.player.input} handed back to {@link #prevInput}, KitBot enclosure
+     * cleaned up, everything a normal manual toggle-off does), just with the stats session
+     * persisted as {@code StatsSessionState.OPEN} (resumable) instead of finalized/printed, so
+     * {@link #onActivate()}'s existing cache-resume path (already used for reconnects) picks the
+     * same running total back up next time Traveler hands control back, and the total only
+     * actually gets finalized/printed once the user truly disables this module.
+     * <p>
+     * An earlier version kept this module {@link #isActive()} == true and just froze {@link
+     * #onTick} instead of deactivating, to dodge exactly this finalize-on-every-cycle problem —
+     * but {@code mc.player.input} stays the custom {@link #input} override for this module's
+     * entire active lifetime regardless of whether {@code onTick} runs, so Highway Traveler's
+     * vanilla {@code mc.options.*Key.setPressed(...)} calls were silently ignored the whole time,
+     * and this module kept steering with its last frozen movement state. A real {@link #toggle()}
+     * doesn't have that problem since {@link #onDeactivate()} already releases {@code
+     * mc.player.input} unconditionally.
      */
-    private boolean travelHandoffPaused = false;
-
-    public void resumeAfterTravelHandoff() {
-        travelHandoffPaused = false;
-    }
+    private boolean travelHandoffDeactivateArmed;
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
-        if (travelHandoffPaused) return;
         safetyPlacedThisTick = false;
 
         maybeCheckpointStatsSession();
@@ -4133,7 +4152,8 @@ public class HighwayBuilderTHM extends Module {
                     && isHighwayAheadClean(dir, handoffCleanScanBlocks.get())) {
                 HighwayTraveler traveler = Modules.get().get(HighwayTraveler.class);
                 if (traveler != null) {
-                    travelHandoffPaused = true;
+                    travelHandoffDeactivateArmed = true;
+                    toggle();
                     if (!traveler.isActive()) traveler.toggle();
                     return;
                 }

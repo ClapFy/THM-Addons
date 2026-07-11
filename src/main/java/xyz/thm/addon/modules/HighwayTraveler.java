@@ -6,6 +6,8 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.misc.HorizontalDirection;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.EndPortalBlock;
@@ -15,12 +17,15 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.utils.THMUtils;
 
 import java.util.*;
 
@@ -143,6 +148,17 @@ public class HighwayTraveler extends Module {
             .build()
     );
 
+    private final Setting<Double> handoffLandingDelay = sgAutoRepair.add(
+        new DoubleSetting.Builder()
+            .name("landing-delay")
+            .description("Seconds to stop and hold still after detecting a broken highway before handing control to Highway Builder, so you land on the highway first instead of it building at your mid-air/bounce height.")
+            .defaultValue(5)
+            .min(0)
+            .sliderMax(20)
+            .visible(autoRepairSwap::get)
+            .build()
+    );
+
     private final Setting<Boolean> autoBounce = sgBounce.add(
         new BoolSetting.Builder()
             .name("auto-bounce")
@@ -183,7 +199,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Boolean> bounceRestart = sgBounce.add(
         new BoolSetting.Builder()
             .name("restart")
-            .description("Restarts flying with the elytra when rubberbanding.")
+            .description("Restarts flying with the elytra when rubberbanding. Unequips the elytra to force an actual stop, then re-equips it after restart-delay ticks and takes off again - more reliable than just resending the fly packet.")
             .defaultValue(true)
             .visible(autoBounce::get)
             .build()
@@ -192,8 +208,8 @@ public class HighwayTraveler extends Module {
     private final Setting<Integer> bounceRestartDelay = sgBounce.add(
         new IntSetting.Builder()
             .name("restart-delay")
-            .description("How many ticks to wait before restarting the elytra again after rubberbanding.")
-            .defaultValue(7)
+            .description("How many ticks to keep the elytra unequipped before re-equipping and restarting flight after rubberbanding.")
+            .defaultValue(10)
             .min(0)
             .sliderRange(0, 20)
             .visible(() -> autoBounce.get() && bounceRestart.get())
@@ -211,6 +227,7 @@ public class HighwayTraveler extends Module {
 
     private static final int OBSTACLE_WAIT_TICKS = 10;
     private static final int BOUNCE_Y_TOLERANCE = 2;
+    private static final int CHEST_SLOT_INDEX = 38;
 
     private TravelState     travelState = TravelState.FORWARD;
     private TravelDirection activeDir   = TravelDirection.POS_Z;
@@ -225,8 +242,11 @@ public class HighwayTraveler extends Module {
     private int     noMoveTicks       = 0;
     private int     obstacleWaitTicks = 0;
     private int     repairCheckTicks  = 0;
-    private boolean bounceRubberbanded = false;
-    private int     bounceRestartTicks = 0;
+    private int     handoffTicks       = -1;
+    private boolean bounceRubberbanded  = false;
+    private int     bounceRestartTicks  = 0;
+    private double  bouncePrevFov       = 0;
+    private int     stashedElytraSlot   = -1;
 
     public HighwayTraveler() {
         super(THMAddon.MAIN, "highway-traveler",
@@ -245,8 +265,11 @@ public class HighwayTraveler extends Module {
         backupTicks        = 0;
         obstacleWaitTicks  = 0;
         repairCheckTicks   = 0;
+        handoffTicks       = -1;
         bounceRubberbanded = false;
         bounceRestartTicks = bounceRestartDelay.get();
+        stashedElytraSlot  = -1;
+        bouncePrevFov      = mc.options.getFovEffectScale().getValue();
         prevPos     = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
 
         if (autoBounce.get()) bounceRecast(mc.player);
@@ -259,8 +282,13 @@ public class HighwayTraveler extends Module {
         releaseAll();
         mc.options.jumpKey.setPressed(false);
         bounceRubberbanded = false;
+        handoffTicks = -1;
+        // If the module gets toggled off mid unequip-recast, don't leave the elytra sitting
+        // unworn in the player's inventory - put it straight back on.
+        if (stashedElytraSlot != -1) reequipElytra();
         if (mc.player != null) {
             mc.player.setPitch(0);
+            if (bouncePrevFov != 0 && !sprintSetting.get()) mc.options.getFovEffectScale().setValue(bouncePrevFov);
         }
     }
 
@@ -274,9 +302,17 @@ public class HighwayTraveler extends Module {
         if (mc.player == null || mc.world == null) return;
         ClientPlayerEntity p = mc.player;
 
+        if (handoffTicks >= 0) {
+            tickAwaitingHandoff(p);
+            return;
+        }
+
         if (autoRepairSwap.get() && ++repairCheckTicks >= repairCheckInterval.get()) {
             repairCheckTicks = 0;
-            if (checkForBrokenHighwayAndHandoff()) return;
+            if (highwayAheadBroken()) {
+                beginHandoffWait(p);
+                return;
+            }
         }
 
         if (travelState != TravelState.PATH_FOLLOW) {
@@ -315,7 +351,7 @@ public class HighwayTraveler extends Module {
      */
     @EventHandler
     private void onBouncePostTick(TickEvent.Post event) {
-        if (!autoBounce.get() || mc.player == null) return;
+        if (!autoBounce.get() || mc.player == null || handoffTicks >= 0) return;
         ClientPlayerEntity p = mc.player;
 
         if (mc.options.jumpKey.isPressed() && !p.isGliding() && !bounceManualTakeoff.get()) {
@@ -325,18 +361,21 @@ public class HighwayTraveler extends Module {
         if (!bounceConditionsMet(p)) return;
 
         if (!bounceRubberbanded) {
+            if (bouncePrevFov != 0 && !sprintSetting.get()) mc.options.getFovEffectScale().setValue(0.0);
             if (bounceAutoJump.get()) mc.options.jumpKey.setPressed(true);
             if (bounceLockPitch.get()) p.setPitch(bouncePitch.get().floatValue());
         }
 
         if (!sprintSetting.get()) {
-            p.setSprinting(p.isGliding() ? p.isOnGround() : true);
+            if (p.isGliding()) p.setSprinting(p.isOnGround());
+            else p.setSprinting(true);
         }
 
         if (bounceRubberbanded && bounceRestart.get()) {
             if (bounceRestartTicks > 0) {
                 bounceRestartTicks--;
             } else {
+                reequipElytra();
                 mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(p, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
                 bounceRubberbanded = false;
                 bounceRestartTicks = bounceRestartDelay.get();
@@ -346,22 +385,27 @@ public class HighwayTraveler extends Module {
 
     @EventHandler
     private void onBouncePreTick(TickEvent.Pre event) {
-        if (!autoBounce.get() || mc.player == null || sprintSetting.get()) return;
-        if (bounceConditionsMet(mc.player)) mc.player.setSprinting(true);
+        if (!autoBounce.get() || mc.player == null || handoffTicks >= 0) return;
+        if (bounceConditionsMet(mc.player) && sprintSetting.get()) mc.player.setSprinting(true);
     }
 
     @EventHandler
     private void onBouncePacketReceive(PacketEvent.Receive event) {
-        if (!autoBounce.get() || mc.player == null) return;
+        if (!autoBounce.get() || mc.player == null || handoffTicks >= 0) return;
         if (event.packet instanceof PlayerPositionLookS2CPacket) {
             bounceRubberbanded = true;
             mc.player.stopGliding();
+            // A plain stopGliding() call is client-side only and sometimes doesn't actually clear
+            // the server's flying state, leaving the bounce stuck mid-air unable to restart.
+            // Physically unequipping the elytra forces a real stop; re-equipping (see
+            // onBouncePostTick's restart block) after restart-delay ticks is guaranteed clean.
+            if (bounceRestart.get()) forceUnequipElytra();
         }
     }
 
     @EventHandler
     private void onBouncePacketSend(PacketEvent.Send event) {
-        if (!autoBounce.get() || mc.player == null || sprintSetting.get()) return;
+        if (!autoBounce.get() || mc.player == null || handoffTicks >= 0 || sprintSetting.get()) return;
         if (event.packet instanceof ClientCommandC2SPacket cmd && cmd.getMode() == ClientCommandC2SPacket.Mode.START_FALL_FLYING) {
             mc.player.setSprinting(true);
         }
@@ -387,6 +431,56 @@ public class HighwayTraveler extends Module {
         if (bounceConditionsMet(p) && bounceStartGliding(p)) {
             mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(p, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
         }
+    }
+
+    /**
+     * Stashes the worn elytra into a free inventory slot, even mid-air - a real unequip forces the
+     * server to actually stop flight, unlike a client-side {@code stopGliding()} call that can leave
+     * server/client flying state desynced. {@link #reequipElytra()} puts it back once
+     * {@code bounceRestartTicks} elapses. No-op if there's no elytra worn, or one is already stashed.
+     */
+    private boolean forceUnequipElytra() {
+        if (mc.player == null || stashedElytraSlot != -1) return false;
+
+        ItemStack chest = mc.player.getEquippedStack(EquipmentSlot.CHEST);
+        if (chest.isEmpty() || !LivingEntity.canGlideWith(chest, EquipmentSlot.CHEST)) return false;
+
+        // Bounded to hotbar+main (0-35) - InvUtils.findEmpty() searches the whole PlayerInventory,
+        // which also covers armor/offhand (36-40), and an empty leg/foot/head/offhand slot won't
+        // accept an elytra (the vanilla slot predicate rejects it), silently stranding it on cursor.
+        int emptySlot = InvUtils.find(ItemStack::isEmpty, 0, 35).slot();
+        if (emptySlot == -1) return false;
+
+        THMUtils.fakeInventoryOpen(true);
+        try {
+            int syncId = mc.player.currentScreenHandler.syncId;
+            int chestId = SlotUtils.indexToId(CHEST_SLOT_INDEX);
+            int spareId = SlotUtils.indexToId(emptySlot);
+            mc.interactionManager.clickSlot(syncId, chestId, 0, SlotActionType.PICKUP, mc.player);
+            mc.interactionManager.clickSlot(syncId, spareId, 0, SlotActionType.PICKUP, mc.player);
+        } finally {
+            THMUtils.fakeInventoryOpen(false);
+        }
+
+        stashedElytraSlot = emptySlot;
+        return true;
+    }
+
+    private void reequipElytra() {
+        if (mc.player == null || stashedElytraSlot == -1) return;
+
+        THMUtils.fakeInventoryOpen(true);
+        try {
+            int syncId = mc.player.currentScreenHandler.syncId;
+            int spareId = SlotUtils.indexToId(stashedElytraSlot);
+            int chestId = SlotUtils.indexToId(CHEST_SLOT_INDEX);
+            mc.interactionManager.clickSlot(syncId, spareId, 0, SlotActionType.PICKUP, mc.player);
+            mc.interactionManager.clickSlot(syncId, chestId, 0, SlotActionType.PICKUP, mc.player);
+        } finally {
+            THMUtils.fakeInventoryOpen(false);
+        }
+
+        stashedElytraSlot = -1;
     }
 
     private void tickForward(ClientPlayerEntity p) {
@@ -480,22 +574,48 @@ public class HighwayTraveler extends Module {
         }
     }
 
-    /** Returns true and hands control to Highway Builder if the highway ahead is broken. */
-    private boolean checkForBrokenHighwayAndHandoff() {
+    private boolean highwayAheadBroken() {
         HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
         if (builder == null) return false;
 
         HorizontalDirection travelDir = HorizontalDirection.get(hwYaw);
         int tolerance = repairToleratesBounce.get() ? BOUNCE_Y_TOLERANCE : 0;
-        if (builder.isHighwayAheadClean(travelDir, repairScanBlocks.get(), tolerance)) return false;
+        return !builder.isHighwayAheadClean(travelDir, repairScanBlocks.get(), tolerance);
+    }
 
+    /**
+     * Broken highway detected — stop moving/bouncing and start the landing-delay countdown
+     * instead of handing off immediately, so the player actually lands on the highway before
+     * Highway Builder starts placing at whatever mid-air/bounce height it was interrupted at.
+     */
+    private void beginHandoffWait(ClientPlayerEntity p) {
         releaseAll();
+        mc.options.jumpKey.setPressed(false);
+        p.setSprinting(false);
+        p.setPitch(0);
+        // Don't leave a mid-recast elytra stashed away for the whole landing-delay wait (the bounce
+        // handlers that would normally resolve it are suppressed once handoffTicks >= 0) - put it
+        // back on right away so the player isn't stuck bare-chested falling with no glide control.
+        if (stashedElytraSlot != -1) reequipElytra();
+        handoffTicks = (int) Math.round(handoffLandingDelay.get() * 20);
+    }
+
+    private void tickAwaitingHandoff(ClientPlayerEntity p) {
+        releaseAll();
+        mc.options.jumpKey.setPressed(false);
+        p.setSprinting(false);
+
+        if (--handoffTicks > 0) return;
+        handoffTicks = -1;
+
         if (isActive()) toggle();
-        // Builder is usually already active but paused from the previous handoff — just resume
-        // it so its stats session keeps running. If it was never on, start it fresh.
-        if (builder.isActive()) builder.resumeAfterTravelHandoff();
-        else builder.toggle();
-        return true;
+
+        // Builder fully deactivates itself for the repair->travel handoff (so it doesn't keep
+        // holding player input/movement while "paused" - see HighwayBuilderTHM's
+        // travelHandoffDeactivateArmed), so it should always be inactive here. Reactivating it
+        // resumes its stats session from the cached snapshot rather than starting fresh.
+        HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
+        if (builder != null && !builder.isActive()) builder.toggle();
     }
 
     private ObstacleKind detectObstacle(ClientPlayerEntity p) {
