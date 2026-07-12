@@ -39,6 +39,11 @@ import java.util.List;
 @Mixin(TitleScreen.class)
 public abstract class TitleScreenMenuMixin extends Screen {
 
+    // Static so it survives clearAndInit() (window minimize, preview toggle, resize all
+    // recreate the screen) - a dev/design toggle, not a real setting, so it isn't persisted
+    // to THMSystem and resets to off on relaunch.
+    private static boolean thm$previewMode = false;
+
     protected TitleScreenMenuMixin(Text title) {
         super(title);
     }
@@ -86,6 +91,25 @@ public abstract class TitleScreenMenuMixin extends Screen {
                 .build());
         }
         ThmStyledButtons.mark(menuButton);
+
+        // Shader preview toggle: fixed corner, independent of window on/off, so it's always
+        // reachable both to enter and to leave preview mode.
+        ClickableWidget previewButton = this.addDrawableChild(ButtonWidget.builder(
+                Text.literal(thm$previewMode ? "Show UI" : "Preview Shader"), b -> {
+                    thm$previewMode = !thm$previewMode;
+                    this.clearAndInit();
+                })
+            .dimensions(6, this.height - 22, 90, 16)
+            .build());
+        ThmStyledButtons.mark(previewButton);
+
+        if (thm$previewMode) {
+            for (Element el : this.children()) {
+                if (el instanceof ClickableWidget widget && widget != previewButton) {
+                    widget.visible = false;
+                }
+            }
+        }
     }
 
     private void thm$repositionByLabel(String i18nKey, int x, int y) {
@@ -104,6 +128,8 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // MenuParticlesMixin (every world-not-loaded screen, not just this one).
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/screen/Screen;render(Lnet/minecraft/client/gui/DrawContext;IIF)V"))
     private void thm$renderWindowChrome(DrawContext context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
+        if (thm$previewMode) return;
+
         if (THMSystem.get().mainMenuWindow.get()) {
             int[] bounds = MainMenuFx.windowBounds(this.width, this.height);
             ShaderBackground.renderBlurredRegion(bounds[0], bounds[1], bounds[2], bounds[3], THMSystem.get().mainMenuBlur.get());
@@ -121,7 +147,7 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // back afterwards.
     @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
     private void thm$handleChromeClick(Click click, boolean doubled, CallbackInfoReturnable<Boolean> cir) {
-        if (!THMSystem.get().mainMenuWindow.get()) return;
+        if (!THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
 
         int[] bounds = MainMenuFx.windowBounds(this.width, this.height);
         int x1 = bounds[0], y1 = bounds[1], x2 = bounds[2], y2 = bounds[3];
@@ -144,20 +170,20 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // at whichever of our render calls is responsible.
     @Inject(method = "render", at = @At("TAIL"))
     private void thm$restoreVersionText(DrawContext context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
-        if (!THMSystem.get().mainMenuWindow.get()) return;
+        if (!THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
         String text = "Minecraft " + SharedConstants.getGameVersion().name();
         context.drawTextWithShadow(this.textRenderer, text, 2, this.height - 10, -1);
     }
 
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/LogoDrawer;draw(Lnet/minecraft/client/gui/DrawContext;IF)V"))
     private void thm$suppressLogo(LogoDrawer logoDrawer, DrawContext context, int screenWidth, float alpha) {
-        if (THMSystem.get().mainMenuWindow.get()) return;
+        if (THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
         logoDrawer.draw(context, screenWidth, alpha);
     }
 
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/screen/SplashTextRenderer;render(Lnet/minecraft/client/gui/DrawContext;ILnet/minecraft/client/font/TextRenderer;F)V"))
     private void thm$suppressSplash(SplashTextRenderer splashText, DrawContext context, int screenWidth, TextRenderer textRenderer, float alpha) {
-        if (THMSystem.get().mainMenuWindow.get()) return;
+        if (THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
         splashText.render(context, screenWidth, textRenderer, alpha);
     }
 }

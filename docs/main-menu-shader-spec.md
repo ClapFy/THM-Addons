@@ -1,0 +1,73 @@
+# Main Menu Background Shader — Requirements
+
+To add a new animated background for the title screen / main-menu panorama, drop a `.fsh`
+file into `src/main/resources/assets/thm-addon/shaders/<name>.fsh`. No Java/registration
+code needed — `ShaderManager.availableShaders()` discovers it automatically via
+`ResourceManager#findResources`, and it shows up in `shaderChoice`/`shaderPool` immediately.
+
+## Required header
+
+Every shader file must start with exactly this shape:
+
+```glsl
+#version 330 core
+layout(std140) uniform ThmShaderData {
+    float time;
+    vec2 mouse;
+    vec2 resolution;
+};
+
+out vec4 fragColor;
+
+void main(void) {
+    // ... your logic, must write to fragColor
+    fragColor.a = 1.;
+}
+```
+
+- **`#version 330 core`** must be line 1. If you need `#extension GL_OES_standard_derivatives`,
+  drop it — desktop GLSL 330 already has `dFdx`/`dFdy`/`fwidth` as core, no extension needed
+  (an `#extension` line placed after other declarations is illegal per spec and won't compile).
+- **`ThmShaderData`** is the *only* uniform input available — no individual `uniform float time;`
+  declarations. Blaze3D only binds whole uniform buffers, not per-scalar `glUniform` calls.
+  Field names/order/types must match exactly (`float time; vec2 mouse; vec2 resolution;`) —
+  the Java side (`ShaderBackground.UNIFORM_BUFFER_SIZE = 32`, offsets 0/8/16) is std140-padded
+  for this exact layout. Don't add/remove/reorder fields without updating that Java constant.
+- **`fragColor`** (`out vec4`) is the required output variable name.
+- Fragment shader only — there is no accompanying vertex shader to write; every background
+  reuses vanilla's own attributeless `minecraft:core/screenquad` vertex shader, so the whole
+  screen is a single full-viewport triangle and `gl_FragCoord` is the only per-pixel input.
+
+## Porting a Shadertoy / RusherHack shader
+
+Existing shaders in this repo are adapted from RusherHack (Shadertoy-style: `uniform float
+iTime`/`iResolution`, `mainImage(out vec4, in vec2)`). The pattern used throughout:
+
+```glsl
+#define iTime time
+#define iResolution resolution
+
+// ... original mainImage(out vec4 fragColor, in vec2 fragCoord) body, unchanged ...
+
+void main(void) {
+    mainImage(fragColor, gl_FragCoord.xy);
+    fragColor.a = 1.;
+}
+```
+
+i.e. keep the original `mainImage` function body as-is, `#define` the Shadertoy uniform
+names to the `ThmShaderData` field names, and add a thin `main()` wrapper that calls it and
+forces alpha to `1.0`.
+
+## Constraints
+
+- No previous-frame / feedback texture support (no ping-pong buffers) — a shader needing the
+  last frame as input (e.g. `lines.fsh`, RusherHack) can't be ported; drop it.
+- No extra textures/samplers — `ThmShaderData` is the only bound resource.
+- Keep it self-contained in one file (helper functions are fine, just no `#include`).
+- A shader that fails to compile is caught and disabled automatically (falls back to the
+  vanilla panorama for that pick) — check the client log for `[THM] Main-menu shader '<name>'
+  failed to compile` for the driver's actual error if something doesn't work.
+- Validate with `glslangValidator -S frag <file>` before shipping, but treat it as a smoke
+  test, not proof — it has missed at least one real compile error (misplaced `#extension`)
+  that Mojang's actual driver compiler caught. Trust the in-game log over the validator.

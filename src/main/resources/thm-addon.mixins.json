@@ -34,6 +34,7 @@
     "accessor.LivingEntityRotationAccessor",
     "accessor.LogoutSpotsAccessor",
     "accessor.LogoutSpotsEntryAccessor",
+    "accessor.PlayerInteractEntityC2SPacketAccessor",
     "accessor.PlayerInventoryAccessor",
     "accessor.UpdateSelectedSlotS2CPacketAccessor",
     "accessor.WSectionAccessor",
