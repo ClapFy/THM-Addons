@@ -113,6 +113,12 @@ public class Speedmine extends Module {
         .defaultValue(true)
         .build());
 
+    public final Setting<Boolean> toolHold = sgMine.add(new BoolSetting.Builder()
+        .name("tool-hold")
+        .description("Keep the silently-swapped tool held server-side for the whole mining session, so every packet-mined block is resolved with it. Off = hand the slot back each tick.")
+        .defaultValue(true)
+        .build());
+
     public final Setting<Double> range = sgMine.add(new DoubleSetting.Builder()
         .name("range")
         .description("Maximum block-breaking distance.")
@@ -133,6 +139,11 @@ public class Speedmine extends Module {
     public  BlockPos    lastBrokenPos;
     public final Deque<BlockPos> queue = new ArrayDeque<>();
 
+    /** Slot currently held server-side by the silent swap; -1 = server is on the client's real slot. */
+    private int heldSlot       = -1;
+    private int lastClientSlot = -1;
+    private int idleTicks      = 0;
+
     // ── Constructor ───────────────────────────────────────────────────────────
 
     public Speedmine() {
@@ -144,6 +155,7 @@ public class Speedmine extends Module {
 
     @Override
     public void onDeactivate() {
+        releaseHeldSlot();
         primary       = null;
         secondary     = null;
         lastBrokenPos = null;
@@ -168,6 +180,13 @@ public class Speedmine extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.world == null || mc.player == null) return;
 
+        // The player picking a slot themselves resyncs the server to it, dropping our hold
+        int clientSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
+        if (clientSlot != lastClientSlot) {
+            lastClientSlot = clientSlot;
+            heldSlot       = -1;
+        }
+
         // Auto-rebreak: if the last broken position got a block placed in it, break it again
         if (lastBrokenPos != null
                 && autoRebreak.get()
@@ -184,6 +203,13 @@ public class Speedmine extends Module {
         if (primary   != null && primary.progress()   >= 1.0) finishBreak(primary,   silentSwap.get());
 
         drainQueue();
+
+        // Give the slot back only once nothing is mining anymore. The server breaks a block in its
+        // own update() when its mining timer completes, which can be several ticks after our STOP —
+        // reverting on a fixed short delay races that and the break lands with the wrong item.
+        if (!toolHold.get()) releaseHeldSlot();
+        else if (primary != null || secondary != null || !queue.isEmpty()) idleTicks = 0;
+        else if (heldSlot != -1 && ++idleTicks >= IDLE_RELEASE_TICKS) releaseHeldSlot();
     }
 
     @EventHandler
@@ -210,12 +236,12 @@ public class Speedmine extends Module {
         if (primary == null) {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
-            sendStart(pos);
+            sendStart(primary);
         } else if (canAddSecondary) {
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, primary.pos);
+            stopWithTool(primary, silentSwap.get());
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(pos, state, true);
-            sendStart(pos);
+            sendStart(primary);
         } else {
             if (queueEnabled.get() && !queue.contains(pos)) queue.addLast(pos);
         }
@@ -239,41 +265,45 @@ public class Speedmine extends Module {
             BlockState state = mc.world.getBlockState(pos);
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
-            sendStart(pos);
+            sendStart(primary);
         } else if (doubleBreak.get() && secondary == null) {
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, primary.pos);
+            stopWithTool(primary, silentSwap.get());
             BlockPos   nextPos   = queue.pollFirst();
             BlockState nextState = mc.world.getBlockState(nextPos);
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(nextPos, nextState, true);
-            sendStart(nextPos);
+            sendStart(primary);
         }
     }
 
     // ── Packet building ───────────────────────────────────────────────────────
 
-    private void sendStart(BlockPos pos) {
+    private void sendStart(MineContext ctx) {
+        // Server mines with whatever it thinks we hold, so the tool goes in before the START
+        if (silentSwap.get()) holdTool(ctx.startSlot);
         if (grimBypass.get()) {
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, pos);
+            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
         }
-        sendSequencedAction(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos);
+        sendSequencedAction(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, ctx.pos);
     }
 
     private void sendStopPacket(MineContext ctx, boolean silent) {
         if (mc.world == null || mc.player == null) return;
 
-        int bestSlot = findBestHotbarSlot(ctx.state);
-        int prevSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
-        boolean needSwap = silent && bestSlot != -1 && bestSlot != prevSlot;
+        if (silent) holdTool(ctx.startSlot);
+        // Vanilla insta-break already sent its START+STOP in sendStart; the held tool is all it needs
+        if (!ctx.instaBreak) stopWithTool(ctx, silent);
+    }
 
-        if (!ctx.instaBreak) {
-            if (needSwap) sendSequencedUpdateSlot(bestSlot);
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
-            if (needSwap) sendSequencedUpdateSlot(prevSlot);
-        } else if (needSwap) {
-            // Vanilla insta-break: START+STOP already in sendStart, just fix the server slot
-            sendSequencedUpdateSlot(bestSlot);
-        }
+    /**
+     * Sends a STOP for {@code ctx} with the tool it was started with held server-side, so the
+     * server resolves the break with that tool in hand. Always sends the STOP.
+     */
+    private void stopWithTool(MineContext ctx, boolean silent) {
+        if (mc.world == null || mc.player == null) return;
+
+        if (silent) holdTool(ctx.startSlot);
+        sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
     }
 
     private void finishBreak(MineContext ctx, boolean silent) {
@@ -314,6 +344,30 @@ public class Speedmine extends Module {
         if (swap) sendSequencedUpdateSlot(best);
         action.run();
         if (swap) sendSequencedUpdateSlot(prev);
+    }
+
+    // ── Silent tool hold ──────────────────────────────────────────────────────
+
+    /** Ticks with nothing left to mine before the slot is handed back to the client's real one. */
+    private static final int IDLE_RELEASE_TICKS = 3;
+
+    /** Silently holds {@code slot} server-side (no visual change), keeping it until mining goes idle. */
+    private void holdTool(int slot) {
+        if (slot < 0 || mc.player == null) return;
+
+        int serverSlot = heldSlot != -1
+            ? heldSlot
+            : ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
+        if (serverSlot != slot) sendSequencedUpdateSlot(slot);
+        heldSlot = slot;
+    }
+
+    private void releaseHeldSlot() {
+        if (heldSlot != -1 && mc.player != null) {
+            sendSequencedUpdateSlot(((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot());
+        }
+        heldSlot  = -1;
+        idleTicks = 0;
     }
 
     // ── Sequenced packet helpers ──────────────────────────────────────────────
@@ -395,6 +449,8 @@ public class Speedmine extends Module {
         public final boolean    isPrimary;
         public final boolean    instaBreak;
         public final boolean    aboveThreshold;
+        /** Hotbar slot holding the tool this block was started with; -1 if none. */
+        public final int        startSlot;
         public boolean          active = true;
 
         public MineContext(BlockPos pos, BlockState state, boolean isPrimary) {
@@ -402,6 +458,7 @@ public class Speedmine extends Module {
             this.state          = state;
             this.hardness       = mc.world != null ? state.getHardness(mc.world, pos) : 0;
             this.isPrimary      = isPrimary;
+            this.startSlot      = findBestHotbarSlot(state);
             this.startMs        = System.currentTimeMillis();
             float delta         = calcDelta();
             this.instaBreak     = delta >= 1.0f;
