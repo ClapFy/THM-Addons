@@ -37,6 +37,7 @@ import xyz.thm.addon.utils.ThmMembers;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
 import java.util.function.Function;
@@ -106,6 +107,13 @@ public class Speedmine extends Module {
     public final Setting<Boolean> antiSurround = sgAuto.add(new BoolSetting.Builder()
         .name("anti-surround")
         .description("Mine the blocks boxing an enemy in.")
+        .defaultValue(true)
+        .visible(autoMine::get)
+        .build());
+
+    public final Setting<Boolean> autoDoubleMine = sgAuto.add(new BoolSetting.Builder()
+        .name("auto-double-mine")
+        .description("Break two auto-mine targets at once, using double-break.")
         .defaultValue(true)
         .visible(autoMine::get)
         .build());
@@ -411,8 +419,8 @@ public class Speedmine extends Module {
     // ── Auto Mine ─────────────────────────────────────────────────────────────
 
     /**
-     * Picks a block to break around nearby enemies, in BlackOut AutoMine's priority order, and
-     * hands it to the normal packet miner via {@link #requestBreak(BlockPos)}. Bedrock can't be
+     * Picks blocks to break around nearby enemies, in BlackOut AutoMine's priority order, and
+     * hands them to the normal packet miner via {@link #requestBreak(BlockPos)}. Bedrock can't be
      * packet-mined, so it goes down Nuker's vanilla progress+swing path instead.
      */
     private void tickAutoMine() {
@@ -421,20 +429,22 @@ public class Speedmine extends Module {
             return;
         }
 
-        BlockPos target = findAutoTarget();
-        if (target == null) {
-            bedrockPos = null;
-            return;
-        }
+        bedrockPos = null;
+        int budget = autoDoubleMine.get() && doubleBreak.get() ? 2 : 1;
 
-        if (mc.world.getBlockState(target).getBlock() == Blocks.BEDROCK) mineBedrock(target);
-        else {
-            bedrockPos = null;
+        for (BlockPos target : findAutoTargets()) {
+            if (mc.world.getBlockState(target).getBlock() == Blocks.BEDROCK) {
+                // Bedrock is mined one at a time — it's a vanilla progress bar, not a packet break
+                if (bedrockPos == null) mineBedrock(target);
+                continue;
+            }
+            if (budget-- <= 0) break;
             requestBreak(target);
         }
     }
 
-    private BlockPos findAutoTarget() {
+    /** Every valid target around nearby enemies, nearest first. */
+    private List<BlockPos> findAutoTargets() {
         List<PlayerEntity> enemies = new ArrayList<>();
         for (PlayerEntity player : mc.world.getPlayers()) {
             if (player == mc.player || player.isSpectator()) continue;
@@ -443,32 +453,34 @@ public class Speedmine extends Module {
             if (player.distanceTo(mc.player) > enemyRange.get()) continue;
             enemies.add(player);
         }
-        if (enemies.isEmpty()) return null;
+        if (enemies.isEmpty()) return List.of();
 
-        // Digging an enemy out beats chipping at their surround; nearest wins within a type
-        BlockPos best;
-        if (antiPhase.get()    && (best = nearest(enemies, this::phaseBlocks))    != null) return best;
-        if (antiSurround.get() && (best = nearest(enemies, this::surroundBlocks)) != null) return best;
-        return null;
+        // Digging an enemy out beats chipping at their surround
+        List<BlockPos> targets = new ArrayList<>();
+        if (antiPhase.get())    targets.addAll(collect(enemies, this::phaseBlocks));
+        if (targets.isEmpty() && antiSurround.get()) targets.addAll(collect(enemies, this::surroundBlocks));
+        return targets;
     }
 
-    private BlockPos nearest(List<PlayerEntity> enemies, Function<PlayerEntity, List<BlockPos>> candidates) {
-        BlockPos best    = null;
-        double   bestSq  = Double.MAX_VALUE;
+    private List<BlockPos> collect(List<PlayerEntity> enemies, Function<PlayerEntity, List<BlockPos>> candidates) {
+        List<BlockPos> out = new ArrayList<>();
         for (PlayerEntity enemy : enemies) {
             for (BlockPos pos : candidates.apply(enemy)) {
-                if (pos == null || outOfRange(pos)) continue;
-                double sq = mc.player.getEyePos().squaredDistanceTo(pos.toCenterPos());
-                if (sq < bestSq) { bestSq = sq; best = pos; }
+                if (pos != null && !outOfRange(pos) && !out.contains(pos)) out.add(pos);
             }
         }
-        return best;
+        out.sort(Comparator.comparingDouble(pos -> mc.player.getEyePos().squaredDistanceTo(pos.toCenterPos())));
+        return out;
     }
 
-    /** The blocks the enemy is actually inside — burrowed feet block and head block. */
+    /** Every block the enemy's hitbox overlaps. */
     private List<BlockPos> phaseBlocks(PlayerEntity enemy) {
-        BlockPos feet = feet(enemy);
-        return mineableOf(feet, feet.up());
+        List<BlockPos> out = new ArrayList<>();
+        for (BlockPos pos : BlockPos.iterate(BlockPos.ofFloored(enemy.getBoundingBox().getMinPos()),
+                                             BlockPos.ofFloored(enemy.getBoundingBox().getMaxPos()))) {
+            if (mineable(pos)) out.add(pos.toImmutable());
+        }
+        return out;
     }
 
     /** Everything boxing the enemy in: surround ring, head-level ring, and the block above their head. */
