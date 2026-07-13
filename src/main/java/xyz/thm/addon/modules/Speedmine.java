@@ -21,15 +21,17 @@ import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.WorldEvents;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
+import xyz.thm.addon.utils.RenderUtilsTHM;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+
+import static xyz.thm.addon.THMAddon.THMColor;
 
 //Thank you very much mushek
 /**
@@ -119,7 +121,7 @@ public class Speedmine extends Module {
 
     private final Setting<SettingColor> renderColor = sgRender.add(new ColorSetting.Builder()
         .name("color")
-        .defaultValue(new SettingColor(0, 225, 255, 200))
+        .defaultValue(THMColor)
         .build());
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -373,16 +375,13 @@ public class Speedmine extends Module {
     // ── Rendering ─────────────────────────────────────────────────────────────
 
     private void renderMineContext(Render3DEvent event, MineContext ctx) {
-        double offset = (1.0 - ctx.progress()) / 2.0;
-        Box box = new Box(
-            ctx.pos.getX() + offset,       ctx.pos.getY() + offset,       ctx.pos.getZ() + offset,
-            ctx.pos.getX() + 1.0 - offset, ctx.pos.getY() + 1.0 - offset, ctx.pos.getZ() + 1.0 - offset
-        );
-        event.renderer.box(box, renderColor.get(), renderColor.get(), ShapeMode.Lines, 0);
+        RenderUtilsTHM.renderBlockShapeScaled(event, ctx.pos, ctx.state, ctx.progress(),
+            renderColor.get(), renderColor.get(), ShapeMode.Lines);
     }
 
     private void renderBlock(Render3DEvent event, BlockPos pos) {
-        event.renderer.box(pos, renderColor.get(), renderColor.get(), ShapeMode.Lines, 0);
+        RenderUtilsTHM.renderBlockShape(event, pos, mc.world.getBlockState(pos),
+            renderColor.get(), renderColor.get(), ShapeMode.Lines);
     }
 
     // ── MineContext ───────────────────────────────────────────────────────────

@@ -9,14 +9,20 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.nbt.NbtCompound;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.modules.HighwayBuilderTHM;
+import xyz.thm.addon.settings.StringMultiSelect;
+import xyz.thm.addon.shaders.ShaderManager;
 import xyz.thm.addon.utils.APIUtils;
+import xyz.thm.addon.utils.CapeManager;
 import xyz.thm.addon.utils.KitbotChatRouter;
 import xyz.thm.addon.utils.ThmMembers;
 import xyz.thm.addon.waveycapes.CapeStyle;
 import xyz.thm.addon.waveycapes.WaveyCapesConfig;
 import xyz.thm.addon.waveycapes.WindMode;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.List;
+import java.util.List;
 
 public class THMSystem extends System<THMSystem> {
     private static final String HIGHWAY_PROFILE_SNAPSHOTS_TAG = "highwayProfileSnapshots";
@@ -34,6 +40,10 @@ public class THMSystem extends System<THMSystem> {
     // Separate settings object for the Wavy Capes screen (not shown in the main THM tab)
     public final Settings wavyCapesSettings = new Settings();
     private final SettingGroup sgWavyCapes = wavyCapesSettings.createGroup("Wavy Capes");
+
+    // Separate settings object for the Main Menu screen, opened from a button on the title screen
+    public final Settings mainMenuSettings = new Settings();
+    private final SettingGroup sgMainMenu = mainMenuSettings.createGroup("Main Menu");
 
     // General Settings
     public final Setting<Boolean> screenshotToClipboard = sgGeneral.add(new BoolSetting.Builder()
@@ -143,17 +153,18 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    public final Setting<CapeType> cape = sgRender.add(new EnumSetting.Builder<CapeType>()
+    public final Setting<String> cape = sgRender.add(new ProvidedStringSetting.Builder()
         .name("thm-cape")
         .description("Cape shown on yourself and other THM members.")
-        .defaultValue(CapeType.None)
-        .onChanged(ct -> {
+        .defaultValue("None")
+        .supplier(CapeManager::availableCapeIds)
+        .onChanged(id -> {
             if (FabricLoader.getInstance().isDevelopmentEnvironment()) return;
             MinecraftClient mc = MinecraftClient.getInstance();
             if (mc == null || mc.player == null) return;
             if (!ThmMembers.isThmMember(mc.player)) return;
             String username = mc.player.getGameProfile().name();
-            APIUtils.postCapeSelection(username, ct.toApiId(), getHash());
+            APIUtils.postCapeSelection(username, id, getHash());
         })
         .build()
     );
@@ -244,6 +255,57 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
+    public final Setting<Boolean> mainMenuWindow = sgMainMenu.add(new BoolSetting.Builder()
+        .name("styled-window")
+        .description("Shows the BleachHack-styled window frame on the title screen instead of vanilla's own layout.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> mainMenuParticles = sgMainMenu.add(new BoolSetting.Builder()
+        .name("particle-trail")
+        .description("Shows a mouse particle trail on the title screen.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> shaderRandom = sgMainMenu.add(new BoolSetting.Builder()
+        .name("random-shader")
+        .description("Picks a random title screen background shader each time the menu opens.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<String> shaderChoice = sgMainMenu.add(new ProvidedStringSetting.Builder()
+        .name("shader")
+        .description("Which background shader to show when random is off.")
+        .defaultValue("None")
+        .supplier(() -> {
+            List<String> options = new ArrayList<>();
+            options.add("None");
+            options.addAll(ShaderManager.availableShaders());
+            return options.toArray(new String[0]);
+        })
+        .visible(() -> !shaderRandom.get())
+        .build()
+    );
+
+    public final Setting<StringMultiSelect> shaderPool = sgMainMenu.add(new GenericSetting.Builder<StringMultiSelect>()
+        .name("shader-pool")
+        .description("Limits which shaders can be picked when random is on. Empty = allow all.")
+        .defaultValue(new StringMultiSelect("Allowed Shaders", ShaderManager::availableShaders))
+        .visible(shaderRandom::get)
+        .build()
+    );
+
+    public final Setting<Integer> mainMenuBlur = sgMainMenu.add(new IntSetting.Builder()
+        .name("blur")
+        .description("Blurs the title screen shader background. 0 = no blur, 100 = full blur.")
+        .defaultValue(0)
+        .min(0).max(100).sliderRange(0, 100)
+        .build()
+    );
+
     private final EnumMap<Mode, NbtCompound> highwayProfileSnapshots = new EnumMap<>(Mode.class);
     private Mode activeHighwayProfile = Mode.None;
 
@@ -306,6 +368,7 @@ public class THMSystem extends System<THMSystem> {
         tag.putString("version", THMAddon.VERSION);
         tag.put("settings", settings.toTag());
         tag.put("wavyCapesSettings", wavyCapesSettings.toTag());
+        tag.put("mainMenuSettings", mainMenuSettings.toTag());
         tag.putString(ACTIVE_HIGHWAY_PROFILE_TAG, (activeHighwayProfile == null ? Mode.None : activeHighwayProfile).name());
         tag.put(HIGHWAY_PROFILE_SNAPSHOTS_TAG, highwayProfileSnapshotsToTag());
         return tag;
@@ -318,6 +381,9 @@ public class THMSystem extends System<THMSystem> {
         }
         if (tag.contains("wavyCapesSettings")) {
             wavyCapesSettings.fromTag(tag.getCompound("wavyCapesSettings").orElse(new NbtCompound()));
+        }
+        if (tag.contains("mainMenuSettings")) {
+            mainMenuSettings.fromTag(tag.getCompound("mainMenuSettings").orElse(new NbtCompound()));
         }
         activeHighwayProfile = readHighwayProfileMode(tag, ACTIVE_HIGHWAY_PROFILE_TAG, Mode.None);
         highwayProfileSnapshots.clear();
@@ -400,13 +466,4 @@ public class THMSystem extends System<THMSystem> {
         TransparentBlack
     }
 
-    public enum CapeType {
-        None,
-        Thm3,
-        Thm4;
-
-        public String toApiId() {
-            return this.name().toLowerCase(java.util.Locale.ROOT);
-        }
-    }
 }

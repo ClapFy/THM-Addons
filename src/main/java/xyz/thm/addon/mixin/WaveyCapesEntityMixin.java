@@ -1,8 +1,9 @@
 package xyz.thm.addon.mixin;
 
-import net.minecraft.entity.LivingEntity;
+import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -12,7 +13,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import xyz.thm.addon.waveycapes.CapeHolder;
 import xyz.thm.addon.waveycapes.WaveyCapesConfig;
 import xyz.thm.addon.waveycapes.sim.BasicSimulation;
-import net.minecraft.client.network.AbstractClientPlayerEntity;
 
 @Mixin(LivingEntity.class)
 public abstract class WaveyCapesEntityMixin extends Entity implements CapeHolder {

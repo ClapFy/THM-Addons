@@ -23,11 +23,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.item.Items;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 import org.slf4j.Logger;
-import xyz.thm.addon.commands.Center;
-import xyz.thm.addon.commands.DesyncCommand;
-import xyz.thm.addon.commands.EclipCommand;
-import xyz.thm.addon.commands.THMStashMoverCommand;
-import xyz.thm.addon.commands.UUIDCommand;
+import xyz.thm.addon.commands.*;
 import xyz.thm.addon.gui.themes.*;
 import xyz.thm.addon.hud.*;
 import xyz.thm.addon.modules.*;
@@ -165,8 +161,10 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         KitbotChatRouter.getInstance();
         StatsScreenshotChatGuard.getInstance();
         ThmMembers.initialize();
+        CapeManager.initialize();
 
         // Modules
+        Modules.get().add(new HighwayTraveler());
         Modules.get().add(new HighwayBuilderTHM());
         Modules.get().add(new AxisViewer());
         Modules.get().add(new DiscordNotifs());
@@ -187,6 +185,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new ArmorNotify());
         Modules.get().add(new BetterEchestFarmer());
         Modules.get().add(new SurroundPlus());
+        Modules.get().add(new CrystalAuraTHM());
         Modules.get().add(new Phase());
         Modules.get().add(new AutoPortal());
         Modules.get().add(new DiscordRPC());

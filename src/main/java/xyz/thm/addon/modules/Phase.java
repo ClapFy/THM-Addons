@@ -1,5 +1,8 @@
 package xyz.thm.addon.modules;
 
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.mixin.WorldRendererAccessor;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
@@ -8,6 +11,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.ScaffoldingBlock;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
+import net.minecraft.entity.player.BlockBreakingInfo;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.*;
@@ -90,7 +94,17 @@ public class Phase extends Module {
         .build()
     );
 
+    private final SettingGroup sgAntiMine = settings.createGroup("Anti Mine");
+
+    private final Setting<Boolean> antiMine = sgAntiMine.add(new BoolSetting.Builder()
+        .name("anti-mine")
+        .description("Keeps phase active and automatically phases into a block another player is breaking at your feet, so your hitbox straddles both blocks.")
+        .defaultValue(false)
+        .build()
+    );
+
     private InventoryManager inventoryManager;
+    private BlockPos lastAntiMineTarget;
 
     public Phase() {
         super(THMAddon.PVP, "phase", "Allows player to phase through solid blocks using ender pearls.");
@@ -103,6 +117,10 @@ public class Phase extends Module {
             toggle();
             return;
         }
+        if (antiMine.get()) {
+            mc.player.noClip = true;
+            return;
+        }
         performPearlPhase();
         toggle();
     }
@@ -112,6 +130,7 @@ public class Phase extends Module {
         if (mc.player != null) {
             mc.player.noClip = false;
         }
+        lastAntiMineTarget = null;
     }
 
     @EventHandler
@@ -119,6 +138,60 @@ public class Phase extends Module {
         if (isActive()) {
             event.cancel();
         }
+    }
+
+    @EventHandler
+    private void onTick(TickEvent.Post event) {
+        if (!antiMine.get() || mc.player == null || mc.world == null) return;
+        if (!canPhase()) return;
+
+        BlockPos target = findBreakingNeighbor();
+        if (target == null) {
+            lastAntiMineTarget = null;
+            return;
+        }
+        if (target.equals(lastAntiMineTarget)) return;
+        lastAntiMineTarget = target;
+
+        straddleInto(target);
+        performPearlPhase();
+    }
+
+    private boolean canPhase() {
+        int pearlSlot = PlacementUtils.getEnderPearlSlot();
+        return pearlSlot != -1 && !mc.player.getItemCooldownManager().isCoolingDown(Items.ENDER_PEARL.getDefaultStack());
+    }
+
+    // ponytail: only checks the 4 horizontal neighbors at feet level, matches the 1x1 tower defense case; add head/vertical if a different break angle needs covering too.
+    private BlockPos findBreakingNeighbor() {
+        Int2ObjectMap<BlockBreakingInfo> infos = ((WorldRendererAccessor) mc.worldRenderer).meteor$getBlockBreakingInfos();
+        if (infos.isEmpty()) return null;
+
+        BlockPos feet = mc.player.getBlockPos();
+        Direction[] dirs = {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST};
+
+        for (Direction dir : dirs) {
+            BlockPos candidate = feet.offset(dir);
+            for (BlockBreakingInfo info : infos.values()) {
+                if (info.getActorId() != mc.player.getId() && info.getPos().equals(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void straddleInto(BlockPos target) {
+        BlockPos feet = mc.player.getBlockPos();
+        double x = mc.player.getX();
+        double z = mc.player.getZ();
+
+        int dx = target.getX() - feet.getX();
+        int dz = target.getZ() - feet.getZ();
+        if (dx != 0) x = target.getX() + (dx > 0 ? 0.0 : 1.0);
+        if (dz != 0) z = target.getZ() + (dz > 0 ? 0.0 : 1.0);
+
+        mc.player.setPosition(x, mc.player.getY(), z);
     }
 
     private void performPearlPhase() {

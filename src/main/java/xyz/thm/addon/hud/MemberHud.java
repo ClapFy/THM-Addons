@@ -8,6 +8,7 @@ import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.settings.StringMultiSelect;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.ThmMembers;
 
@@ -59,12 +60,18 @@ public class MemberHud extends HudElement {
         .build()
     );
 
-    public final Setting<List<String>> visibleRoles = sgFilters.add(new StringListSetting.Builder()
+    public final Setting<StringMultiSelect> visibleRoles = sgFilters.add(new GenericSetting.Builder<StringMultiSelect>()
         .name("visible-roles")
         .description("Roles to display in the member HUD.")
-        .defaultValue(RANK_HIERARCHY)
+        .defaultValue(defaultVisibleRoles())
         .build()
     );
+
+    private static StringMultiSelect defaultVisibleRoles() {
+        StringMultiSelect select = new StringMultiSelect("Visible Roles", () -> RANK_HIERARCHY);
+        select.selected().addAll(RANK_HIERARCHY);
+        return select;
+    }
 
     public final Setting<Boolean> showUnknownRoles = sgFilters.add(new BoolSetting.Builder()
         .name("show-unknown-roles")
@@ -96,6 +103,21 @@ public class MemberHud extends HudElement {
         .build()
     );
 
+    public final Setting<Boolean> groupByDiscordName = sgGeneral.add(new BoolSetting.Builder()
+        .name("group-by-discord-name")
+        .description("Groups a member's online alt accounts under their Discord name, e.g. Discordname(dugW,W). Bots are never grouped.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> showAccountCount = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-account-count")
+        .description("In grouped Discord mode, shows how many of this member's accounts are currently online, e.g. Discordname x3.")
+        .defaultValue(false)
+        .visible(groupByDiscordName::get)
+        .build()
+    );
+
     // Color settings for text display
     public final Setting<SettingColor> colorHeader = sgColors.add(new ColorSetting.Builder()
         .name("header-color")
@@ -124,6 +146,8 @@ public class MemberHud extends HudElement {
         // Keep startup-loaded members cached. Only manual refresh should reload member API.
     }
 
+    private record Row(String rank, String label, String suffix) {}
+
     @Override
     public void render(HudRenderer renderer) {
         if (mc.player == null) return;
@@ -133,29 +157,58 @@ public class MemberHud extends HudElement {
         List<String> onlinePlayers = new ArrayList<>(mc.player.networkHandler.getPlayerList().stream()
             .map(playerInfo -> playerInfo.getProfile().name()).toList());
 
-        // Create a map of player to member for easier lookup (case-insensitive)
-        Map<String, ThmMembers.Member> playerMemberMap = new HashMap<>();
+        // Group online usernames by their underlying member (multiple alts share the same Member instance)
+        Map<ThmMembers.Member, List<String>> usernamesByMember = new LinkedHashMap<>();
         onlinePlayers.forEach(player -> {
             ThmMembers.Member member = ThmMembers.getMemberByMcName(player);
-            if (member != null) playerMemberMap.put(player, member);
+            if (member != null) usernamesByMember.computeIfAbsent(member, m -> new ArrayList<>()).add(player);
         });
 
-        // Sort players by rank hierarchy
-        List<String> sortedPlayers = onlinePlayers.stream()
-            .filter(playerMemberMap::containsKey)
-            .sorted((player1, player2) -> {
-                ThmMembers.Member member1 = playerMemberMap.get(player1);
-                ThmMembers.Member member2 = playerMemberMap.get(player2);
+        String selfName = mc.player.getName().getString();
+        String branchFilter = THMSystem.get().showBranch.get();
+        boolean grouping = groupByDiscordName.get();
 
-                int rank1Index = RANK_HIERARCHY.indexOf(member1.rank);
-                int rank2Index = RANK_HIERARCHY.indexOf(member2.rank);
+        List<Row> rows = new ArrayList<>();
+        usernamesByMember.forEach((member, usernames) -> {
+            if (!THMSystem.BRANCH_ALL.equalsIgnoreCase(branchFilter)) {
+                if (THMSystem.BRANCH_PVP.equalsIgnoreCase(branchFilter) && !"PvP".equalsIgnoreCase(member.branch)) return;
+                if (THMSystem.BRANCH_MAIN.equalsIgnoreCase(branchFilter) && !"Main".equalsIgnoreCase(member.branch)) return;
+            }
 
-                if (rank1Index == -1) rank1Index = RANK_HIERARCHY.size();
-                if (rank2Index == -1) rank2Index = RANK_HIERARCHY.size();
+            boolean isBot = "Bot".equals(member.rank);
+            if (!showBots.get() && isBot) return;
+            if (!isRoleVisible(member.rank)) return;
+            if (ThmMembers.isKillOnSight(member)) return;
+            if (ThmMembers.isIgnore(member)) return;
 
-                return Integer.compare(rank1Index, rank2Index);
-            })
-            .toList();
+            List<String> visibleUsernames = usernames.stream()
+                .filter(name -> showSelf.get() || !name.equals(selfName))
+                .toList();
+            if (visibleUsernames.isEmpty()) return;
+
+            if (isBot || !grouping) {
+                for (String username : visibleUsernames) {
+                    String status = showHighwayStatus.get() ? ThmMembers.getHighwayStatusByMcName(username) : null;
+                    String suffix = status != null && !status.isBlank() ? String.format(" (%s)", status) : "";
+                    rows.add(new Row(member.rank, username, suffix));
+                }
+            } else {
+                String label = member.discordName != null && !member.discordName.isBlank() ? member.discordName : member.name;
+                if (showAccountCount.get()) label += " x" + visibleUsernames.size();
+                String statuses = visibleUsernames.stream()
+                    .map(username -> showHighwayStatus.get() ? ThmMembers.getHighwayStatusByMcName(username) : null)
+                    .filter(status -> status != null && !status.isBlank())
+                    .collect(java.util.stream.Collectors.joining(","));
+                String suffix = statuses.isEmpty() ? "" : String.format("(%s)", statuses);
+                rows.add(new Row(member.rank, label, suffix));
+            }
+        });
+
+        // Sort rows by rank hierarchy
+        rows.sort(Comparator.comparingInt(row -> {
+            int index = RANK_HIERARCHY.indexOf(row.rank());
+            return index == -1 ? RANK_HIERARCHY.size() : index;
+        }));
 
         AtomicDouble screenY = new AtomicDouble(y + 4 * textScale);
 
@@ -166,49 +219,23 @@ public class MemberHud extends HudElement {
 
         AtomicDouble largestWidth = new AtomicDouble(renderer.textWidth("Online THM Members: ", true) * textScale);
 
-        sortedPlayers.forEach(player -> {
-            ThmMembers.Member member = playerMemberMap.get(player);
-
-            String branchFilter = THMSystem.get().showBranch.get();
-            if (!THMSystem.BRANCH_ALL.equalsIgnoreCase(branchFilter)) {
-                if (THMSystem.BRANCH_PVP.equalsIgnoreCase(branchFilter) && !"PvP".equalsIgnoreCase(member.branch)) return;
-                if (THMSystem.BRANCH_MAIN.equalsIgnoreCase(branchFilter) && !"Main".equalsIgnoreCase(member.branch)) return;
-            }
-
-            if (!showBots.get() && member.rank.equals("Bot")) {
-                return;
-            }
-            if (!isRoleVisible(member.rank)) return;
-
-            if (ThmMembers.isKillOnSight(member)) {
-                return;
-            }
-            if (ThmMembers.isIgnore(member)) {
-                return;
-            }
-
-            if (!showSelf.get() && player.equals(mc.player.getName().getString())) {
-                return;
-            }
-
+        rows.forEach(row -> {
             // Get the color for this rank
-            Color rankColor = ThmMembers.getRankColor(member.rank);
+            Color rankColor = ThmMembers.getRankColor(row.rank());
 
             // Build complete display text for width calculation
-            String highwayStatus = showHighwayStatus.get() ? ThmMembers.getHighwayStatusByMcName(player) : null;
-            String highwaySuffix = highwayStatus != null && !highwayStatus.isBlank() ? String.format(" (%s)", highwayStatus) : "";
-            String displayText = String.format("[%s] %s%s", member.rank, player, highwaySuffix);
+            String displayText = String.format("[%s] %s%s", row.rank(), row.label(), row.suffix());
 
             // Render opening bracket
             renderer.text("[", x, screenY.get(), colorMemberInfo.get(), true, textScale);
             double xOffset = x + renderer.textWidth("[", true) * textScale;
 
             // Render rank with rank-specific color
-            renderer.text(member.rank, xOffset, screenY.get(), rankColor, true, textScale);
-            xOffset += renderer.textWidth(member.rank, true) * textScale;
+            renderer.text(row.rank(), xOffset, screenY.get(), rankColor, true, textScale);
+            xOffset += renderer.textWidth(row.rank(), true) * textScale;
 
-            // Render closing bracket and player name
-            renderer.text(String.format("] %s%s", player, highwaySuffix), xOffset, screenY.get(), colorMemberInfo.get(), true, textScale);
+            // Render closing bracket and label
+            renderer.text(String.format("] %s%s", row.label(), row.suffix()), xOffset, screenY.get(), colorMemberInfo.get(), true, textScale);
 
             // Calculate total width for background
             double totalWidth = renderer.textWidth(displayText, true) * textScale;
@@ -230,7 +257,7 @@ public class MemberHud extends HudElement {
     private boolean isRoleVisible(String rank) {
         if (rank == null) return showUnknownRoles.get();
 
-        for (String selectedRole : visibleRoles.get()) {
+        for (String selectedRole : visibleRoles.get().selected()) {
             if (rank.equalsIgnoreCase(selectedRole)) return true;
         }
 

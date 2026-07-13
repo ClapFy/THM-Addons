@@ -38,9 +38,9 @@ public abstract class NametagsMixin extends Module {
     }
 
     // Adding the icons to select them later
-    @Unique private static final Identifier THM_ICON_OBBY = Identifier.of("icon", "obby.png");
-    @Unique private static final Identifier THM_ICON_TRANSPARENT_WHITE = Identifier.of("icon", "whitetransparent.png");
-    @Unique private static final Identifier THM_ICON_TRANSPARENT_BLACK = Identifier.of("icon", "blacktransparent.png");
+    @Unique private static final Identifier THM_ICON_OBBY = Identifier.of("icon", "obby.webp");
+    @Unique private static final Identifier THM_ICON_TRANSPARENT_WHITE = Identifier.of("icon", "whitetransparent.webp");
+    @Unique private static final Identifier THM_ICON_TRANSPARENT_BLACK = Identifier.of("icon", "blacktransparent.webp");
 
     @Unique private static final int THM_ICON_PAD = 2;
     @Unique private static int thm$iconWidth = 64;

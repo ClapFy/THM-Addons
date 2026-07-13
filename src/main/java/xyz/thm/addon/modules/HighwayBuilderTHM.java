@@ -70,6 +70,7 @@ import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.s2c.play.EntityPositionSyncS2CPacket;
 import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
+import net.minecraft.registry.Registries;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.Slot;
@@ -89,7 +90,6 @@ import org.joml.Vector3d;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.accessor.StuckEatingRetryBridge;
 import xyz.thm.addon.accessor.StuckEatingRetryResult;
-import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.*;
 import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
@@ -114,8 +114,8 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
-import static xyz.thm.addon.utils.THMUtils.*;
 import static xyz.thm.addon.utils.APIUtils.*;
+import static xyz.thm.addon.utils.THMUtils.*;
 
 @SuppressWarnings("ConstantConditions")
 public class HighwayBuilderTHM extends Module {
@@ -147,7 +147,6 @@ public class HighwayBuilderTHM extends Module {
     private static final long STATS_CODE_MAX_FUTURE_SKEW_MS = 5L * 60L * 1000L;
     private static final String STATS_CODE_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     private static final int STATS_CODE_LENGTH = 7;
-    private static final long STATS_CODE_MAX_VALUE = 2_207_984_167_551L;
     private static final String THM_DEBUG_LOG_DIR_NAME = "thm";
     private static final String HIGHWAYBUILDER_DEBUG_FILE_NAME = "highwaybuilder-debug.log";
     private static final String RESTOCK_DEBUG_FILE_NAME = "highwaybuilder-restock-debug.log";
@@ -446,16 +445,22 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
+    // Group declaration order is display order (Meteor renders settings groups in insertion
+    // order - see Settings.groups/Settings.tick). Kept General-first, then the automation group
+    // that matters most up top, then each mode paired with its own render group for locality,
+    // and the niche/advanced groups (KitBot Integration, Debugging) pushed to the bottom and
+    // collapsed by default so they don't bury the settings people actually look for.
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgAutoTravel = settings.createGroup("Auto Travel Handoff");
     private final SettingGroup sgDigging = settings.createGroup("Digging");
-    private final SettingGroup sgPaving = settings.createGroup("Paving");
-    private final SettingGroup sgInventory = settings.createGroup("Inventory");
-    private final SettingGroup sgKitBotIntegration = settings.createGroup("KitBot Integration", true);
-    private final SettingGroup sgStatistics = settings.createGroup("Logging");
-    private final SettingGroup sgNotifies = settings.createGroup("Notifies");
-    private final SettingGroup sgDebugging = settings.createGroup("Debugging", true);
     private final SettingGroup sgRenderDigging = settings.createGroup("Render Digging");
+    private final SettingGroup sgPaving = settings.createGroup("Paving");
     private final SettingGroup sgRenderPaving = settings.createGroup("Render Paving");
+    private final SettingGroup sgInventory = settings.createGroup("Inventory");
+    private final SettingGroup sgNotifies = settings.createGroup("Notifies");
+    private final SettingGroup sgStatistics = settings.createGroup("Logging");
+    private final SettingGroup sgKitBotIntegration = settings.createGroup("KitBot Integration", false);
+    private final SettingGroup sgDebugging = settings.createGroup("Debugging", false);
 
     public final Setting<Integer> width = sgGeneral.add(new IntSetting.Builder()
         .name("width")
@@ -501,6 +506,23 @@ public class HighwayBuilderTHM extends Module {
         .name("mine-above-railings")
         .description("Mines blocks above railings.")
         .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> autoHandoffToTraveler = sgAutoTravel.add(new BoolSetting.Builder()
+        .name("auto-handoff-to-traveler")
+        .description("Once the highway ahead is fully repaired for as far as can be scanned, automatically disable this module and enable Highway Traveler.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Integer> handoffCleanScanBlocks = sgAutoTravel.add(new IntSetting.Builder()
+        .name("handoff-clean-scan")
+        .description("How many blocks ahead must be fully repaired before handing off to Highway Traveler.")
+        .defaultValue(64)
+        .min(8)
+        .sliderMax(256)
+        .visible(autoHandoffToTraveler::get)
         .build()
     );
 
@@ -1480,6 +1502,8 @@ public class HighwayBuilderTHM extends Module {
     private boolean reconnectFailureDeactivateArmed;
     private boolean autoLogTerminalDeactivateArmed;
     private ReconnectResumeContext reconnectResumeContext;
+    // travelHandoffDeactivateArmed is declared near the Auto Travel Handoff onTick check (its
+    // javadoc lives there); it's used in onDeactivate alongside these other deactivate-mode flags.
     private long lastReconnectResumeFailureCycleId;
     private String lastReconnectResumeFailureReason = "";
     private String lastReconnectResumeSelectedDirectionName = "";
@@ -2159,16 +2183,20 @@ public class HighwayBuilderTHM extends Module {
         lastForwardDesyncWiggleEpisodeId = Integer.MIN_VALUE;
         restockWatchdog.reset("module-deactivate");
         boolean isMonitorPauseDeactivate = monitorPauseDeactivateArmed;
+        boolean isTravelHandoffDeactivate = travelHandoffDeactivateArmed;
         boolean isReconnectFailureDeactivate = reconnectFailureDeactivateArmed;
         boolean isAutoLogTerminalDeactivate = autoLogTerminalDeactivateArmed;
         monitorPauseDeactivateArmed = false;
+        travelHandoffDeactivateArmed = false;
         reconnectFailureDeactivateArmed = false;
         autoLogTerminalDeactivateArmed = false;
         if (isMonitorPauseDeactivate) {
             parkThmSpeedForReconnect("monitor-pause-deactivate");
         } else {
             releaseThmSpeedOwnership(
-                isReconnectFailureDeactivate ? "reconnect-failure-deactivate" : "module-deactivate",
+                isReconnectFailureDeactivate ? "reconnect-failure-deactivate"
+                    : isTravelHandoffDeactivate ? "travel-handoff-deactivate"
+                    : "module-deactivate",
                 true
             );
         }
@@ -2205,8 +2233,9 @@ public class HighwayBuilderTHM extends Module {
 
         if (mc.player == null || mc.world == null || !Utils.canUpdate()) {
             if (hasActiveInMemoryStatsSession()) {
-                if (isMonitorPauseDeactivate) {
-                    persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "monitor-pause-deactivate-no-world");
+                if (isMonitorPauseDeactivate || isTravelHandoffDeactivate) {
+                    persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L,
+                        isMonitorPauseDeactivate ? "monitor-pause-deactivate-no-world" : "travel-handoff-deactivate-no-world");
                 } else {
                     StatsArtifactSnapshot finalizationRecord = persistFinalizationRecord(createFinalizationRecord("deactivate-pending-print-no-world"), "deactivate-pending-print-no-world");
                     if (finalizationRecord == null) warning("Unable to persist pending HighwayBuilder statistics safely before deactivate.");
@@ -2231,8 +2260,9 @@ public class HighwayBuilderTHM extends Module {
             return;
         }
 
-        if (isMonitorPauseDeactivate) {
-            persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "monitor-pause-deactivate");
+        if (isMonitorPauseDeactivate || isTravelHandoffDeactivate) {
+            persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L,
+                isMonitorPauseDeactivate ? "monitor-pause-deactivate" : "travel-handoff-deactivate");
             return;
         }
 
@@ -2642,6 +2672,75 @@ public class HighwayBuilderTHM extends Module {
 
     private boolean isNetherrack(BlockState state) {
         return state.isOf(Blocks.NETHERRACK);
+    }
+
+    /**
+     * Checks one full-width cross-section, {@code step} blocks ahead of {@code origin} along
+     * {@code travelDir}, against the currently configured profile: floor fully obsidian (paved)
+     * or fully a diggable floor block (dug), and the interior above the floor fully clear.
+     * Used to detect a repaired-vs-broken highway for the Highway Traveler auto handoff.
+     * {@code origin}'s Y is the highway's interior base (one block above the floor) — same
+     * convention as {@link meteordevelopment.meteorclient.utils.misc.MBlockPos#coerceBlockLevel},
+     * i.e. relative to wherever the player currently is, not a fixed absolute Y.
+     */
+    public boolean isCrossSectionHealthy(BlockPos origin, HorizontalDirection travelDir, int step, boolean pavedProfile) {
+        if (mc.world == null) return false;
+
+        int cx = origin.getX() + travelDir.offsetX * step;
+        int cz = origin.getZ() + travelDir.offsetZ * step;
+        int floorY = origin.getY() - 1;
+        HorizontalDirection lateral = travelDir.rotateLeftSkipOne();
+        int half = width.get() / 2;
+
+        for (int w = -half; w < width.get() - half; w++) {
+            int x = cx + lateral.offsetX * w;
+            int z = cz + lateral.offsetZ * w;
+
+            BlockState floorState = mc.world.getBlockState(new BlockPos(x, floorY, z));
+            boolean floorOk = pavedProfile
+                ? isObsidian(floorState)
+                : (isNetherrack(floorState) || blocksToPlace.get().contains(floorState.getBlock()));
+            if (!floorOk) return false;
+
+            for (int h = 0; h < height.get(); h++) {
+                BlockState interior = mc.world.getBlockState(new BlockPos(x, origin.getY() + h, z));
+                if (!isExcavatedSpace(interior)) return false;
+            }
+        }
+        return true;
+    }
+
+    /** True if every cross-section from 1 up to {@code maxSteps} ahead of the player is healthy. */
+    public boolean isHighwayAheadClean(HorizontalDirection travelDir, int maxSteps) {
+        return isHighwayAheadClean(travelDir, maxSteps, 0);
+    }
+
+    /**
+     * Same as {@link #isHighwayAheadClean(HorizontalDirection, int)}, but for each step also
+     * accepts a healthy cross-section anywhere within {@code verticalTolerance} blocks above or
+     * below the caller's current height. Elytra-bounce travel constantly bobs up and down, so a
+     * strict single-Y check would misread normal bounce altitude as a broken highway; a small
+     * tolerance lets the check ride out that bob instead of chasing it.
+     */
+    public boolean isHighwayAheadClean(HorizontalDirection travelDir, int maxSteps, int verticalTolerance) {
+        if (mc.player == null || travelDir == null) return false;
+        boolean pavedProfile = THMSystem.get().mode.get() == THMSystem.Mode.HighwayBuilding;
+        int baseX = mc.player.getBlockX();
+        int baseY = (int) Math.round(mc.player.getY());
+        int baseZ = mc.player.getBlockZ();
+
+        for (int step = 1; step <= maxSteps; step++) {
+            boolean stepHealthy = false;
+            for (int dy = -verticalTolerance; dy <= verticalTolerance; dy++) {
+                BlockPos origin = new BlockPos(baseX, baseY + dy, baseZ);
+                if (isCrossSectionHealthy(origin, travelDir, step, pavedProfile)) {
+                    stepHealthy = true;
+                    break;
+                }
+            }
+            if (!stepHealthy) return false;
+        }
+        return true;
     }
 
     private List<BlockPos> snapshotTemplate(MBPIterator iterator) {
@@ -3078,29 +3177,6 @@ public class HighwayBuilderTHM extends Module {
         if (probe.reason == DesyncWiggleReason.EnclosurePlacementDesync) {
             writeThmDebugLog(RESTOCK_DEBUG_FILE_NAME, formatThmDebugLine("%s", line));
         }
-    }
-
-    private boolean shouldPauseForAutoEat() {
-        AutoEat autoEat = Modules.get().get(AutoEat.class);
-        if (autoEat == null || !autoEat.isActive() || mc.player == null) return false;
-        return autoEat.eating || autoEat.shouldEat();
-    }
-
-    private boolean shouldPauseForActiveFoodUse() {
-        if (mc.player == null) return false;
-
-        if (InventoryManager.getInstance().isEating()) return true;
-
-        return mc.player.isUsingItem() && mc.player.getActiveItem().contains(DataComponentTypes.FOOD);
-    }
-
-    @SuppressWarnings("unchecked")
-    private boolean shouldPauseForAutoGap() {
-        AutoGap autoGap = Modules.get().get(AutoGap.class);
-        if (autoGap == null || !autoGap.isActive() || mc.player == null) return false;
-        if (autoGap.isEating()) return true;
-        if (mc.player.isUsingItem() && isUsingGapLikeFood(mc.player.getActiveItem())) return true;
-        return doesAutoGapWantToEat(autoGap);
     }
 
     @SuppressWarnings("unchecked")
@@ -3912,16 +3988,26 @@ public class HighwayBuilderTHM extends Module {
         toggle();
     }
 
-    private void errorRestart(String message, Object... args) {
-        super.error(message, args);
-        try {
-            THMHwyMonitor.signalRestartHardFailFromHighwayBuilder();
-        } catch (NoClassDefFoundError | ExceptionInInitializerError ignored) {
-            // Baritone-dependent monitor not available.
-        }
-        displayInfo = false;
-        toggle();
-    }
+    /**
+     * True (armed right before calling {@link #toggle()}) when the handoff to Highway Traveler is
+     * what's deactivating this module — a real, full {@link #onDeactivate()} (module shows/behaves
+     * as genuinely off: {@code mc.player.input} handed back to {@link #prevInput}, KitBot enclosure
+     * cleaned up, everything a normal manual toggle-off does), just with the stats session
+     * persisted as {@code StatsSessionState.OPEN} (resumable) instead of finalized/printed, so
+     * {@link #onActivate()}'s existing cache-resume path (already used for reconnects) picks the
+     * same running total back up next time Traveler hands control back, and the total only
+     * actually gets finalized/printed once the user truly disables this module.
+     * <p>
+     * An earlier version kept this module {@link #isActive()} == true and just froze {@link
+     * #onTick} instead of deactivating, to dodge exactly this finalize-on-every-cycle problem —
+     * but {@code mc.player.input} stays the custom {@link #input} override for this module's
+     * entire active lifetime regardless of whether {@code onTick} runs, so Highway Traveler's
+     * vanilla {@code mc.options.*Key.setPressed(...)} calls were silently ignored the whole time,
+     * and this module kept steering with its last frozen movement state. A real {@link #toggle()}
+     * doesn't have that problem since {@link #onDeactivate()} already releases {@code
+     * mc.player.input} unconditionally.
+     */
+    private boolean travelHandoffDeactivateArmed;
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
@@ -4060,6 +4146,16 @@ public class HighwayBuilderTHM extends Module {
         maybeQueueFoodRestock();
         boolean restockWatchdogOwnedTick = restockWatchdog.tickBeforeState();
         if (!restockWatchdogOwnedTick) {
+            if (autoHandoffToTraveler.get() && state == State.Forward
+                    && isHighwayAheadClean(dir, handoffCleanScanBlocks.get())) {
+                HighwayTraveler traveler = Modules.get().get(HighwayTraveler.class);
+                if (traveler != null) {
+                    travelHandoffDeactivateArmed = true;
+                    toggle();
+                    if (!traveler.isActive()) traveler.toggle();
+                    return;
+                }
+            }
             state.tick(this);
             restockWatchdog.tickAfterState();
         }
@@ -5790,11 +5886,28 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private int findSafetyBlockHotbarSlot() {
-        return State.Forward.findAndMoveToHotbar(
+        int slot = State.Forward.findAndMoveToHotbar(
             this,
             itemStack -> itemStack.getItem() instanceof BlockItem blockItem && blocksToPlace.get().contains(blockItem.getBlock()),
             false
         );
+        return slot != -1 ? slot : giveCreativePlacementBlock();
+    }
+
+    /**
+     * Creative players don't carry real stacks of the placement block, so the normal
+     * inventory-search paths always fail for them. Give a stack of the configured
+     * placement block directly into a hotbar slot instead, same as opening the
+     * creative inventory and dragging it in by hand.
+     */
+    private int giveCreativePlacementBlock() {
+        if (mc.player == null || !mc.player.isCreative() || blocksToPlace.get().isEmpty()) return -1;
+
+        int slot = State.Forward.findHotbarSlot(this, false, false);
+        if (slot == -1) return -1;
+
+        mc.interactionManager.clickCreativeStack(new ItemStack(blocksToPlace.get().get(0), 64), SlotUtils.indexToId(slot));
+        return slot;
     }
 
     private boolean trySafetyAirPlaceBlock(BlockPos target, int slot, String source) {
@@ -5865,6 +5978,8 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private int computePlaceActionsThisTick() {
+        if (packetBuild.get()) return Integer.MAX_VALUE;
+
         double configured = Math.max(0.0, effectivePlacementsPerTickActionRate());
         int whole = (int) Math.floor(configured);
         double fractional = configured - whole;
@@ -6204,10 +6319,6 @@ public class HighwayBuilderTHM extends Module {
         writeForwardSchedulerDebugLine(line);
     }
 
-    private Path getForwardSchedulerDebugPath() {
-        return getThmDebugLogPath(FORWARD_SCHEDULER_DEBUG_FILE_NAME);
-    }
-
     private void writeForwardSchedulerDebugLine(String line) {
         writeThmDebugLog(FORWARD_SCHEDULER_DEBUG_FILE_NAME, line);
     }
@@ -6361,32 +6472,6 @@ public class HighwayBuilderTHM extends Module {
         double overrideBlocksPerTick = effectiveInstamineOverrideBlocksPerTick();
         double normalBlocksPerTick = Math.max(0.1, effectiveBlocksPerTickActionRate());
         return Math.max(1, (int) Math.ceil(normalBlocksPerTick / overrideBlocksPerTick));
-    }
-
-    private MBPIterator floorWithBehind(boolean includeBehind) {
-        try {
-            if (!includeBehind) return blockPosProvider.getFloor();
-            MBPIterator first = blockPosProvider.getFloor();
-            MBPIterator second = blockPosProvider.getBehindFloor();
-            if (second == null || second == first) return first;
-            return new MBPIteratorConcatSafe(first, second);
-        } catch (StackOverflowError ignored) {
-            if (debugLog.get()) warning("HB floor iterator crashed (StackOverflow). Skipping tick.");
-            return EMPTY_ITERATOR;
-        }
-    }
-
-    private MBPIterator railingsWithBehind(int state, boolean includeBehind) {
-        try {
-            if (!includeBehind) return blockPosProvider.getRailings(state);
-            MBPIterator first = blockPosProvider.getRailings(state);
-            MBPIterator second = blockPosProvider.getBehindRailings(state);
-            if (second == null || second == first) return first;
-            return new MBPIteratorConcatSafe(first, second);
-        } catch (StackOverflowError ignored) {
-            if (debugLog.get()) warning("HB railing iterator crashed (StackOverflow). Skipping tick.");
-            return EMPTY_ITERATOR;
-        }
     }
 
     private void restockDebug(String message, Object... args) {
@@ -7569,11 +7654,6 @@ public class HighwayBuilderTHM extends Module {
         );
     }
 
-    private boolean hasUsableReconnectBaselineLease(long generation) {
-        return hasCapturedReconnectBaselineLease(generation)
-            && reconnectBaselineMatchesLiveState(reconnectBaselineLease.payload());
-    }
-
     private boolean hasCapturedReconnectBaselineLease(long generation) {
         return reconnectBaselineLease != null
             && reconnectBaselineLease.generation() == generation
@@ -8289,11 +8369,6 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
-    private boolean closeAndRetireCurrentStatsSession(String reason) {
-        if (!hasActiveInMemoryStatsSession()) return true;
-        return closeAndRetireStatsSession(createCurrentStatsSnapshot(StatsArtifactKind.CANONICAL, StatsSessionState.CLOSED, false, System.currentTimeMillis()), reason);
-    }
-
     private boolean closeAndRetireStatsSession(StatsArtifactSnapshot snapshot, String reason) {
         if (snapshot == null) return true;
 
@@ -8583,18 +8658,6 @@ public class HighwayBuilderTHM extends Module {
             snapshot.blocksBroken(),
             snapshot.blocksPlaced(),
             snapshot.statsCodeTimestampMs()
-        );
-    }
-
-    private RetiredStatsReportSnapshot captureRetiredStatsReportFromLiveSession() {
-        if (!hasActiveInMemoryStatsSession()) return null;
-        return new RetiredStatsReportSnapshot(
-            activeStatsSessionId,
-            activeStatsGeneration,
-            start,
-            blocksBroken,
-            blocksPlaced,
-            activeStatsCodeTimestampMs
         );
     }
 
@@ -9017,21 +9080,18 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private static String encodeStatsCode(long timestampMs) {
-        if (timestampMs <= 0L || timestampMs > STATS_CODE_MAX_VALUE) return null;
-
         char[] encoded = new char[STATS_CODE_LENGTH];
         long value = timestampMs;
         for (int i = encoded.length - 1; i >= 0; i--) {
             encoded[i] = STATS_CODE_BASE58_ALPHABET.charAt((int) (value % STATS_CODE_BASE58_ALPHABET.length()));
             value /= STATS_CODE_BASE58_ALPHABET.length();
         }
-        return value == 0L ? new String(encoded) : null;
+        return new String(encoded);
     }
 
     private StatsDisplaySnapshot createStatsDisplaySnapshot(Vec3d startPos, int broken, int placed, long statsCodeTimestampMs) {
         double distance = mc.player != null && startPos != null ? PlayerUtils.distanceTo(startPos) : 0.0;
         String statsCode = encodeStatsCode(statsCodeTimestampMs);
-        if (statsCode == null) statsCode = "unavailable";
         return new StatsDisplaySnapshot(distance, broken, placed, statsCode, startPos != null && distance > 50000);
     }
 
@@ -9274,10 +9334,6 @@ public class HighwayBuilderTHM extends Module {
         return Math.floor(value) + 0.5;
     }
 
-    private static double getBlockCenterCoordinate(int blockCoordinate) {
-        return blockCoordinate + 0.5;
-    }
-
     public void snapPlayerToCurrentBlockCenter() {
         if (mc == null || mc.player == null) return;
 
@@ -9509,15 +9565,6 @@ public class HighwayBuilderTHM extends Module {
 
     private void tickCenterTeleportLogCooldown() {
         if (centerTeleportInvalidLogCooldownTicks > 0) centerTeleportInvalidLogCooldownTicks--;
-    }
-
-    private boolean isExactlyCenteredForBlockadePlacement() {
-        if (mc.player == null) return false;
-
-        double targetX = getCenteredBlockCoordinate(mc.player.getX());
-        double targetZ = getCenteredBlockCoordinate(mc.player.getZ());
-        return Math.abs(mc.player.getX() - targetX) <= BLOCKADE_CENTER_TOLERANCE
-            && Math.abs(mc.player.getZ() - targetZ) <= BLOCKADE_CENTER_TOLERANCE;
     }
 
     private boolean ensureCenteredBeforeBlockadePlacement(State placementState) {
@@ -10089,16 +10136,6 @@ public class HighwayBuilderTHM extends Module {
         return stack.getItem() instanceof BlockItem blockItem && blocksToPlace.get().contains(blockItem.getBlock());
     }
 
-    private boolean hasForwardPlaceableBlock() {
-        if (mc.player == null) return false;
-
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            if (isForwardPlaceableBlock(mc.player.getInventory().getStack(i))) return true;
-        }
-
-        return false;
-    }
-
     public int findAndMoveBestToolToHotbarForSharedUtility(BlockState blockState, boolean noSilkTouch, boolean failHardNoHotbar) {
         return State.Forward.findAndMoveBestToolToHotbar(this, blockState, noSilkTouch, failHardNoHotbar);
     }
@@ -10582,7 +10619,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean isProtectedItem(Item item) {
         return item != null
             && item != Items.AIR
-            && protectedItems.get().contains(item);
+            && (Registries.ITEM.getEntry(item).isIn(ItemTags.PICKAXES) || protectedItems.get().contains(item));
     }
 
     private boolean isProtectedItemStack(ItemStack itemStack) {
@@ -10905,11 +10942,6 @@ public class HighwayBuilderTHM extends Module {
 
     private boolean isForwardSchedulerTick() {
         return useForwardRowSchedulerMode() && state == State.Forward;
-    }
-
-    private boolean shouldUseForwardPendingBreakCreditModel() {
-        pruneExpiredForwardBreakCredits();
-        return useForwardRowSchedulerMode() && (state == State.Forward || !pendingForwardBreakCredits.isEmpty());
     }
 
     private boolean isLegacyForwardStatState(State state) {
@@ -15161,11 +15193,6 @@ public class HighwayBuilderTHM extends Module {
                     || hasInventoryRestockShulkerOfKind(b, ECHEST_RESERVE_RAW_ENDER_CHEST);
             }
 
-            private boolean hasAnyObsidianCapableInventorySupply(HighwayBuilderTHM b) {
-                return hasInventoryRestockShulkerOfKind(b, ECHEST_RESERVE_OBSIDIAN)
-                    || hasAnyRawEnderChestCapableInventorySupply(b);
-            }
-
             private boolean canUseRawEnderChestSupply(HighwayBuilderTHM b) {
                 return canMineEnderChestsForObsidian(b)
                     && b.restockTask.getRemainingRawEchestsNeeded() > 0;
@@ -15670,13 +15697,6 @@ public class HighwayBuilderTHM extends Module {
                 return canUseRawEnderChestSupply(b);
             }
 
-            private boolean hasShulkerInInventory(HighwayBuilderTHM b) {
-                for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
-                    if (shulkerPredicate.test(b.mc.player.getInventory().getStack(i))) return true;
-                }
-                return false;
-            }
-
             private boolean isSelectedRestockSourceReady(HighwayBuilderTHM b) {
                 if (slot < 0 || slot >= 9) return false;
                 if (sourceItemPredicate == null) return false;
@@ -15704,15 +15724,6 @@ public class HighwayBuilderTHM extends Module {
                 }
             }
 
-            private int countSlots(HighwayBuilderTHM b, Predicate<ItemStack> predicate) {
-                int count = 0;
-                for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
-                    ItemStack stack = b.mc.player.getInventory().getStack(i);
-                    if (predicate.test(stack)) count++;
-                }
-
-                return count;
-            }
         },
 
         PlaceShulkerBlockade {
@@ -16274,14 +16285,6 @@ public class HighwayBuilderTHM extends Module {
             return -1;
         }
 
-        protected boolean hasItem(HighwayBuilderTHM b, Predicate<ItemStack> predicate) {
-            for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
-                if (predicate.test(b.mc.player.getInventory().getStack(i))) return true;
-            }
-
-            return false;
-        }
-
         protected int countItem(HighwayBuilderTHM b, Predicate<ItemStack> predicate) {
             int count = 0;
             for (int i = 0; i < b.mc.player.getInventory().getMainStacks().size(); i++) {
@@ -16491,6 +16494,8 @@ public class HighwayBuilderTHM extends Module {
         protected int findBlocksToPlace(HighwayBuilderTHM b) {
             // find a block and move it to your hotbar
             int slot = findAndMoveToHotbar(b, itemStack -> itemStack.getItem() instanceof BlockItem blockItem && b.blocksToPlace.get().contains(blockItem.getBlock()));
+
+            if (slot == -1) slot = b.giveCreativePlacementBlock();
 
             if (slot == -1) {
                 if (b.restockDebugLog.get()) {
@@ -16717,10 +16722,6 @@ public class HighwayBuilderTHM extends Module {
             playerInput = new PlayerInput(forward, backward, left, right, jump, sneak, sprint);
         }
 
-        private static float movementAmount(boolean positive, boolean negative) {
-            if (positive == negative) return 0.0f;
-            return positive ? 1.0f : -1.0f;
-        }
     }
 
     private static class MBPIteratorFilter implements MBPIterator {
@@ -18456,10 +18457,6 @@ public class HighwayBuilderTHM extends Module {
                 return true;
             }
 
-            private int getObsidianItemsTarget() {
-                return targetFinal;
-            }
-
             private int getMiningGoalObsidianCount() {
                 int achievable = usablePulledEchests * 8;
                 if (achievable <= 0) return obsidianStartItems + obsidianItemsAcquired;
@@ -18580,12 +18577,6 @@ public class HighwayBuilderTHM extends Module {
                 usingGreatestAvailable = true;
             }
 
-            private void finishSuccessfully() {
-                phase = SourcePhase.Complete;
-                lastResult = SourceAttemptResult.TARGET_SATISFIED;
-                remainingTarget = 0;
-            }
-
             private void fail() {
                 phase = SourcePhase.Failed;
             }
@@ -18626,11 +18617,6 @@ public class HighwayBuilderTHM extends Module {
                 return !isTaskSuccessful() && !triedKitbot;
             }
 
-            private boolean isKitbotSuppressedByLocalSourceSuccess() {
-                return madeInventoryShulkerForwardProgressThisSession
-                    || madeEnderChestForwardProgressThisSession;
-            }
-
             private void noteSuccessfulLocalSourceAction(SourcePhase sourcePhase) {
                 switch (sourcePhase) {
                     case InventoryShulkers -> madeInventoryShulkerForwardProgressThisSession = true;
@@ -18663,9 +18649,6 @@ public class HighwayBuilderTHM extends Module {
                 return b.blocksToPlace.get().contains(bi.getBlock()) && bi.getBlock() != Blocks.OBSIDIAN;
             }
 
-            private boolean isTrackedFoodStack(ItemStack stack) {
-                return b.isConfiguredFoodStack(stack);
-            }
         }
 
         public RestockTask(HighwayBuilderTHM b) {

@@ -37,11 +37,7 @@ import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
 import xyz.thm.addon.utils.ThmMembers;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
