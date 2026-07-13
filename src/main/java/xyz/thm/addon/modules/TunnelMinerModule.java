@@ -564,7 +564,7 @@ public class TunnelMinerModule extends Module {
 
     private final Setting<PathMode> pathMode = sgGeneral.add(new EnumSetting.Builder<PathMode>()
         .name("path-mode")
-        .description("Path planner mode. AxisFirst preserves legacy behavior; DiagonalThenAxis alternates X/Z steps for a zigzag diagonal path while both axes differ.")
+        .description("Path planner mode. DiagonalThenAxis zigzags instead of going axis by axis.")
         .visible(() -> false)
         .defaultValue(PathMode.AxisFirst)
         .build());
@@ -593,7 +593,7 @@ public class TunnelMinerModule extends Module {
 
     private final Setting<Double> detourSafetyBufferCost = sgGeneral.add(new DoubleSetting.Builder()
         .name("detour-safety-buffer-cost")
-        .description("Extra A* cost per blocked adjacent cell to keep detours farther from avoided blocks (0 disables).")
+        .description("Extra path cost per blocked neighbour, to keep detours wide (0 disables).")
         .visible(() -> false)
         .defaultValue(0.0).min(0.0).sliderMax(4.0)
         .build());
@@ -617,13 +617,13 @@ public class TunnelMinerModule extends Module {
 
     private final Setting<Boolean> autoFreeLook = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-freelook")
-        .description("Enable Meteor FreeLook while Tunnel Miner runs to prevent mouse look from disrupting pathing.")
+        .description("Enables Meteor FreeLook so mouse look can't disrupt pathing.")
         .defaultValue(true)
         .build());
 
     private final Setting<Boolean> resumeCacheOnReactivate = sgGeneral.add(new BoolSetting.Builder()
         .name("resume-cache-on-reactivate")
-        .description("Keeps tunnel restore/probe cache when toggled off and back on, so the module can resume from where it left off.")
+        .description("Keeps the restore/probe cache when toggled off, so it can resume.")
         .defaultValue(true)
         .build());
 
@@ -635,7 +635,7 @@ public class TunnelMinerModule extends Module {
 
     private final Setting<Boolean> stealthMode = sgStealth.add(new BoolSetting.Builder()
         .name("stealth-mode")
-        .description("Probe ahead, mine ahead while moving, restore exact block types behind, and auto-enable all stealth avoidance rules.(VERY CPU INTENSIVE)")
+        .description("Mine ahead and restore blocks behind you, with all avoidance rules on. (VERY CPU INTENSIVE)")
         .defaultValue(false)
         .build());
 
@@ -647,7 +647,7 @@ public class TunnelMinerModule extends Module {
 
     private final Setting<Integer> stealthPathCalcIntervalTicks = sgStealth.add(new IntSetting.Builder()
         .name("path-calc-interval")
-        .description("Minimum ticks between heavy probe path recalculations (higher = less lag, slower path updates).")
+        .description("Minimum ticks between path recalculations (higher = less lag).")
         .visible(() -> false)
         .defaultValue(4).min(1).max(40).sliderMax(20)
         .build());
@@ -693,13 +693,13 @@ public class TunnelMinerModule extends Module {
 
     private final Setting<Integer> stealthRestoreLagDistance = sgStealth.add(new IntSetting.Builder()
         .name("restore-lag-distance")
-        .description("Allowed distance (in blocks) from pending restore blocks before movement pauses to catch up.")
+        .description("How far you may get from pending restore blocks before pausing.")
         .defaultValue(4).min(0).max(4).sliderMax(4)
         .build());
 
     private final Setting<Boolean> strictStealthExactRestore = sgStealth.add(new BoolSetting.Builder()
         .name("strict-exact-restore")
-        .description("Require exact original block restoration in stealth mode. If an exact restore block is missing from inventory, stop Tunnel Miner immediately.")
+        .description("Stop the module if an exact restore block is missing from your inventory.")
         .defaultValue(false)
         .build());
 

@@ -74,14 +74,14 @@ public class Phase extends Module {
     );
     private final Setting<SelfPlaceType> selfPlaceType = sgSelfPlace.add(new EnumSetting.Builder<SelfPlaceType>()
         .name("type")
-        .description("Fire: ignites the block below you using flint-and-steel or a fire charge. Web: places a cobweb at your feet.")
+        .description("What to self-place: fire below you, or a cobweb at your feet.")
         .defaultValue(SelfPlaceType.Fire)
         .visible(selfPlace::get)
         .build()
     );
     private final Setting<Boolean> optimize = sgSelfPlace.add(new BoolSetting.Builder()
         .name("optimize")
-        .description("Reuses the pearl throw rotation for self-place: rotates once, places, then throws — no extra rotation step.")
+        .description("Reuses the pearl throw rotation for self-place, instead of rotating twice.")
         .defaultValue(false)
         .visible(selfPlace::get)
         .build()
@@ -98,7 +98,7 @@ public class Phase extends Module {
 
     private final Setting<Boolean> antiMine = sgAntiMine.add(new BoolSetting.Builder()
         .name("anti-mine")
-        .description("Keeps phase active and automatically phases into a block another player is breaking at your feet, so your hitbox straddles both blocks.")
+        .description("Phases into a block another player is breaking at your feet.")
         .defaultValue(false)
         .build()
     );

@@ -99,7 +99,7 @@ public class THMStashMover extends Module {
 
     private final Setting<Boolean> hwyMonitorReconnectHandling = sgGeneral.add(new BoolSetting.Builder()
         .name("hwy-monitor-reconnect-handling")
-        .description("Lets THM Highway Monitor handle reconnect/lobby recovery while THM Stash mover pauses outside the main server.")
+        .description("Lets THM Highway Monitor handle reconnects while this pauses off-server.")
         .defaultValue(false)
         .visible(this::exposeHwyMonitorReconnectSettings)
         .build()
@@ -107,7 +107,7 @@ public class THMStashMover extends Module {
 
     private final Setting<Boolean> focusedPairRestocking = sgGeneral.add(new BoolSetting.Builder()
         .name("focused-pair-restocking")
-        .description("Keeps restocking the highest-priority active pair until it is full or input-blocked before moving down the list. When off, pairs rotate after each batch.")
+        .description("Finish the top-priority pair first. Off = rotate pairs after each batch.")
         .defaultValue(false)
         .build()
     );

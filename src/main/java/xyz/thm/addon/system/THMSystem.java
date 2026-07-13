@@ -22,7 +22,6 @@ import xyz.thm.addon.waveycapes.WindMode;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
-import java.util.List;
 
 public class THMSystem extends System<THMSystem> {
     private static final String HIGHWAY_PROFILE_SNAPSHOTS_TAG = "highwayProfileSnapshots";
@@ -257,7 +256,7 @@ public class THMSystem extends System<THMSystem> {
 
     public final Setting<Boolean> mainMenuWindow = sgMainMenu.add(new BoolSetting.Builder()
         .name("styled-window")
-        .description("Shows the BleachHack-styled window frame on the title screen instead of vanilla's own layout.")
+        .description("Shows the BleachHack-styled window frame on the title screen.")
         .defaultValue(true)
         .build()
     );

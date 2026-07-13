@@ -105,14 +105,14 @@ public class MemberHud extends HudElement {
 
     public final Setting<Boolean> groupByDiscordName = sgGeneral.add(new BoolSetting.Builder()
         .name("group-by-discord-name")
-        .description("Groups a member's online alt accounts under their Discord name, e.g. Discordname(dugW,W). Bots are never grouped.")
+        .description("Groups a member's alts under their Discord name. Bots are never grouped.")
         .defaultValue(true)
         .build()
     );
 
     public final Setting<Boolean> showAccountCount = sgGeneral.add(new BoolSetting.Builder()
         .name("show-account-count")
-        .description("In grouped Discord mode, shows how many of this member's accounts are currently online, e.g. Discordname x3.")
+        .description("Shows how many of a member's accounts are online, e.g. Discordname x3.")
         .defaultValue(false)
         .visible(groupByDiscordName::get)
         .build()

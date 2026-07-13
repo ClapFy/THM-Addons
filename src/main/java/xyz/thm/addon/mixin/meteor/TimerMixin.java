@@ -81,7 +81,7 @@ public abstract class TimerMixin extends Module {
         );
         onlyWhenTraveling = sgGeneral.add(new BoolSetting.Builder()
             .name("only-when-traveling")
-            .description("Only use auto-adjust when moving faster than threshold speed. Sets timer to 1.0 when slower.")
+            .description("Only auto-adjust above the threshold speed. Sets timer to 1.0 below it.")
             .defaultValue(true)
             .visible(() -> !tpsSync.get() && autoAdjust.get())
             .build()

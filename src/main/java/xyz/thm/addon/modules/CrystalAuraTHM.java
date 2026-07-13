@@ -129,7 +129,7 @@ public class CrystalAuraTHM extends Module {
         .defaultValue(true).build());
 
     private final Setting<Boolean> forcePop = sgDamage.add(new BoolSetting.Builder()
-        .name("force-pop").description("Ignores min-damage/ratio checks if the hit would pop the target outright. Self/friend safety limits still apply.")
+        .name("force-pop").description("Ignores damage checks for a lethal hit. Safety limits still apply.")
         .defaultValue(true).build());
 
     private final Setting<Integer> forcePopHits = sgDamage.add(new IntSetting.Builder()
@@ -150,7 +150,7 @@ public class CrystalAuraTHM extends Module {
         .defaultValue(false).build());
 
     private final Setting<Integer> existedCooldown = sgPlace.add(new IntSetting.Builder()
-        .name("existed-cooldown").description("Ticks to wait before placing on a block that was just placed/broken on. Prevents instant re-place packet spam.")
+        .name("existed-cooldown").description("Ticks before placing again on a spot just placed or broken on.")
         .defaultValue(10).min(0).sliderMax(40).build());
 
     private final Setting<Integer> placeCPT = sgPlace.add(new IntSetting.Builder()
@@ -181,7 +181,7 @@ public class CrystalAuraTHM extends Module {
     // ID Predict
 
     private final Setting<Boolean> idPredict = sgIdPredict.add(new BoolSetting.Builder()
-        .name("id-predict").description("Attacks a newly-placed crystal by guessing its entity id before its spawn packet arrives, instead of waiting a tick. Very strong, off by default.")
+        .name("id-predict").description("Attacks a new crystal by guessing its entity id, without waiting a tick.")
         .defaultValue(false).build());
 
     private final Setting<Integer> idStartOffset = sgIdPredict.add(new IntSetting.Builder()

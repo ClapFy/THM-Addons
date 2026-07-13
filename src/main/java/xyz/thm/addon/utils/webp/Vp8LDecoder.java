@@ -1,7 +1,5 @@
 package xyz.thm.addon.utils.webp;
 
-import java.util.Arrays;
-
 /**
  * From-scratch decoder for lossless WebP (VP8L), per the spec at
  * https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification
