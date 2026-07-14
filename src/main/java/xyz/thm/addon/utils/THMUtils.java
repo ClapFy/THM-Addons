@@ -2,6 +2,7 @@ package xyz.thm.addon.utils;
 
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
+import meteordevelopment.meteorclient.mixininterface.IPlayerMoveC2SPacket;
 import meteordevelopment.meteorclient.pathing.BaritoneUtils;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.fabricmc.loader.api.FabricLoader;
@@ -9,6 +10,7 @@ import net.minecraft.client.network.ServerInfo;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
@@ -407,6 +409,16 @@ public class THMUtils {
     public static Vec3d positionInDirection(Vec3d pos, double yaw, double distance) {
         Vec3d offset = yawToDirection(yaw).multiply(distance);
         return pos.add(offset);
+    }
+
+    private void sendPacket(double height) {
+        double x = mc.player.getX();
+        double y = mc.player.getY();
+        double z = mc.player.getZ();
+
+        PlayerMoveC2SPacket packet = new PlayerMoveC2SPacket.PositionAndOnGround(x, y + height, z, false, false);
+        ((IPlayerMoveC2SPacket) packet).meteor$setTag(1337);
+        mc.player.networkHandler.sendPacket(packet);
     }
 
     public static Vec3d yawToDirection(double yaw) {

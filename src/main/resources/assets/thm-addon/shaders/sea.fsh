@@ -18,7 +18,7 @@ precision mediump float;
 // "Seascape" by Alexander Alekseev aka TDM - 2014
 // License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 
-const int NUM_STEPS = 16;
+const int NUM_STEPS = 8; // original Seascape value; 16 was double the cost for no visible gain
 const float PI	 	= 3.1415;
 const float EPSILON	= 1e-3;
 float EPSILON_NRM	= 0.;

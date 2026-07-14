@@ -23,8 +23,8 @@ import xyz.thm.addon.THMAddon;
 import java.nio.ByteBuffer;
 import java.util.OptionalInt;
 
-// "Frosted glass" blur for just the window rectangle (not the whole shader background): renders
-// the active shader into a small offscreen texture at the window's own resolution, runs a real
+// "Frosted glass" blur for just the window rectangle (not the whole shader background): copies
+// that region of the already-rendered framebuffer into a small offscreen texture, runs a real
 // two-pass (horizontal then vertical) box blur over it - the same technique vanilla's own menu
 // blur (assets/minecraft/shaders/post/box_blur.fsh) uses, just simplified to a plain N-tap
 // average instead of its bilinear-doubled sampling - then blits the result back onto the main
@@ -35,15 +35,22 @@ class BlurBackground {
     private static final Identifier VSH_ID = Identifier.of(THMAddon.MOD_ID, "blur_vsh");
     private static final Identifier BLUR_FSH_ID = Identifier.of(THMAddon.MOD_ID, "blur_pass_fsh");
     private static final Identifier BLIT_FSH_ID = Identifier.of(THMAddon.MOD_ID, "blur_blit_fsh");
+    private static final Identifier EXTRACT_FSH_ID = Identifier.of(THMAddon.MOD_ID, "blur_extract_fsh");
     private static final float MAX_RADIUS = 20f; // texels, at strength = 100
     // The shader render + both blur passes work at 1/WORK_SCALE resolution - a blurred image
     // already destroys fine detail, so downsampling before blurring and upsampling on the final
     // blit (bilinear, see FilterMode.LINEAR below) is the standard cost/quality tradeoff every
     // engine's blur/bloom uses; cuts the two most expensive passes' pixel count by WORK_SCALE^2.
     private static final int WORK_SCALE = 2;
+    // Same idea for the background shader itself (see renderScaled): the .fsh files are the
+    // expensive part of the menu frame (sea.fsh raymarches per pixel), and they're all smooth
+    // gradients/noise with no fine detail to lose, so drawing them at 1/N resolution and
+    // bilinear-upscaling costs N^2 fewer fragment shader invocations for a barely visible
+    // difference. ponytail: hardcoded, not a setting - add one if someone wants native-res.
+    private static final int SHADER_SCALE = 2;
     private static final int MIN_TEXTURE_SIZE = 4;
     private static final long BLUR_PARAMS_SIZE = 16L; // std140: vec4(stepX, stepY, radius, unused)
-    private static final long RECT_BUFFER_SIZE = 16L; // std140: vec4 rectPixels
+    private static final long RECT_BUFFER_SIZE = 32L; // std140: vec4 rectPixels, vec4 fbSize
 
     private static final String VSH_SRC = """
         #version 330 core
@@ -80,6 +87,7 @@ class BlurBackground {
         #version 330 core
         layout(std140) uniform BlitRect {
             vec4 rectPixels;
+            vec4 fbSize;
         };
         uniform sampler2D InSampler;
         out vec4 fragColor;
@@ -89,8 +97,30 @@ class BlurBackground {
         }
         """;
 
+    // Reads the window's region straight out of the main framebuffer's colour texture (bound as
+    // InSampler) into the working texture. Sampling it rather than copyTextureToTexture'ing it
+    // keeps every coordinate in one convention: a framebuffer texel's v matches the gl_FragCoord.y
+    // that wrote it (bottom-left origin), which is the same space the scissor and the blit's
+    // rectPixels math use - whereas texture-storage copies address top-down, and reconciling the
+    // two by hand is what left the blurred patch vertically offset from the window.
+    private static final String EXTRACT_FSH_SRC = """
+        #version 330 core
+        layout(std140) uniform BlitRect {
+            vec4 rectPixels;
+            vec4 fbSize;
+        };
+        in vec2 texCoord;
+        uniform sampler2D InSampler;
+        out vec4 fragColor;
+        void main() {
+            vec2 srcPixels = rectPixels.xy + texCoord * rectPixels.zw;
+            fragColor = texture(InSampler, srcPixels / fbSize.xy);
+        }
+        """;
+
     private static RenderPipeline blurPipeline;
     private static RenderPipeline blitPipeline;
+    private static RenderPipeline extractPipeline;
     private static Boolean pipelinesValid;
     private static GpuBuffer blurParamsBuffer;
     private static GpuBuffer rectBuffer;
@@ -99,19 +129,48 @@ class BlurBackground {
     private static GpuTextureView viewA, viewB;
     private static int texWidth = -1, texHeight = -1;
 
-    private static GpuTexture captureTexture;
-    private static GpuTextureView captureView;
-    private static int captureWidth = -1, captureHeight = -1;
+    private static GpuTexture scaledTexture;
+    private static GpuTextureView scaledView;
+    private static int scaledWidth = -1, scaledHeight = -1;
 
     /**
-     * @param shaderPipeline the active custom shader, or null to blur whatever's already
-     *                       rendered there instead (the vanilla panorama, when no shader is
-     *                       selected/available).
+     * Draws the active background shader at 1/SHADER_SCALE resolution into an offscreen texture,
+     * then upscales it onto the main framebuffer (bilinear). Reuses the blur pass pipeline with
+     * radius = 0, which is just a passthrough sample, i.e. a plain resize.
+     *
+     * @return true if it drew (caller falls back to a full-resolution draw if not).
+     */
+    static boolean renderScaled(RenderPipeline shaderPipeline) {
+        GpuDevice device = RenderSystem.getDevice();
+        if (!ensurePipelines(device)) return false;
+
+        Framebuffer framebuffer = MinecraftClient.getInstance().getFramebuffer();
+        GpuTextureView mainView = framebuffer.getColorAttachmentView();
+        if (mainView == null) return false;
+
+        int w = Math.max(MIN_TEXTURE_SIZE, framebuffer.textureWidth / SHADER_SCALE);
+        int h = Math.max(MIN_TEXTURE_SIZE, framebuffer.textureHeight / SHADER_SCALE);
+        ensureScaledTexture(device, w, h);
+
+        ShaderBackground.drawInto(shaderPipeline, scaledView, w, h);
+
+        CommandEncoder encoder = device.createCommandEncoder();
+        writeBlurParams(encoder, 0f, 0f, 0f);
+        drawFullscreen(encoder, blurPipeline, mainView, "BlurParams", blurParamsBuffer, scaledView);
+        return true;
+    }
+
+    /**
+     * Blurs whatever is already rendered behind the window - the background shader, or the
+     * vanilla panorama when no shader is active. (This used to re-render the active shader into
+     * a window-sized texture instead of copying the framebuffer, which drew a *second*, squashed
+     * copy of the shader at the window's aspect ratio rather than blurring the one on screen.)
+     *
      * @param x1 x2 y1 y2 window bounds in GUI-scaled screen coordinates (same space as
      *           MainMenuFx.windowBounds).
      * @return true if it drew.
      */
-    static boolean renderRegion(RenderPipeline shaderPipeline, int strength, int x1, int y1, int x2, int y2) {
+    static boolean renderRegion(int strength, int x1, int y1, int x2, int y2) {
         GpuDevice device = RenderSystem.getDevice();
         if (!ensurePipelines(device)) return false;
 
@@ -132,32 +191,17 @@ class BlurBackground {
         // scissored region and the fragment shader's sampling agree with where the window
         // actually is, instead of a several-pixel seam at the top/bottom from the mismatch.
         int py1 = (int) Math.round(framebuffer.textureHeight - y2 * scaleY);
-        // Top-down Y (unlike py1 above) - GpuTexture-level copies address texture storage the
-        // same way NativeImage/screenshots do (top-left origin), not raw window-space GL calls
-        // like scissor/gl_FragCoord, so this is deliberately the *other* convention.
-        int py1TopDown = (int) Math.round(y1 * scaleY);
 
         int workW = Math.max(MIN_TEXTURE_SIZE, pw / WORK_SCALE);
         int workH = Math.max(MIN_TEXTURE_SIZE, ph / WORK_SCALE);
         ensureTextures(device, workW, workH);
 
-        if (shaderPipeline != null) {
-            // Pass 1: render the active shader at (downscaled) working resolution into A.
-            ShaderBackground.drawInto(shaderPipeline, viewA, workW, workH);
-        } else {
-            // No custom shader active (e.g. "None" chosen) - blur whatever's already behind the
-            // window instead (the vanilla panorama), by copying that region out of the main
-            // framebuffer (GPU-side, no shader re-execution) and downscaling it into A.
-            ensureCaptureTexture(device, pw, ph);
-            device.createCommandEncoder().copyTextureToTexture(mainView.texture(), captureTexture, 0, 0, 0, px1, py1TopDown, pw, ph);
-
-            CommandEncoder resizeEncoder = device.createCommandEncoder();
-            writeBlurParams(resizeEncoder, 0f, 0f, 0f); // radius 0 = single passthrough sample, i.e. a plain resize
-            drawFullscreen(resizeEncoder, blurPipeline, viewA, "BlurParams", blurParamsBuffer, captureView);
-        }
-
         float radius = Math.max(1f, strength / 100f * MAX_RADIUS);
         CommandEncoder encoder = device.createCommandEncoder();
+        writeRect(encoder, px1, py1, pw, ph, framebuffer.textureWidth, framebuffer.textureHeight);
+
+        // Pass 1: sample the window's region out of the main framebuffer, downscaled into A.
+        drawFullscreen(encoder, extractPipeline, viewA, "BlitRect", rectBuffer, mainView);
 
         // Pass 2: horizontal blur, A -> B.
         writeBlurParams(encoder, 1f / workW, 0f, radius);
@@ -169,7 +213,6 @@ class BlurBackground {
 
         // Pass 4: blit A back onto the main framebuffer at full size, scissored to the window
         // rect - the bilinear sampler does the upscale, which is fine since it's already blurred.
-        writeRect(encoder, px1, py1, pw, ph);
         try (RenderPass pass = encoder.createRenderPass(() -> "THM blur blit", mainView, OptionalInt.empty())) {
             pass.enableScissor(px1, py1, pw, ph);
             pass.setPipeline(blitPipeline);
@@ -204,7 +247,7 @@ class BlurBackground {
         }
     }
 
-    private static void writeRect(CommandEncoder encoder, int px1, int py1, int pw, int ph) {
+    private static void writeRect(CommandEncoder encoder, int px1, int py1, int pw, int ph, int fbWidth, int fbHeight) {
         if (rectBuffer == null) {
             rectBuffer = RenderSystem.getDevice().createBuffer(() -> "THM blur rect", GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, RECT_BUFFER_SIZE);
         }
@@ -214,6 +257,8 @@ class BlurBackground {
             data.putFloat(4, py1);
             data.putFloat(8, pw);
             data.putFloat(12, ph);
+            data.putFloat(16, fbWidth);
+            data.putFloat(20, fbHeight);
             encoder.writeToBuffer(rectBuffer.slice(), data);
         }
     }
@@ -237,9 +282,18 @@ class BlurBackground {
             .withSampler("InSampler")
             .build();
 
+        extractPipeline = RenderPipeline.builder(RenderPipelines.POST_EFFECT_PROCESSOR_SNIPPET)
+            .withLocation(Identifier.of(THMAddon.MOD_ID, "blur_extract"))
+            .withVertexShader(VSH_ID)
+            .withFragmentShader(EXTRACT_FSH_ID)
+            .withUniform("BlitRect", UniformType.UNIFORM_BUFFER)
+            .withSampler("InSampler")
+            .build();
+
         boolean blurOk = device.precompilePipeline(blurPipeline, BlurBackground::shaderSource).isValid();
         boolean blitOk = device.precompilePipeline(blitPipeline, BlurBackground::shaderSource).isValid();
-        pipelinesValid = blurOk && blitOk;
+        boolean extractOk = device.precompilePipeline(extractPipeline, BlurBackground::shaderSource).isValid();
+        pipelinesValid = blurOk && blitOk && extractOk;
         if (!pipelinesValid) THMAddon.LOG.warn("[THM] Main-menu window blur shaders failed to compile, disabling blur");
         return pipelinesValid;
     }
@@ -248,20 +302,21 @@ class BlurBackground {
         if (id.equals(VSH_ID)) return VSH_SRC;
         if (id.equals(BLUR_FSH_ID)) return BLUR_FSH_SRC;
         if (id.equals(BLIT_FSH_ID)) return BLIT_FSH_SRC;
+        if (id.equals(EXTRACT_FSH_ID)) return EXTRACT_FSH_SRC;
         return null;
     }
 
-    private static void ensureCaptureTexture(GpuDevice device, int w, int h) {
-        if (captureTexture != null && captureWidth == w && captureHeight == h) return;
+    private static void ensureScaledTexture(GpuDevice device, int w, int h) {
+        if (scaledTexture != null && scaledWidth == w && scaledHeight == h) return;
 
-        if (captureView != null) captureView.close();
-        if (captureTexture != null) captureTexture.close();
+        if (scaledView != null) scaledView.close();
+        if (scaledTexture != null) scaledTexture.close();
 
-        captureTexture = device.createTexture(() -> "THM blur capture",
-            GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_TEXTURE_BINDING, TextureFormat.RGBA8, w, h, 1, 1);
-        captureView = device.createTextureView(captureTexture);
-        captureWidth = w;
-        captureHeight = h;
+        scaledTexture = device.createTexture(() -> "THM shader scaled",
+            GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_TEXTURE_BINDING, TextureFormat.RGBA8, w, h, 1, 1);
+        scaledView = device.createTextureView(scaledTexture);
+        scaledWidth = w;
+        scaledHeight = h;
     }
 
     private static void ensureTextures(GpuDevice device, int w, int h) {

@@ -39,6 +39,7 @@ public class ShaderBackground {
     private static final Map<String, Boolean> valid = new HashMap<>();
     private static GpuBuffer uniformBuffer;
     private static boolean blurBroken;
+    private static boolean scaledBroken;
 
     /** @return true if a shader was drawn (caller should skip the vanilla panorama). */
     public static boolean render() {
@@ -53,6 +54,17 @@ public class ShaderBackground {
             Framebuffer framebuffer = mc.getFramebuffer();
             GpuTextureView colorView = framebuffer.getColorAttachmentView();
             if (colorView == null) return false;
+
+            // Draw at reduced resolution and upscale - these shaders are per-pixel raymarchers/
+            // noise fields and are by far the most expensive thing in a menu frame at native res.
+            if (!scaledBroken) {
+                try {
+                    if (BlurBackground.renderScaled(pipeline)) return true;
+                } catch (Throwable t) {
+                    THMAddon.LOG.warn("[THM] Scaled shader draw failed, falling back to full resolution", t);
+                    scaledBroken = true;
+                }
+            }
 
             drawInto(pipeline, colorView, framebuffer.textureWidth, framebuffer.textureHeight);
             return true;
@@ -74,11 +86,8 @@ public class ShaderBackground {
     public static boolean renderBlurredRegion(int x1, int y1, int x2, int y2, int strength) {
         if (strength <= 0 || blurBroken) return false;
 
-        String name = ShaderManager.active();
-        RenderPipeline pipeline = name != null ? pipelineFor(name) : null;
-
         try {
-            return BlurBackground.renderRegion(pipeline, strength, x1, y1, x2, y2);
+            return BlurBackground.renderRegion(strength, x1, y1, x2, y2);
         } catch (Throwable t) {
             THMAddon.LOG.warn("[THM] Main-menu window blur failed, disabling it for this session", t);
             blurBroken = true;
