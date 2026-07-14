@@ -19,6 +19,7 @@ import meteordevelopment.meteorclient.systems.modules.movement.speed.Speed;
 import meteordevelopment.meteorclient.systems.modules.world.Timer;
 import meteordevelopment.meteorclient.utils.misc.HorizontalDirection;
 import meteordevelopment.orbit.EventHandler;
+import meteordevelopment.orbit.EventPriority;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.gui.DrawContext;
@@ -66,7 +67,6 @@ public class THMHwyMonitor extends Module {
     private static final long POST_REJOIN_DIRECTION_RETRY_DELAY_MS = 1_000L;
     private static final int POST_REJOIN_DIRECTION_RETRY_LIMIT = 30;
     private static final int RESTART_SCREENSHOT_DELAY_MS = 2000;
-    private static final int RESTART_BUILDER_DISABLE_GRACE_MS = 3000;
     private static final long MAIN_SERVER_RESUME_DELAY_MS = 6_000L;
     private static final int DISCONNECT_SCREEN_EVIDENCE_TIMEOUT_MS = 3000;
     private static final String RECONNECT_RESUME_LISTENER_KEY = "thm-hwymonitor-resume";
@@ -279,9 +279,9 @@ public class THMHwyMonitor extends Module {
     private HorizontalDirection postRejoinLastCompleteProbeWinner;
     private boolean intentionalSafetyDisconnectArmed;
     private boolean disableMonitorAfterIntentionalSafetyDisconnect;
-    private volatile boolean restartBuilderDisableGraceScheduled;
-    private long restartBuilderDisableGraceId;
-    private long nextRestartBuilderDisableGraceId = 1L;
+    private long pendingAbortRestoreCycleId;
+    private String pendingAbortRestoreReason = "";
+    private long pendingAbortRestoreNextAttemptAtMs;
     private boolean previousAutoReconnectToggleState;
     private boolean rearmNormalReconnectAfterForwardReconnectResume;
     private HorizontalDirection ghostblockWatchDirection;
@@ -576,6 +576,7 @@ public class THMHwyMonitor extends Module {
         clearPendingAlignmentGateRequest();
         clearPostRejoinDirectionGateState();
         resetReconnectAutomationState(true);
+        discoverPendingAbortRestore("monitor-activate");
         registerReconnectServiceListeners();
         wasConnectedLastTick = isSuccessfullyConnectedToServer();
         if (reconnectAutomationEnabled()) refreshTimerSpeedSnapshotFromCurrentState("activate");
@@ -626,8 +627,14 @@ public class THMHwyMonitor extends Module {
         resetForwardPacketDesyncEpisode("deactivate");
         clearPendingAlignmentGateRequest();
         clearPostRejoinDirectionGateState();
+        if (restartRecoveryActive
+            && reconnectOwner == ReconnectOwner.HighwayBuilder
+            && activeReconnectCycleId > 0L) {
+            schedulePendingAbortRestore(activeReconnectCycleId, "monitor-deactivate");
+        }
         unregisterReconnectServiceListeners();
         clearRestartAutomationState("deactivate", true, true);
+        tryPendingAbortRestore("monitor-deactivate");
         wasConnectedLastTick = false;
     }
 
@@ -750,15 +757,18 @@ public class THMHwyMonitor extends Module {
             return;
         }
 
+        if (reconnectOwner == ReconnectOwner.HighwayBuilder && cycleId > 0L) {
+            schedulePendingAbortRestore(cycleId, "reconnect-failure:" + reason.name());
+        }
         clearHighwayBuilderReconnectModuleRestoreSnapshot("reconnect-failure:" + reason.name());
         clearRestartRecoveryState("failure:" + reason.name(), false, true);
+        tryPendingAbortRestore("reconnect-failure:" + reason.name());
         warning("Reconnect failed (%s): %s", reason.name(), detail == null ? "" : detail);
     }
 
     private void clearRestartRecoveryState(String reason, boolean disarmService, boolean clearCycleBinding) {
         restartRecoveryActive = false;
         resetRubberbandGhostblockWatch();
-        clearPendingRestartBuilderDisableGrace();
         restartEvidenceGateCycleId = 0L;
         clearDelayedMainServerResumeState();
         clearPostRejoinDirectionGateState();
@@ -777,7 +787,6 @@ public class THMHwyMonitor extends Module {
         resetForwardProgressWatch();
         resetForwardPacketDesyncEpisode("stash-mover-clear:" + reason);
         clearPendingAlignmentGateRequest();
-        clearPendingRestartBuilderDisableGrace();
         if (clearCycleBinding) activeReconnectCycleId = 0L;
         if (disarmService) reconnectService().disarmReconnect("THMHwyMonitor clearStashMoverReconnectState: " + reason);
         info("StashMover reconnect handling cleared: %s", reason);
@@ -890,9 +899,10 @@ public class THMHwyMonitor extends Module {
         pendingDisconnectScreenEvidenceUntilMs = 0L;
         unresolvedMainServerDisconnectCandidate = false;
         clearStaleDisconnectedScreenIfLiveConnected();
+        tryPendingAbortRestore("game-joined");
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGHEST)
     private void onGameLeft(GameLeftEvent event) {
         wasConnectedLastTick = false;
         pendingDisconnectScreenEvidenceCheck = false;
@@ -911,12 +921,6 @@ public class THMHwyMonitor extends Module {
             return;
         }
 
-        if (reconnectRecoveryInFlight()) {
-            unresolvedMainServerDisconnectCandidate = false;
-            info("Reconnect transfer hop observed while reconnect recovery is already in flight; suppressing fresh disconnect-evidence cycle.");
-            return;
-        }
-
         HighwayBuilderTHM builderBeforeDisconnect = Modules.get().get(HighwayBuilderTHM.class);
         boolean builderWasActiveAtDisconnect = builderBeforeDisconnect != null && builderBeforeDisconnect.isActive();
         ObsidianFarmerTHM farmerBeforeDisconnect = Modules.get().get(ObsidianFarmerTHM.class);
@@ -927,8 +931,15 @@ public class THMHwyMonitor extends Module {
         boolean stashMoverWasActiveAtDisconnect = stashMoverBeforeDisconnect != null
             && stashMoverBeforeDisconnect.isActive()
             && stashMoverBeforeDisconnect.isManagingThmHwyMonitorReconnect();
-        unresolvedMainServerDisconnectCandidate = builderWasActiveAtDisconnect && !stashMoverWasActiveAtDisconnect;
         String disconnectScreenReason = readDisconnectedScreenReasonLower();
+
+        if (reconnectRecoveryInFlight()) {
+            unresolvedMainServerDisconnectCandidate = false;
+            info("Reconnect transfer hop observed while reconnect recovery is already in flight; suppressing fresh disconnect-evidence cycle.");
+            return;
+        }
+
+        unresolvedMainServerDisconnectCandidate = builderWasActiveAtDisconnect && !stashMoverWasActiveAtDisconnect;
 
         if (stashMoverWasActiveAtDisconnect) {
             unresolvedMainServerDisconnectCandidate = false;
@@ -962,13 +973,6 @@ public class THMHwyMonitor extends Module {
 
         String restartEvidence = consumeRestartDisconnectEvidence();
 
-        if (restartEvidence != null) {
-            unresolvedMainServerDisconnectCandidate = false;
-            info("Disconnect matched restart evidence (%s). Treating as restart.", restartEvidence);
-            handleRestartDetectionTrigger();
-            return;
-        }
-
         if (!builderWasActiveAtDisconnect && farmerWasActiveAtDisconnect) {
             unresolvedMainServerDisconnectCandidate = false;
             recoveryFarmer = farmerBeforeDisconnect;
@@ -979,12 +983,31 @@ public class THMHwyMonitor extends Module {
             return;
         }
 
+        if (builderWasActiveAtDisconnect && reconnectAutomationEnabled()) {
+            if (!prepareFreshHighwayBuilderReconnect(builderBeforeDisconnect, "game-left")) return;
+
+            if (restartEvidence != null) {
+                unresolvedMainServerDisconnectCandidate = false;
+                confirmPreparedReconnectEvidence("restart-evidence:" + restartEvidence);
+                return;
+            }
+        } else if (restartEvidence != null) {
+            unresolvedMainServerDisconnectCandidate = false;
+            info("Disconnect matched restart evidence (%s), but no active HighwayBuilder reconnect transaction was prepared.", restartEvidence);
+            return;
+        }
+
         pendingDisconnectScreenEvidenceCheck = true;
         pendingDisconnectScreenEvidenceUntilMs = System.currentTimeMillis() + DISCONNECT_SCREEN_EVIDENCE_TIMEOUT_MS;
         info("Disconnect detected without immediate hard-fail evidence. Waiting up to 3.0s for disconnect-screen reason.");
     }
 
     private void handleDetectedNonRestartHardFail(String source) {
+        if (restartRecoveryActive
+            && reconnectOwner == ReconnectOwner.HighwayBuilder
+            && activeReconnectCycleId > 0L) {
+            schedulePendingAbortRestore(activeReconnectCycleId, "non-restart-hard-fail:" + source);
+        }
         abortActiveRecoveryForNonRestartHardFail();
         clearHighwayBuilderReconnectModuleRestoreSnapshot("non-restart-hard-fail:" + source);
         clearRestartAutomationState("non-restart-hard-fail:" + source, true, true);
@@ -992,6 +1015,7 @@ public class THMHwyMonitor extends Module {
         unresolvedMainServerDisconnectCandidate = false;
         deferRestartScreenshotUntilReconnect = false;
         deferredRestartScreenshotAfterReconnectPending = false;
+        tryPendingAbortRestore("non-restart-hard-fail:" + source);
         warning("Non-restart hard fail detected (%s). Reconnect handling was disarmed, but THM Hwy Monitor remains enabled.", source);
     }
 
@@ -1032,7 +1056,7 @@ public class THMHwyMonitor extends Module {
         unresolvedMainServerDisconnectCandidate = false;
         armRestartDisconnectEvidence("disconnect-screen");
         info("Disconnect matched restart evidence (disconnect-screen). Treating as restart.");
-        handleRestartDetectionTrigger();
+        confirmPreparedReconnectEvidence("disconnect-screen");
     }
 
     private void handleUnclassifiedMainServerDisconnectFallback(String source) {
@@ -1047,7 +1071,7 @@ public class THMHwyMonitor extends Module {
                 rawReason == null || rawReason.isBlank() ? "unavailable" : rawReason
             );
             deferRestartScreenshotUntilReconnect = true;
-            handleRestartDetectionTrigger();
+            confirmPreparedReconnectEvidence(source);
             return;
         }
 
@@ -1105,68 +1129,128 @@ public class THMHwyMonitor extends Module {
         thread.start();
     }
 
-    private void clearPendingRestartBuilderDisableGrace() {
-        restartBuilderDisableGraceScheduled = false;
-        restartBuilderDisableGraceId = 0L;
+    private boolean prepareFreshHighwayBuilderReconnect(HighwayBuilderTHM builder, String source) {
+        if (builder == null || !builder.isActive() || !reconnectAutomationEnabled()) return false;
+
+        ServerReconnectService.ReconnectPreflight preflight = reconnectService().getReconnectPreflight();
+        long cycleId;
+        if (preflight.serviceArmed() && preflight.cycleId() > 0L) {
+            cycleId = preflight.cycleId();
+            activeReconnectCycleId = cycleId;
+        } else {
+            cycleId = armReconnectCycle("unexpected-disconnect", true);
+        }
+
+        reconnectOwner = ReconnectOwner.HighwayBuilder;
+        restartRecoveryActive = true;
+        restartEvidenceGateCycleId = cycleId;
+
+        if (!builder.prepareForMonitorReconnectPause(cycleId)) {
+            failDisconnectPreparation(builder, cycleId, source, "Unable to persist HighwayBuilder reconnect baseline and stats checkpoint.");
+            return false;
+        }
+
+        ModuleManager manager = getModuleManager();
+        if (manager != null && manager.isActive() && !manager.prepareForMonitorReconnectPause(cycleId, source)) {
+            failDisconnectPreparation(builder, cycleId, source, "Unable to freeze Module Manager reconnect snapshot.");
+            return false;
+        }
+
+        builder.disableForMonitorRealignPause();
+        if (builder.isActive()) {
+            failDisconnectPreparation(builder, cycleId, source, "HighwayBuilder did not disable for reconnect pause.");
+            return false;
+        }
+
+        info("Prepared transactional HighwayBuilder reconnect cycle %d before disconnect cleanup (%s).", cycleId, source);
+        return true;
     }
 
-    private void scheduleRestartBuilderDisableAndArmAfterGrace() {
-        if (restartBuilderDisableGraceScheduled) {
+    private void failDisconnectPreparation(HighwayBuilderTHM builder, long cycleId, String source, String detail) {
+        schedulePendingAbortRestore(cycleId, "disconnect-preparation-failed:" + source);
+
+        if (builder != null && builder.isActive()) {
+            builder.disableForMonitorRealignPause();
+        }
+
+        clearHighwayBuilderReconnectModuleRestoreSnapshot("disconnect-preparation-failed:" + source);
+        clearRestartAutomationState("disconnect-preparation-failed:" + source, true, true);
+        tryPendingAbortRestore("disconnect-preparation-failed:" + source);
+        warning("%s Reconnect automation was disarmed without issuing another disconnect.", detail);
+    }
+
+    private void confirmPreparedReconnectEvidence(String source) {
+        if (!restartRecoveryActive
+            || reconnectOwner != ReconnectOwner.HighwayBuilder
+            || activeReconnectCycleId <= 0L
+            || restartEvidenceGateCycleId != activeReconnectCycleId) {
+            warning("Reconnect evidence arrived without a prepared HighwayBuilder transaction (%s).", source);
             return;
         }
 
-        final long graceId = nextRestartBuilderDisableGraceId++;
-        restartBuilderDisableGraceScheduled = true;
-        restartBuilderDisableGraceId = graceId;
-        info("Restart evidence detected. Waiting 3.0s before disabling THM HighwayBuilder.");
-
-        Thread thread = new Thread(() -> {
-            try {
-                Thread.sleep(RESTART_BUILDER_DISABLE_GRACE_MS);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-
-            if (!isActive() || mc == null) {
-                if (restartBuilderDisableGraceId == graceId) clearPendingRestartBuilderDisableGrace();
-                return;
-            }
-
-            mc.execute(() -> {
-                if (!isActive()) {
-                    if (restartBuilderDisableGraceId == graceId) clearPendingRestartBuilderDisableGrace();
-                    return;
-                }
-                if (!restartBuilderDisableGraceScheduled || restartBuilderDisableGraceId != graceId) return;
-                if (!autoRestartHandlingEnabled()) {
-                    clearPendingRestartBuilderDisableGrace();
-                    return;
-                }
-
-                clearPendingRestartBuilderDisableGrace();
-                restartRecoveryActive = true;
-                ensureHighwayBuilderDisabledForRestart("restart detection", true);
-
-                long cycleId;
-                ServerReconnectService.ReconnectPreflight preflight = reconnectService().getReconnectPreflight();
-                if (preflight.serviceArmed() && preflight.cycleId() > 0L) {
-                    cycleId = preflight.cycleId();
-                    activeReconnectCycleId = cycleId;
-                    restartEvidenceGateCycleId = cycleId;
-                } else {
-                    cycleId = armReconnectCycle("restart-detection", true);
-                    reconnectOwner = ReconnectOwner.HighwayBuilder;
-                }
-
-                info("Restart reconnect handling armed through ServerReconnectService (cycle %d).", cycleId);
-            });
-        }, "thm-restart-disable-grace");
-        thread.setDaemon(true);
-        thread.start();
+        deferRestartScreenshotUntilReconnect = false;
+        deferredRestartScreenshotAfterReconnectPending = false;
+        scheduleRestartScreenshot(0, "restart-detected");
+        info("Confirmed prepared HighwayBuilder reconnect cycle %d (%s).", activeReconnectCycleId, source);
     }
 
-    private boolean autoRestartHandlingEnabled() {
-        return reconnectAutomationEnabled();
+    private void schedulePendingAbortRestore(long cycleId, String reason) {
+        if (cycleId <= 0L) return;
+        if (pendingAbortRestoreCycleId > 0L && pendingAbortRestoreCycleId != cycleId) {
+            warning("Retaining reconnect abort cycle %d; refused conflicting cycle %d.", pendingAbortRestoreCycleId, cycleId);
+            return;
+        }
+
+        pendingAbortRestoreCycleId = cycleId;
+        pendingAbortRestoreReason = reason == null || reason.isBlank() ? "unknown" : reason;
+        pendingAbortRestoreNextAttemptAtMs = 0L;
+    }
+
+    private void discoverPendingAbortRestore(String source) {
+        if (pendingAbortRestoreCycleId > 0L) return;
+
+        HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
+        if (builder == null || builder.isActive()) return;
+
+        long cycleId = builder.getPendingReconnectAbortCycleId();
+        if (cycleId <= 0L) return;
+
+        schedulePendingAbortRestore(cycleId, "durable-discovery:" + source);
+        info("Discovered pending reconnect abort restore cycle %d (%s).", cycleId, source);
+    }
+
+    private void tryPendingAbortRestore(String source) {
+        if (pendingAbortRestoreCycleId <= 0L) return;
+        if (!hasLiveServerConnection()) return;
+
+        long now = System.currentTimeMillis();
+        if (now < pendingAbortRestoreNextAttemptAtMs) return;
+
+        HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
+        if (builder == null || builder.isActive()) return;
+
+        HighwayBuilderTHM.ReconnectAbortRestoreOutcome outcome = builder.abortPreparedReconnectPause(
+            pendingAbortRestoreCycleId,
+            pendingAbortRestoreReason + ":" + source
+        );
+
+        switch (outcome) {
+            case Restored -> {
+                info("Restored aborted reconnect Timer/Speed state for cycle %d (%s).", pendingAbortRestoreCycleId, source);
+                pendingAbortRestoreCycleId = 0L;
+                pendingAbortRestoreReason = "";
+                pendingAbortRestoreNextAttemptAtMs = 0L;
+            }
+            case DeferredNoLiveWorld -> pendingAbortRestoreNextAttemptAtMs = now + 1_000L;
+            case RejectedGeneration -> {
+                pendingAbortRestoreNextAttemptAtMs = now + 5_000L;
+                warning("Reconnect abort restore rejected generation for cycle %d; preserving all snapshots.", pendingAbortRestoreCycleId);
+            }
+            case StatsPersistenceFailed -> {
+                pendingAbortRestoreNextAttemptAtMs = now + 5_000L;
+                warning("Reconnect abort restore could not persist safely for cycle %d; preserving all snapshots for retry.", pendingAbortRestoreCycleId);
+            }
+        }
     }
 
     private boolean restartScreenshotsEnabled() {
@@ -1211,7 +1295,6 @@ public class THMHwyMonitor extends Module {
             || delayedMainServerResumeCycleId != 0L
             || delayedMainServerResumeAtMs != 0L
             || restartRecoveryActive
-            || restartBuilderDisableGraceScheduled
             || restartDisconnectEvidenceArmed
             || restartScreenshotScheduled
             || postJoinModuleStateCaptured
@@ -1229,7 +1312,6 @@ public class THMHwyMonitor extends Module {
 
     private void resetReconnectAutomationState(boolean clearCycleBinding) {
         restartScreenshotScheduled = false;
-        clearPendingRestartBuilderDisableGrace();
         postJoinModuleStateCaptured = false;
         timerWasActiveBeforePostJoin = false;
         speedWasActiveBeforePostJoin = false;
@@ -1286,19 +1368,6 @@ public class THMHwyMonitor extends Module {
         }
     }
 
-    private void handleRestartDetectionTrigger() {
-        deferRestartScreenshotUntilReconnect = false;
-        if (!autoRestartHandlingEnabled()) {
-            info("Restart evidence detected, but auto-reconnect is disabled. Skipping reconnect arming.");
-            return;
-        }
-
-        clearRestartRecoveryState("restart-detection-prep", false, false);
-        deferredRestartScreenshotAfterReconnectPending = false;
-        scheduleRestartScreenshot(0, "restart-detected");
-        scheduleRestartBuilderDisableAndArmAfterGrace();
-    }
-
     private void handleAutoReconnectToggleTransitions() {
         boolean currentToggle = autoReconnect.get();
         if (currentToggle == previousAutoReconnectToggleState) return;
@@ -1314,7 +1383,13 @@ public class THMHwyMonitor extends Module {
             reconnectOwner = ReconnectOwner.HighwayBuilder;
             info("Auto-reconnect enabled. Armed reconnect cycle %d.", cycleId);
         } else {
+            if (restartRecoveryActive
+                && reconnectOwner == ReconnectOwner.HighwayBuilder
+                && activeReconnectCycleId > 0L) {
+                schedulePendingAbortRestore(activeReconnectCycleId, "auto-reconnect-toggle-off");
+            }
             clearRestartAutomationState("toggle-off", true, true);
+            tryPendingAbortRestore("auto-reconnect-toggle-off");
             info("Auto-reconnect disabled. Reconnect cycle and policy state were cleared.");
         }
 
@@ -2171,7 +2246,6 @@ public class THMHwyMonitor extends Module {
 
     private boolean isReconnectRecoveryWorkActive() {
         return restartRecoveryActive
-            || restartBuilderDisableGraceScheduled
             || restartEvidenceGateCycleId != 0L
             || delayedMainServerResumePending
             || delayedMainServerResumeCycleId != 0L
@@ -2365,6 +2439,7 @@ public class THMHwyMonitor extends Module {
 
     private void handleReconnectAutomationTickLane() {
         handleAutoReconnectToggleTransitions();
+        tryPendingAbortRestore("tick");
         refreshReconnectBaselineValidity();
         maybeRunDelayedMainServerResumeFinalization();
         maybeRunPostRejoinDirectionGate();
@@ -2430,15 +2505,7 @@ public class THMHwyMonitor extends Module {
 
     private boolean reconnectRecoveryInFlight() {
         if (activeReconnectCycleId == 0L) return false;
-
-        return reconnectService().isReconnectArmed()
-            || restartBuilderDisableGraceScheduled
-            || restartRecoveryActive
-            || restartEvidenceGateCycleId == activeReconnectCycleId
-            || delayedMainServerResumePending
-            || delayedMainServerResumeCycleId == activeReconnectCycleId
-            || postRejoinDirectionGateActive
-            || deferredRestartScreenshotAfterReconnectPending;
+        return isReconnectRecoveryWorkActive();
     }
 
     private void clearStaleDisconnectedScreenIfLiveConnected() {
@@ -3669,12 +3736,12 @@ public class THMHwyMonitor extends Module {
     private void enterReconnectSafetyStop(String reason) {
         HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
         long cycleId = activeReconnectCycleId;
-        Text disconnectText = builder == null
-            ? Text.of("THMHwyMonitor Safety Stop: " + reason)
-            : builder.getReconnectSafetyStopText(reason, cycleId);
+        HighwayBuilderTHM.StatsDisconnectPresentation disconnectPresentation = builder == null
+            ? new HighwayBuilderTHM.StatsDisconnectPresentation(Text.of("THMHwyMonitor Safety Stop: " + reason), null)
+            : builder.getReconnectSafetyStopPresentation(reason, cycleId);
 
+        if (cycleId > 0L) schedulePendingAbortRestore(cycleId, "reconnect-safety-stop:" + reason);
         if (builder != null) {
-            builder.restoreCenterSpeedBaselineForFailedReconnect(cycleId);
             builder.disableForReconnectSafetyStop();
         }
         clearHighwayBuilderReconnectModuleRestoreSnapshot("reconnect-safety-stop");
@@ -3687,9 +3754,16 @@ public class THMHwyMonitor extends Module {
         intentionalSafetyDisconnectArmed = true;
         disableMonitorAfterIntentionalSafetyDisconnect = true;
         clearRestartAutomationStateForTerminalStop("reconnect-safety-stop");
+        tryPendingAbortRestore("reconnect-safety-stop");
 
         if (hasLiveServerConnection()) {
-            mc.getNetworkHandler().getConnection().disconnect(disconnectText);
+            mc.getNetworkHandler().getConnection().disconnect(disconnectPresentation.text());
+            if (builder != null) {
+                builder.scheduleRetiredStatsDisconnectScreenshot(
+                    disconnectPresentation.retiredSessionId(),
+                    "reconnect-safety-stop"
+                );
+            }
             return;
         }
 
@@ -3700,8 +3774,14 @@ public class THMHwyMonitor extends Module {
             mc.setScreen(new DisconnectedScreen(
                 new TitleScreen(),
                 Text.of("THMHwyMonitor Safety Stop"),
-                Text.of(reason + " HighwayBuilder stayed off for safety.")
+                disconnectPresentation.text()
             ));
+            if (builder != null) {
+                builder.scheduleRetiredStatsDisconnectScreenshot(
+                    disconnectPresentation.retiredSessionId(),
+                    "reconnect-safety-stop-no-live-connection"
+                );
+            }
         }
 
         if (isActive()) toggle();

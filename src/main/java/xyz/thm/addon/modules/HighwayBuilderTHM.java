@@ -110,6 +110,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -1528,8 +1529,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean statsSessionDirty;
     private boolean statsSessionTerminalOrFinalizing;
     private boolean memoryRetryMode;
-    private volatile boolean statsProofScreenshotScheduled;
-    private volatile boolean statsDisconnectScreenshotScheduled;
+    private final AtomicLong statsScreenshotSequence = new AtomicLong();
     private String lastPrintedStatsSessionId;
     private SpeedMineSettingsSnapshot speedMineSettingsSnapshot;
     private boolean paketLimiterActivatedByBuilder = false;
@@ -1740,6 +1740,18 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
+    public record StatsDisconnectPresentation(
+        Text text,
+        String retiredSessionId
+    ) {}
+
+    public enum ReconnectAbortRestoreOutcome {
+        Restored,
+        DeferredNoLiveWorld,
+        RejectedGeneration,
+        StatsPersistenceFailed
+    }
+
     private record ReconnectBaselineRestoreResult(
         boolean success,
         String reason
@@ -1779,6 +1791,17 @@ public class HighwayBuilderTHM extends Module {
         String statsCode,
         boolean restartDistanceWarning
     ) {}
+
+    private enum StatsScreenshotSurface {
+        CHAT("chat"),
+        DISCONNECT("disconnect");
+
+        private final String fileNamePart;
+
+        StatsScreenshotSurface(String fileNamePart) {
+            this.fileNamePart = fileNamePart;
+        }
+    }
 
     private record ForwardBreakStatCredit(
         ForwardTaskType type,
@@ -3858,7 +3881,40 @@ public class HighwayBuilderTHM extends Module {
 
         suspended = false;
         resumeThmSpeedAfterReconnectIfReady("reconnect-finalized");
+        if (!isThmSpeedReconnectReady()) {
+            writeReconnectDebug("resume finalization failed THM speed readiness cycle=%d useThmSpeed=%s suppressed=%s owned=%s snapshot=%s input=%s state=%s",
+                generation,
+                useThmSpeed.get(),
+                thmSpeedReconnectSuppressed,
+                thmSpeedOwnershipActive,
+                thmSpeedSnapshot != null,
+                input != null,
+                getCommittedServerState().name()
+            );
+            return false;
+        }
+
+        boolean persisted = persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "reconnect-resume-complete");
+        if (!persisted) {
+            writeReconnectDebug("resume finalization failed stats checkpoint cycle=%d", generation);
+            return false;
+        }
+
         return true;
+    }
+
+    private boolean isThmSpeedReconnectReady() {
+        if (!useThmSpeed.get()) return true;
+
+        return isActive()
+            && !suspended
+            && !thmSpeedReconnectSuppressed
+            && thmSpeedOwnershipActive
+            && thmSpeedSnapshot != null
+            && input != null
+            && mc.player != null
+            && mc.world != null
+            && isThmSpeedExecutionAllowed();
     }
 
     private void clearLastReconnectResumeFailure() {
@@ -3926,6 +3982,150 @@ public class HighwayBuilderTHM extends Module {
         return false;
     }
 
+    public long getPendingReconnectAbortCycleId() {
+        if (isActive()) return 0L;
+
+        StatsArtifactSnapshot snapshot = findNewestOpenStatsArtifact();
+        if (snapshot == null || snapshot.reconnectBaselinePayload() == null || snapshot.reconnectCycleId() <= 0L) return 0L;
+        if (hasFinalizationArtifactForSession(snapshot.sessionId())
+            && !hasParkedThmSpeedSnapshot()) {
+            return 0L;
+        }
+        return snapshot == null ? 0L : snapshot.reconnectCycleId();
+    }
+
+    public ReconnectAbortRestoreOutcome abortPreparedReconnectPause(long expectedCycleId, String reason) {
+        if (expectedCycleId <= 0L) return ReconnectAbortRestoreOutcome.RejectedGeneration;
+        if (mc.player == null || mc.world == null || !Utils.canUpdate()) {
+            return ReconnectAbortRestoreOutcome.DeferredNoLiveWorld;
+        }
+
+        ReconnectBaselinePayload inMemoryPayload = null;
+        if (reconnectBaselineLease != null && reconnectBaselineLease.generation() == expectedCycleId) {
+            inMemoryPayload = reconnectBaselineLease.payload();
+        }
+
+        StatsArtifactSnapshot newestOpenArtifact = findNewestOpenStatsArtifact();
+        StatsArtifactSnapshot matchingArtifact = null;
+        if (newestOpenArtifact != null && newestOpenArtifact.reconnectBaselinePayload() != null) {
+            if (newestOpenArtifact.reconnectCycleId() != expectedCycleId) {
+                return ReconnectAbortRestoreOutcome.RejectedGeneration;
+            }
+            matchingArtifact = newestOpenArtifact;
+        }
+
+        ReconnectBaselinePayload payload = inMemoryPayload != null
+            ? inMemoryPayload
+            : matchingArtifact == null ? null : matchingArtifact.reconnectBaselinePayload();
+        if (payload == null && matchingArtifact == null && !hasParkedThmSpeedSnapshot()) {
+            return ReconnectAbortRestoreOutcome.RejectedGeneration;
+        }
+
+        StatsArtifactSnapshot verifiedArtifactForRewrite = null;
+        if (matchingArtifact != null && !hasFinalizationArtifactForSession(matchingArtifact.sessionId())) {
+            StatsArtifactSnapshot current = peekStatsArtifact(resolveStatsArtifactPath(matchingArtifact.kind()), matchingArtifact.kind());
+            if (!sameReconnectArtifactIdentity(matchingArtifact, current)) {
+                return ReconnectAbortRestoreOutcome.RejectedGeneration;
+            }
+            verifiedArtifactForRewrite = current;
+        }
+
+        if (payload != null) {
+            ReconnectBaselineRestoreResult baselineRestore = restoreReconnectBaselinePayload(payload);
+            if (!baselineRestore.success()) {
+                writeReconnectDebug("abort restore baseline failed cycle=%d reason=%s", expectedCycleId, baselineRestore.reason());
+                return ReconnectAbortRestoreOutcome.StatsPersistenceFailed;
+            }
+        }
+
+        if (!restoreParkedThmSpeedSnapshotWithoutDeleting(reason)) {
+            return ReconnectAbortRestoreOutcome.StatsPersistenceFailed;
+        }
+
+        if (verifiedArtifactForRewrite != null) {
+            StatsArtifactSnapshot cleared = copyOpenStatsArtifactWithoutReconnectMetadata(
+                verifiedArtifactForRewrite,
+                nextStatsGenerationAfter(verifiedArtifactForRewrite.generation())
+            );
+            if (!persistActiveStatsArtifact(cleared, "reconnect-abort-clear-metadata:" + safeReconnectReason(reason))) {
+                return ReconnectAbortRestoreOutcome.StatsPersistenceFailed;
+            }
+        }
+
+        if (payload != null) {
+            reconnectBaselineLease = new ReconnectBaselineLease(
+                expectedCycleId,
+                ReconnectBaselineLeaseState.CONSUMED,
+                payload
+            );
+        }
+
+        if (!deleteThmSpeedSnapshot("reconnect-abort:" + safeReconnectReason(reason))) {
+            return ReconnectAbortRestoreOutcome.StatsPersistenceFailed;
+        }
+
+        thmSpeedSnapshot = null;
+        thmSpeedRestorePending = false;
+        thmSpeedSnapshotDeletePending = false;
+        thmSpeedReconnectSuppressed = false;
+        thmSpeedOwnershipActive = false;
+        writeReconnectDebug("abort restore complete cycle=%d reason=%s", expectedCycleId, safeReconnectReason(reason));
+        return ReconnectAbortRestoreOutcome.Restored;
+    }
+
+    private String safeReconnectReason(String reason) {
+        return reason == null || reason.isBlank() ? "unknown" : reason;
+    }
+
+    private boolean hasParkedThmSpeedSnapshot() {
+        return thmSpeedSnapshot != null || Files.exists(resolveThmSpeedSnapshotPath());
+    }
+
+    private boolean restoreParkedThmSpeedSnapshotWithoutDeleting(String reason) {
+        MeteorSpeedSnapshot snapshot = thmSpeedSnapshot;
+        if (snapshot == null) snapshot = loadThmSpeedSnapshot();
+        if (snapshot == null) return true;
+
+        Speed speed = Modules.get().get(Speed.class);
+        if (speed == null) return false;
+
+        resetThmSpeedRuntime();
+        thmSpeedReconnectSuppressed = false;
+        thmSpeedOwnershipActive = false;
+
+        try {
+            speed.speedMode.set(parseCenterSpeedModeOrDefault(snapshot.speedModeName()));
+            speed.vanillaSpeed.set(snapshot.vanillaSpeed());
+            speed.ncpSpeed.set(snapshot.ncpSpeed());
+            speed.ncpSpeedLimit.set(snapshot.ncpSpeedLimit());
+            speed.timer.set(snapshot.timer());
+            speed.inLiquids.set(snapshot.inLiquids());
+            speed.whenSneaking.set(snapshot.whenSneaking());
+            speed.vanillaOnGround.set(snapshot.vanillaOnGround());
+
+            if (speed.isActive() != snapshot.wasActive()) speed.toggle();
+            if (!isThmSpeedStateRestored(speed, snapshot)) return false;
+
+            thmSpeedSnapshot = snapshot;
+            thmSpeedRestorePending = false;
+            thmSpeedSnapshotDeletePending = false;
+            restockDebug("THM speed ownership restored for reconnect abort (reason=%s, active=%s, mode=%s, vanilla=%.2f).",
+                safeReconnectReason(reason),
+                snapshot.wasActive(),
+                snapshot.speedModeName(),
+                snapshot.vanillaSpeed()
+            );
+            return true;
+        } catch (Exception e) {
+            thmSpeedSnapshot = snapshot;
+            restockDebug("THM speed reconnect abort restore failed (reason=%s, error=%s).",
+                safeReconnectReason(reason),
+                e.getClass().getSimpleName()
+            );
+            return false;
+        }
+    }
+
     public void refreshReconnectBaselineValidity(long activeGeneration) {
         if (reconnectBaselineLease == null || reconnectBaselineRestoreInProgress) return;
         if (reconnectBaselineLease.state() != ReconnectBaselineLeaseState.CAPTURED) return;
@@ -3940,25 +4140,11 @@ public class HighwayBuilderTHM extends Module {
     }
 
     public void disableForReconnectSafetyStop() {
-        if (!isActive()) return;
-        reconnectFailureDeactivateArmed = true;
-        suppressThmHwyMonitorSync = true;
-        try {
-            toggle();
-        } finally {
-            suppressThmHwyMonitorSync = false;
-        }
+        disableForMonitorRealignPause();
     }
 
     private void disableForReconnectResumeFailure() {
-        if (!isActive()) return;
-        reconnectFailureDeactivateArmed = true;
-        suppressThmHwyMonitorSync = true;
-        try {
-            toggle();
-        } finally {
-            suppressThmHwyMonitorSync = false;
-        }
+        disableForMonitorRealignPause();
     }
 
     @Override
@@ -4505,6 +4691,7 @@ public class HighwayBuilderTHM extends Module {
 
     @EventHandler
     private void onGameLeave(GameLeftEvent event) {
+        if (!isActive()) return;
         notifyDesktop(notifyDisconnect, "THM Highway Builder", "Disconnected while Highway Builder was active.");
         if (hasActiveInMemoryStatsSession() && !statsSessionTerminalOrFinalizing) {
             persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "game-leave");
@@ -7615,13 +7802,15 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
-    private void deleteThmSpeedSnapshot(String reason) {
+    private boolean deleteThmSpeedSnapshot(String reason) {
         try {
             if (Files.deleteIfExists(resolveThmSpeedSnapshotPath())) {
                 restockDebug("THM speed snapshot deleted (reason=%s).", reason);
             }
+            return true;
         } catch (IOException e) {
             restockDebug("THM speed snapshot delete failed (reason=%s, error=%s).", reason, e.getClass().getSimpleName());
+            return false;
         }
     }
 
@@ -7689,6 +7878,15 @@ public class HighwayBuilderTHM extends Module {
 
     private ReconnectBaselineRestoreResult restoreReconnectBaselineForResume(long generation) {
         StatsArtifactSnapshot artifact = peekAuthoritativeStatsArtifact();
+        if (artifact == null
+            && isResumableStatsSession(statsCacheSnapshot)
+            && statsCacheSnapshot.reconnectCycleId() == generation
+            && statsCacheSnapshot.reconnectBaselinePayload() != null) {
+            // Reconnect activation restores and marks the stats artifact consumed before the
+            // baseline restore runs. Keep the loaded snapshot usable for this same generation,
+            // including after a client restart where no in-memory lease exists yet.
+            artifact = statsCacheSnapshot;
+        }
         ReconnectBaselinePayload durablePayload = getDurableReconnectBaselinePayload(artifact, generation);
         writeReconnectDebug(
             "resume baseline lookup cycle=%d durablePresent=%s artifactCycle=%d artifactState=%s artifactKind=%s legacyState=%s",
@@ -8055,6 +8253,63 @@ public class HighwayBuilderTHM extends Module {
             if (selected == null || compareArtifactPriority(snapshot, selected) > 0) selected = snapshot;
         }
         return selected;
+    }
+
+    private StatsArtifactSnapshot findNewestOpenStatsArtifact() {
+        StatsArtifactSnapshot canonical = peekStatsArtifact(resolveCanonicalStatsArtifactPath(), StatsArtifactKind.CANONICAL);
+        StatsArtifactSnapshot shadow = peekStatsArtifact(resolveShadowStatsArtifactPath(), StatsArtifactKind.SHADOW);
+        StatsArtifactSnapshot selected = null;
+
+        for (StatsArtifactSnapshot snapshot : new StatsArtifactSnapshot[] {canonical, shadow}) {
+            if (!isResumableStatsSession(snapshot)) continue;
+            if (selected == null || compareArtifactPriority(snapshot, selected) > 0) selected = snapshot;
+        }
+
+        return selected;
+    }
+
+    private boolean hasFinalizationArtifactForSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        StatsArtifactSnapshot finalization = peekStatsArtifact(resolveFinalizationRecordPath(), StatsArtifactKind.FINALIZATION);
+        return finalization != null && Objects.equals(finalization.sessionId(), sessionId);
+    }
+
+    private boolean sameReconnectArtifactIdentity(StatsArtifactSnapshot expected, StatsArtifactSnapshot current) {
+        return expected != null
+            && current != null
+            && expected.kind() == current.kind()
+            && Objects.equals(expected.sessionId(), current.sessionId())
+            && expected.generation() == current.generation()
+            && expected.state() == current.state()
+            && expected.resumeAllowed() == current.resumeAllowed()
+            && expected.reconnectCycleId() == current.reconnectCycleId()
+            && current.reconnectBaselinePayload() != null;
+    }
+
+    private StatsArtifactSnapshot copyOpenStatsArtifactWithoutReconnectMetadata(StatsArtifactSnapshot snapshot, long generation) {
+        return new StatsArtifactSnapshot(
+            snapshot.kind(),
+            snapshot.sessionId(),
+            generation,
+            snapshot.state(),
+            snapshot.resumeAllowed(),
+            snapshot.workingDirectionName(),
+            snapshot.startX(),
+            snapshot.startY(),
+            snapshot.startZ(),
+            snapshot.blocksBroken(),
+            snapshot.blocksPlaced(),
+            snapshot.statsCodeTimestampMs(),
+            snapshot.displayInfo(),
+            System.currentTimeMillis(),
+            snapshot.printedAt(),
+            snapshot.printedToChat(),
+            snapshot.webhookSendCommitted(),
+            snapshot.apiSendCommitted(),
+            snapshot.finalizationReason(),
+            0L,
+            null
+        );
     }
 
     private int compareArtifactPriority(StatsArtifactSnapshot left, StatsArtifactSnapshot right) {
@@ -8790,11 +9045,25 @@ public class HighwayBuilderTHM extends Module {
         if (working == null) return false;
 
         if (allowPrinting && !working.printedToChat()) {
-            if (!tryPrintStatsToChat(report, reason)) {
+            long captureToken = beginStatsProofScreenshotCaptureIfEnabled(working.sessionId());
+            boolean printed = false;
+            try {
+                printed = tryPrintStatsToChat(report, reason);
+            } finally {
+                if (!printed) finishStatsScreenshotCapture(captureToken);
+            }
+            if (!printed) {
                 logFinalStatsRecoverySnapshot(working, report, reason + "-print-failed");
                 return false;
             }
-            scheduleStatsProofScreenshotIfEnabled(working.sessionId(), reason);
+            if (captureToken > 0L) {
+                try {
+                    scheduleStatsProofScreenshot(working.sessionId(), reason, captureToken);
+                } catch (RuntimeException | Error e) {
+                    finishStatsScreenshotCapture(captureToken);
+                    THMAddon.LOG.warn("Failed to schedule HighwayBuilder stats screenshot for session {}.", shortSessionId(working.sessionId()), e);
+                }
+            }
             working = updateFinalizationRecord(working, System.currentTimeMillis(), true, working.webhookSendCommitted(), working.apiSendCommitted(), reason + "-printed");
             if (working == null) return false;
             logFinalStatsRecoverySnapshot(working, report, reason + "-printed");
@@ -8903,100 +9172,151 @@ public class HighwayBuilderTHM extends Module {
         return working;
     }
 
-    private void scheduleStatsProofScreenshot(String sessionId, String reason) {
-        if (statsProofScreenshotScheduled) return;
-        statsProofScreenshotScheduled = true;
-        long captureToken = StatsScreenshotChatGuard.getInstance().beginCapture();
-
-        Thread thread = new Thread(() -> {
-            try {
-                Thread.sleep(STATS_SCREENSHOT_DELAY_MS);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-
-            mc.execute(() -> {
-                try {
-                    takeStatsProofScreenshot(sessionId, reason, captureToken);
-                } catch (RuntimeException | Error e) {
-                    StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
-                    throw e;
-                } finally {
-                    statsProofScreenshotScheduled = false;
-                }
-            });
-        }, "thm-highwaybuilder-stats-screenshot");
-        thread.setDaemon(true);
+    private long beginStatsProofScreenshotCaptureIfEnabled(String sessionId) {
+        if (!autoScreenshotStatistics.get()) return 0L;
+        if (sessionId == null || sessionId.isBlank()) return 0L;
         try {
-            thread.start();
+            return StatsScreenshotChatGuard.getInstance().beginCapture();
         } catch (RuntimeException | Error e) {
-            statsProofScreenshotScheduled = false;
-            StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
-            throw e;
+            THMAddon.LOG.warn("Failed to start HighwayBuilder stats screenshot chat guard for session {}.", shortSessionId(sessionId), e);
+            return 0L;
         }
     }
 
-    private void scheduleStatsProofScreenshotIfEnabled(String sessionId, String reason) {
-        if (!autoScreenshotStatistics.get()) return;
-        if (sessionId == null || sessionId.isBlank()) return;
-        scheduleStatsProofScreenshot(sessionId, reason);
+    private void scheduleStatsProofScreenshot(String sessionId, String reason, long captureToken) {
+        scheduleStatsScreenshot(sessionId, reason, StatsScreenshotSurface.CHAT, captureToken);
     }
 
-    private void scheduleDisconnectScreenStatsScreenshotIfEnabled(String sessionId, String reason) {
+    public void scheduleRetiredStatsDisconnectScreenshot(String sessionId, String reason) {
         if (!autoScreenshotStatistics.get()) return;
         if (sessionId == null || sessionId.isBlank()) return;
-        if (statsDisconnectScreenshotScheduled) return;
-        statsDisconnectScreenshotScheduled = true;
+        scheduleStatsScreenshot(sessionId, reason, StatsScreenshotSurface.DISCONNECT, 0L);
+    }
 
-        Thread thread = new Thread(() -> {
-            try {
-                Thread.sleep(STATS_SCREENSHOT_DELAY_MS);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-
-            mc.execute(() -> {
+    private void scheduleStatsScreenshot(String sessionId, String reason, StatsScreenshotSurface surface, long captureToken) {
+        long sequence = statsScreenshotSequence.incrementAndGet();
+        try {
+            Thread thread = new Thread(() -> {
                 try {
-                    takeStatsProofScreenshot(sessionId, reason, 0L);
-                } finally {
-                    statsDisconnectScreenshotScheduled = false;
+                    Thread.sleep(STATS_SCREENSHOT_DELAY_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    finishStatsScreenshotCapture(captureToken);
+                    statsCacheDebug("screenshot scheduling interrupted reason={} session={} surface={} sequence={}",
+                        reason,
+                        shortSessionId(sessionId),
+                        surface.fileNamePart,
+                        sequence
+                    );
+                    return;
                 }
-            });
-        }, "thm-highwaybuilder-disconnect-stats-screenshot");
-        thread.setDaemon(true);
-        thread.start();
+
+                try {
+                    mc.execute(() -> {
+                        try {
+                            takeStatsProofScreenshot(sessionId, reason, surface, sequence, captureToken);
+                        } catch (RuntimeException | Error e) {
+                            finishStatsScreenshotCapture(captureToken);
+                            statsCacheDebug("screenshot capture failed reason={} session={} surface={} sequence={} error={}",
+                                reason,
+                                shortSessionId(sessionId),
+                                surface.fileNamePart,
+                                sequence,
+                                e.getClass().getSimpleName()
+                            );
+                        }
+                    });
+                } catch (RuntimeException | Error e) {
+                    finishStatsScreenshotCapture(captureToken);
+                    statsCacheDebug("screenshot client scheduling failed reason={} session={} surface={} sequence={} error={}",
+                        reason,
+                        shortSessionId(sessionId),
+                        surface.fileNamePart,
+                        sequence,
+                        e.getClass().getSimpleName()
+                    );
+                }
+            }, "thm-highwaybuilder-" + surface.fileNamePart + "-stats-screenshot-" + sequence);
+            thread.setDaemon(true);
+            thread.start();
+        } catch (RuntimeException | Error e) {
+            finishStatsScreenshotCapture(captureToken);
+            statsCacheDebug("screenshot thread start failed reason={} session={} surface={} sequence={} error={}",
+                reason,
+                shortSessionId(sessionId),
+                surface.fileNamePart,
+                sequence,
+                e.getClass().getSimpleName()
+            );
+        }
     }
 
-    private void takeStatsProofScreenshot(String sessionId, String reason, long captureToken) {
+    private void takeStatsProofScreenshot(String sessionId, String reason, StatsScreenshotSurface surface, long sequence, long captureToken) {
         if (mc == null || mc.getFramebuffer() == null) {
-            if (captureToken > 0L) StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+            finishStatsScreenshotCapture(captureToken);
             return;
         }
 
-        String fileName = buildStatsScreenshotFileName(sessionId);
+        String fileName = buildStatsScreenshotFileName(sessionId, surface, sequence);
         try {
-            ScreenshotRecorder.saveScreenshot(mc.runDirectory, fileName, mc.getFramebuffer(), 1, message -> mc.execute(() -> {
-                if (captureToken > 0L) StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
-                info(message.getString());
-                statsCacheDebug("screenshot completed reason={} session={} file={}",
-                    reason,
-                    shortSessionId(sessionId),
-                    fileName
-                );
-            }));
+            ScreenshotRecorder.saveScreenshot(mc.runDirectory, fileName, mc.getFramebuffer(), 1, message -> {
+                try {
+                    mc.execute(() -> {
+                        finishStatsScreenshotCapture(captureToken);
+                        info(message.getString());
+                        statsCacheDebug("screenshot completed reason={} session={} surface={} sequence={} file={}",
+                            reason,
+                            shortSessionId(sessionId),
+                            surface.fileNamePart,
+                            sequence,
+                            fileName
+                        );
+                    });
+                } catch (RuntimeException | Error e) {
+                    finishStatsScreenshotCapture(captureToken);
+                    statsCacheDebug("screenshot callback scheduling failed reason={} session={} surface={} sequence={} error={}",
+                        reason,
+                        shortSessionId(sessionId),
+                        surface.fileNamePart,
+                        sequence,
+                        e.getClass().getSimpleName()
+                    );
+                }
+            });
         } catch (RuntimeException | Error e) {
-            if (captureToken > 0L) StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+            finishStatsScreenshotCapture(captureToken);
             throw e;
         }
-        statsCacheDebug("screenshot requested reason={} session={} file={}",
+        statsCacheDebug("screenshot requested reason={} session={} surface={} sequence={} file={}",
             reason,
             shortSessionId(sessionId),
+            surface.fileNamePart,
+            sequence,
             fileName
         );
     }
 
-    private String buildStatsScreenshotFileName(String sessionId) {
-        return "thm-highwaybuilder-session-" + STATS_SCREENSHOT_TIME_FORMAT.format(Instant.now()) + "-" + shortSessionId(sessionId) + ".png";
+    private void finishStatsScreenshotCapture(long captureToken) {
+        if (captureToken <= 0L) return;
+        try {
+            StatsScreenshotChatGuard.getInstance().finishCapture(captureToken);
+        } catch (RuntimeException | Error e) {
+            THMAddon.LOG.warn("Failed to release HighwayBuilder stats screenshot chat guard token {}.", captureToken, e);
+        }
+    }
+
+    private String buildStatsScreenshotFileName(String sessionId, StatsScreenshotSurface surface, long sequence) {
+        return "thm-highwaybuilder-session-"
+            + STATS_SCREENSHOT_TIME_FORMAT.format(Instant.now())
+            + "-"
+            + shortSessionId(sessionId)
+            + "-"
+            + surface.fileNamePart
+            + "-"
+            + System.currentTimeMillis()
+            + "-"
+            + sequence
+            + ".png";
     }
 
     private String shortSessionId(String sessionId) {
@@ -10778,15 +11098,10 @@ public class HighwayBuilderTHM extends Module {
             .append(Text.literal("] ").styled(style -> style.withColor(Formatting.WHITE)))
             .append(Text.literal(String.format(message, args)).styled(style -> style.withColor(Formatting.RED)));
 
-        MutableText finalizedStatsText = getFinalizedStatsText();
-        String screenshotSessionId = null;
-        if (finalizedStatsText != null && retiredStatsReportSnapshot != null) {
-            text.append("\n").append(finalizedStatsText);
-            screenshotSessionId = retiredStatsReportSnapshot.sessionId();
-        }
+        StatsDisconnectPresentation presentation = appendRetiredStatsToDisconnectPresentation(text);
 
-        mc.getNetworkHandler().getConnection().disconnect(text);
-        scheduleDisconnectScreenStatsScreenshotIfEnabled(screenshotSessionId, "disconnect-screen-stats");
+        mc.getNetworkHandler().getConnection().disconnect(presentation.text());
+        scheduleRetiredStatsDisconnectScreenshot(presentation.retiredSessionId(), "disconnect-screen-stats");
     }
 
     public MutableText getStatsText() {
@@ -10810,7 +11125,7 @@ public class HighwayBuilderTHM extends Module {
         return createStatsText(statsStart, statsBroken, statsPlaced, statsCodeTimestampMs);
     }
 
-    public MutableText getReconnectSafetyStopText(String reason, long reconnectCycleId) {
+    public StatsDisconnectPresentation getReconnectSafetyStopPresentation(String reason, long reconnectCycleId) {
         HorizontalDirection cachedDirection = getCachedWorkingDirectionForMonitorReconnect(reconnectCycleId);
         String cachedName = cachedDirection == null ? lastReconnectResumeCachedDirectionName : cachedDirection.name;
         String selectedName = lastReconnectResumeSelectedDirectionName;
@@ -10823,9 +11138,8 @@ public class HighwayBuilderTHM extends Module {
         }
 
         MutableText text = Text.literal("THMHwyMonitor Safety Stop: " + (reason == null ? "unknown" : reason));
-        MutableText finalizedStatsText = getFinalizedStatsText();
-        if (finalizedStatsText != null) text.append("\n").append(finalizedStatsText);
-        else text.append("\n");
+        StatsDisconnectPresentation presentation = appendRetiredStatsToDisconnectPresentation(text);
+        if (presentation.retiredSessionId() == null) text.append("\n");
         text.append(String.format("%sCached direction: %s%s\n",
             Formatting.GRAY,
             Formatting.WHITE,
@@ -10841,7 +11155,18 @@ public class HighwayBuilderTHM extends Module {
             Formatting.WHITE,
             failureReason == null || failureReason.isBlank() ? reason : failureReason
         ));
-        return text;
+        return new StatsDisconnectPresentation(text, presentation.retiredSessionId());
+    }
+
+    private StatsDisconnectPresentation appendRetiredStatsToDisconnectPresentation(MutableText text) {
+        MutableText finalizedStatsText = getFinalizedStatsText();
+        RetiredStatsReportSnapshot report = retiredStatsReportSnapshot;
+        if (finalizedStatsText == null || report == null) {
+            return new StatsDisconnectPresentation(text, null);
+        }
+
+        text.append("\n").append(finalizedStatsText);
+        return new StatsDisconnectPresentation(text, report.sessionId());
     }
 
     private void notifyDesktop(Setting<Boolean> eventToggle, String heading, String description) {
