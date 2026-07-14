@@ -189,7 +189,7 @@ public class HighwayTools extends Module {
     );
     public final Setting<CheckerMode> guardMode = sgChecker.add(new EnumSetting.Builder<CheckerMode>()
         .name("Mode")
-        .description("HighwayEnd: Triggers when obsidian drops below the threshold (highway ends). HighwayStart: Triggers when obsidian exceeds the threshold (highway begins).")
+        .description("Whether to trigger where the highway ends or where it begins.")
         .defaultValue(CheckerMode.HighwayEnd)
         .visible(() -> obsidianGuardEnabled.get())
         .build()

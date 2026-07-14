@@ -512,7 +512,7 @@ public class HighwayBuilderTHM extends Module {
 
     public final Setting<Boolean> autoHandoffToTraveler = sgAutoTravel.add(new BoolSetting.Builder()
         .name("auto-handoff-to-traveler")
-        .description("Once the highway ahead is fully repaired for as far as can be scanned, automatically disable this module and enable Highway Traveler.")
+        .description("Hands control to Highway Traveler once the highway ahead is repaired.")
         .defaultValue(false)
         .build()
     );
@@ -629,7 +629,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> kitbotFoodRestock = sgKitBotIntegration.add(new BoolSetting.Builder()
         .name("kitbot-food-restock")
-        .description("Allows KitBot to provide food restock supply. Forces food types to enchanted golden apples while enabled.")
+        .description("Lets KitBot restock food. Forces food to enchanted golden apples.")
         .defaultValue(false)
         .visible(kitbotRestock::get)
         .onChanged(value -> {
@@ -650,7 +650,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<RestockSecondarySourceOrder> restockSecondarySourceOrder = sgKitBotIntegration.add(new EnumSetting.Builder<RestockSecondarySourceOrder>()
         .name("restock-secondary-source-order")
-        .description("Which external restock source to try first after inventory-local sources make no useful progress.")
+        .description("Which external restock source to try first.")
         .defaultValue(RestockSecondarySourceOrder.EnderChestThenKitBot)
         .visible(() -> mc.player != null && !ThmMembers.isNovice(mc.player.getName().getString()))
         .build()
@@ -658,21 +658,21 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> kitbotUpdateOnFinish = sgKitBotIntegration.add(new BoolSetting.Builder()
         .name("kitbot-update-on-finish")
-        .description("Sends $update to KitBot1 with the current highway direction when the module finishes, waits for KitBot to teleport, then disconnects.")
+        .description("Sends $update to KitBot1 when finished, waits for the teleport, then disconnects.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> kitbotPeriodicUpdate = sgKitBotIntegration.add(new BoolSetting.Builder()
         .name("kitbot-periodic-update")
-        .description("Sends $update to KitBot1 every hour while building without stopping. Deferred until after restock completes.")
+        .description("Sends $update to KitBot1 every hour while building.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> disconnectOnToggle = sgGeneral.add(new BoolSetting.Builder()
         .name("disconnect-on-toggle")
-        .description("Automatically disconnects when the module is turned off, for example for not having enough blocks.")
+        .description("Disconnects when the module turns itself off, e.g. on running out of blocks.")
         .defaultValue(true)
         .build()
     );
@@ -703,7 +703,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> manageThmHwyMonitor = sgGeneral.add(new BoolSetting.Builder()
         .name("manage-thm-highway-monitor")
-        .description("Manages HighwayBuilder to reduce highway-building drift and auto-aligns the user on the current highway when HighwayBuilder is on.")
+        .description("Reduces building drift and auto-aligns you on the highway.")
         .defaultValue(THMUtils.isBaritoneInstalled())
         .onChanged(this::onManageThmHwyMonitorChanged)
         .visible(THMUtils::isBaritoneInstalled)
@@ -712,7 +712,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> fallSaveAirPlace = sgGeneral.add(new BoolSetting.Builder()
         .name("fall-save-air-place")
-        .description("Places a safety block below your hitbox while descending below the managed highway operating level.")
+        .description("Places a safety block below you when descending below the highway.")
         .defaultValue(false)
         .visible(manageThmHwyMonitor::get)
         .build()
@@ -743,7 +743,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> autosetupModules = sgGeneral.add(new BoolSetting.Builder()
         .name("autosetup-modules")
-        .description("Automatically configures Meteor Speed Mine, Meteor Reach, Meteor Velocity, and HighwayBuilder place range for highway work.")
+        .description("Auto-configures Meteor Speed Mine, Reach, Velocity and place range.")
         .defaultValue(true)
         .onChanged(value -> {
             if (!isActive()) return;
@@ -765,14 +765,14 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> instamineBypass = sgDigging.add(new BoolSetting.Builder()
         .name("instamine-bypass")
-        .description("Uses old-style breaking for basalt/blackstone override blocks so double mine and fast break only bypass when they are truly instamineable. Scheduler budgeting stays unchanged.")
+        .description("Old-style breaking for basalt/blackstone, so fast break only bypasses instamineables.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> doubleMine = sgDigging.add(new BoolSetting.Builder()
         .name("double-mine")
-        .description("Whether to double mine blocks when applicable (normal mine and packet mine simultaneously).")
+        .description("Mines with a normal and a packet mine at the same time.")
         .defaultValue(true)
         .onChanged(value -> {
             if (!isActive()) return;
@@ -821,7 +821,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Integer> savePickaxes = sgDigging.add(new IntSetting.Builder()
         .name("save-pickaxes")
-        .description("How many pickaxes to ensure are saved. Hitting this number in your inventory will trigger a restock or the module toggling off.")
+        .description("How many pickaxes to keep. Dropping to this count triggers a restock.")
         .defaultValue(1)
         .range(0, 36)
         .sliderRange(0, 36)
@@ -849,7 +849,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Double> blocksPerTick = sgDigging.add(new DoubleSetting.Builder()
         .name("blocks-per-tick")
-        .description("The maximum amount of blocks that can be mined in a tick. Supports fractional values like 7.5 for real averaged throughput. Only applies to blocks instantly breakable.")
+        .description("Max blocks mined per tick, fractional allowed. Instamineables only.")
         .defaultValue(7)
         .range(1, 30)
         .sliderMax(20)
@@ -885,7 +885,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> packetBorer = sgDigging.add(new BoolSetting.Builder()
         .name("packet-borer")
-        .description("Supplements digging by spamming instant-break packets for the full highway shape around the player each tick, like packet build does for placing.")
+        .description("Also spams instant-break packets for the whole highway shape each tick.")
         .defaultValue(false)
         .build()
     );
@@ -925,14 +925,14 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> packetBuild = sgPaving.add(new BoolSetting.Builder()
         .name("packet-build")
-        .description("Sends forward placement packets directly for maximum throughput. Automatically enables Packet Limiter on activation.")
+        .description("Sends placement packets directly. Enables Packet Limiter on activation.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<AirPlaceMode> packetBuildAirPlace = sgPaving.add(new EnumSetting.Builder<AirPlaceMode>()
         .name("air-place-mode")
-        .description("Controls air placement behavior in Packet Build mode. Never: skip if no adjacent face. Smart: normal interaction when face exists, air-place packet when not. Always: always packet air place.")
+        .description("When to air-place in Packet Build mode: never, only when needed, or always.")
         .defaultValue(AirPlaceMode.Never)
         .visible(packetBuild::get)
         .build()
@@ -940,7 +940,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> packetBuildLookahead = sgPaving.add(new BoolSetting.Builder()
         .name("packet-build-lookahead")
-        .description("When enabled, packet build also places blocks from upcoming rows in the same tick. Disable to only place the current row.")
+        .description("Also place blocks from upcoming rows in the same tick.")
         .defaultValue(true)
         .visible(packetBuild::get)
         .build()
@@ -1003,14 +1003,14 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> statisticsDebugLog = sgDebugging.add(new BoolSetting.Builder()
         .name("statistics-debug")
-        .description("Logs exact stats validation decisions for acted mine/place work, including whether the action was counted or skipped.")
+        .description("Logs why each mine/place action was counted or skipped in the stats.")
         .defaultValue(false)
         .build()
     );
 
     public final Setting<Double> placementsPerTick = sgPaving.add(new DoubleSetting.Builder()
         .name("placements-per-tick")
-        .description("The maximum amount of blocks that can be placed in a tick. Supports fractional values like 1.5 for real averaged throughput.")
+        .description("Max blocks placed per tick, fractional allowed.")
         .defaultValue(1)
         .range(0.1, 100)
         .sliderRange(0.1, 10)
@@ -1024,7 +1024,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<List<Item>> protectedItems = sgInventory.add(new ItemListSetting.Builder()
         .name("protected-items")
-        .description("Items that trash cleanup must never throw out. Every non-protected item is treated as trash.")
+        .description("Items trash cleanup never throws out. Everything else is trash.")
         .defaultValue(
             Items.ENDER_CHEST, Items.OBSIDIAN, Items.NETHERITE_PICKAXE, Items.NETHERITE_SWORD,
             Items.NETHERITE_SHOVEL, Items.NETHERITE_AXE, Items.ELYTRA, Items.TOTEM_OF_UNDYING,
@@ -1058,7 +1058,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Integer> saveFood = sgInventory.add(new IntSetting.Builder()
         .name("save-food")
-        .description("Restock food when your total configured food count is at or below this value. Do not set higher than half a stack of your chosen food.")
+        .description("Restock food at or below this count. Keep it under half a stack.")
         .defaultValue(16)
         .range(1, 32)
         .sliderRange(1, 32)
@@ -1085,14 +1085,14 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> ejectUselessShulkers = sgInventory.add(new BoolSetting.Builder()
         .name("eject-useless-shulkers")
-        .description("Whether you should eject useless shulkers. Shulkers containing protected items, blocks to place, pickaxes, or food are preserved.")
+        .description("Ejects useless shulkers. Ones holding anything needed are kept.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> searchEnderChest = sgInventory.add(new BoolSetting.Builder()
         .name("search-ender-chest")
-        .description("Searches your ender chest to find items to use. Be careful with this one, especially if you let it search through shulkers.")
+        .description("Also searches your ender chest for items.")
         .defaultValue(false)
         .build()
     );
@@ -1136,7 +1136,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<BlockadeType> blockadeType = sgInventory.add(new EnumSetting.Builder<BlockadeType>()
         .name("echest-blockade-type")
-        .description("Temporarily locked to FullRoof while KitBot and normal blockade geometry share the same basis.")
+        .description("Locked to FullRoof while KitBot shares the normal blockade geometry.")
         .defaultValue(BlockadeType.FullRoof)
         .visible(() -> false)
         .build()
@@ -1144,7 +1144,7 @@ public class HighwayBuilderTHM extends Module {
 
     public final Setting<Integer> saveEchests = sgInventory.add(new IntSetting.Builder()
         .name("save-ender-chests")
-        .description("How many loose ender chests to keep reserved. Falling to one below this value queues ender chest restock, and failure to replenish hard-fails the module.")
+        .description("How many ender chests to keep in reserve. Falling below queues a restock.")
         .defaultValue(4)
         .range(4, 64)
         .sliderRange(4, 64)
@@ -1153,7 +1153,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> newBreaking = sgInventory.add(new BoolSetting.Builder()
         .name("new-breaking")
-        .description("Uses THM Speedmine for ender chest breaking. When off, uses the legacy normal and instant-rebreak packet method. Both modes preserve the saved ender chest reserve.")
+        .description("Breaks ender chests with THM Speedmine instead of the legacy method.")
         .defaultValue(true)
         .visible(mineEnderChests::get)
         .build()
@@ -1178,7 +1178,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> useBreakSpeedMultiplier = sgInventory.add(new BoolSetting.Builder()
         .name("use-break-speed-multiplier")
-        .description("Temporarily boosts Timer while mining ender chests for restock, then restores your previous Timer state.")
+        .description("Boosts Timer while mining ender chests, then restores it.")
         .defaultValue(true)
         .visible(mineEnderChests::get)
         .build()
@@ -1196,7 +1196,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> silentRebreakSwap = sgInventory.add(new BoolSetting.Builder()
         .name("silent-rebreak-swap")
-        .description("Silently swaps for legacy instant-rebreak packets and when placing ender chests for restock.")
+        .description("Silently swaps for rebreak packets and ender chest placement.")
         .defaultValue(true)
         .visible(() -> mineEnderChests.get() && (newBreaking.get() || rebreakEchests.get()))
         .build()
@@ -1281,7 +1281,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> restockDebugLog = sgStatistics.add(new BoolSetting.Builder()
         .name("restock-debug-log")
-        .description("Prints detailed blockade and restock diagnostics, including placement probes and state transitions.")
+        .description("Prints blockade and restock diagnostics.")
         .defaultValue(false)
         .build()
     );
@@ -1357,7 +1357,7 @@ public class HighwayBuilderTHM extends Module {
 
     public final Setting<Boolean> togglePerspective = sgGeneral.add(new BoolSetting.Builder()
         .name("toggle-perspective")
-        .description("Switches to third person while Highway Builder is active, then restores your old perspective.")
+        .description("Switches to third person while active, then restores your perspective.")
         .defaultValue(true)
         .build()
     );

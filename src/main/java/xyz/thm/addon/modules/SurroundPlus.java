@@ -109,7 +109,7 @@ public class SurroundPlus extends Module {
 
     private final Setting<Boolean> airplace = sgPlace.add(new BoolSetting.Builder()
         .name("airplace")
-        .description("Places blocks even when no adjacent solid face exists (sends UP as hit face). Works in both packet and normal mode.")
+        .description("Places blocks even with no adjacent face, by sending UP as the hit face.")
         .defaultValue(false)
         .build()
     );

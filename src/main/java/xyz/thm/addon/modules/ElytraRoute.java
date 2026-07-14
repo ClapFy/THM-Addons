@@ -119,14 +119,14 @@ public class ElytraRoute extends Module {
 
     private final Setting<Boolean> useBounceMode = sgRoute.add(new BoolSetting.Builder()
         .name("use-bounce-mode")
-        .description("Switch ElytraFly into Bounce mode while routing, then restore the previous ElytraFly mode afterward.")
+        .description("Use ElytraFly's Bounce mode while routing, then restore your old mode.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> autoReconnect = sgReconnect.add(new BoolSetting.Builder()
         .name("auto-reconnect")
-        .description("Keep Elytra Route alive through disconnects and resume only after ServerReconnectService reaches MAIN_SERVER.")
+        .description("Keeps the route alive through disconnects and resumes after reconnecting.")
         .defaultValue(false)
         .build()
     );

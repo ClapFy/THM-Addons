@@ -19,7 +19,7 @@ public class FriendsSyncModule extends Module {
 
     private final Setting<List<String>> commands = sgGeneral.add(new StringListSetting.Builder()
         .name("commands")
-        .description("Commands to run when a tracked player joins. Use %player% as a placeholder for the player's name.")
+        .description("Commands to run when a tracked player joins. %player% = their name.")
         .defaultValue(Collections.singletonList(",friend add %player%"))
         .build()
     );

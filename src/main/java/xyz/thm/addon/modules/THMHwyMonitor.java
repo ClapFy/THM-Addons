@@ -150,14 +150,14 @@ public class THMHwyMonitor extends Module {
 
     private final Setting<Boolean> repairMisalignments = sgGeneral.add(new BoolSetting.Builder()
         .name("repair-misalignments")
-        .description("During normal alignment recovery, step backward 2 blocks first to repair possible misaligned paving or digging.")
+        .description("Step back 2 blocks during recovery to repair misaligned work.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> recoverForwardStalls = sgGeneral.add(new BoolSetting.Builder()
         .name("recover-forward-stalls")
-        .description("Runs Highway Monitor recovery if HighwayBuilder stays stuck in Forward or Center, including a forced 2-block backstep.")
+        .description("Runs recovery when HighwayBuilder stays stuck in Forward or Center.")
         .defaultValue(true)
         .visible(autoRecover::get)
         .build()
@@ -165,7 +165,7 @@ public class THMHwyMonitor extends Module {
 
     private final Setting<Integer> forwardStallTimeoutSeconds = sgGeneral.add(new IntSetting.Builder()
         .name("forward-stall-timeout-seconds")
-        .description("Seconds of no meaningful HighwayBuilder Forward progress or Center transition before the forced stall escape begins.")
+        .description("Seconds without HighwayBuilder progress before the stall escape begins.")
         .defaultValue(20)
         .range(10, 900)
         .sliderRange(10, 300)
@@ -175,7 +175,7 @@ public class THMHwyMonitor extends Module {
 
     private final Setting<Boolean> recoverRubberbandGhostblocks = sgGeneral.add(new BoolSetting.Builder()
         .name("recover-rubberband-ghostblocks")
-        .description("Disconnects and AutoReconnects if HighwayBuilder Forward appears rubberbanded or ghostblocked for too long.")
+        .description("Reconnects if HighwayBuilder looks rubberbanded or ghostblocked.")
         .defaultValue(true)
         .visible(autoRecover::get)
         .build()

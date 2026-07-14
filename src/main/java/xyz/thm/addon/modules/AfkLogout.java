@@ -91,7 +91,7 @@ public class AfkLogout extends Module {
 
     private final Setting<Boolean> disableHighwayBuilderBeforeCoordLogout = sgGeneral.add(new BoolSetting.Builder()
         .name("disable-highwaybuilder-before-logout")
-        .description("When coordinate logout triggers, disable HighwayBuilder first and wait 2 seconds before logging out.")
+        .description("Disable HighwayBuilder and wait 2 seconds before a coordinate logout.")
         .defaultValue(false)
         .visible(enableCoordBased::get)
         .build()

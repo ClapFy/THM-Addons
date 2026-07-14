@@ -28,14 +28,14 @@ public class AutoLogMixin {
 
         thm$disableHwyMonitorReconnect = sgThm.add(new BoolSetting.Builder()
             .name("disable-hwymonitor-reconnect")
-            .description("Disables THM Hwy Monitor reconnect handling and Meteor AutoReconnect when Auto Log triggers.")
+            .description("Disables THM Hwy Monitor and Meteor AutoReconnect when Auto Log fires.")
             .defaultValue(true)
             .build()
         );
 
         thm$disableHighwayBuilder = sgThm.add(new BoolSetting.Builder()
             .name("disable-highwaybuilder")
-            .description("Lets THM Highway Builder own Auto Log disconnects so builder stats are submitted and shown.")
+            .description("Lets THM Highway Builder own Auto Log disconnects, so its stats show.")
             .defaultValue(true)
             .build()
         );

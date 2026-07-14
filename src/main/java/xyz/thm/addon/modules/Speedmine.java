@@ -5,7 +5,9 @@ import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -16,20 +18,29 @@ import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.effect.StatusEffectUtil;
 import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.WorldEvents;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
+import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.RenderUtilsTHM;
+import xyz.thm.addon.utils.ThmMembers;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
+import java.util.List;
+import java.util.function.Function;
 
 import static xyz.thm.addon.THMAddon.THMColor;
 
@@ -68,7 +79,51 @@ import static xyz.thm.addon.THMAddon.THMColor;
 public class Speedmine extends Module {
 
     private final SettingGroup sgMine   = settings.getDefaultGroup();
+    private final SettingGroup sgAuto   = settings.createGroup("Auto Mine", false);
     private final SettingGroup sgRender = settings.createGroup("Render");
+
+    // ── Auto Mine (target selection, ported from BlackOut's AutoMine) ─────────
+
+    public final Setting<Boolean> autoMine = sgAuto.add(new BoolSetting.Builder()
+        .name("auto-mine")
+        .description("Automatically pick blocks to break around nearby enemies.")
+        .defaultValue(false)
+        .build());
+
+    public final Setting<Double> enemyRange = sgAuto.add(new DoubleSetting.Builder()
+        .name("enemy-range")
+        .description("How far away an enemy can be to be considered.")
+        .defaultValue(10).min(1).max(20).sliderRange(1, 20)
+        .visible(autoMine::get)
+        .build());
+
+    public final Setting<Boolean> antiPhase = sgAuto.add(new BoolSetting.Builder()
+        .name("anti-phase")
+        .description("Mine the blocks an enemy is standing inside.")
+        .defaultValue(true)
+        .visible(autoMine::get)
+        .build());
+
+    public final Setting<Boolean> antiSurround = sgAuto.add(new BoolSetting.Builder()
+        .name("anti-surround")
+        .description("Mine the blocks boxing an enemy in.")
+        .defaultValue(true)
+        .visible(autoMine::get)
+        .build());
+
+    public final Setting<Boolean> autoDoubleMine = sgAuto.add(new BoolSetting.Builder()
+        .name("auto-double-mine")
+        .description("Break two auto-mine targets at once, using double-break.")
+        .defaultValue(true)
+        .visible(autoMine::get)
+        .build());
+
+    public final Setting<Boolean> mineBedrock = sgAuto.add(new BoolSetting.Builder()
+        .name("mine-bedrock")
+        .description("Also target bedrock, broken vanilla-style with hand swings instead of packets.")
+        .defaultValue(false)
+        .visible(autoMine::get)
+        .build());
 
     public final Setting<Boolean> grimBypass = sgMine.add(new BoolSetting.Builder()
         .name("grim-bypass")
@@ -101,6 +156,13 @@ public class Speedmine extends Module {
         .defaultValue(true)
         .build());
 
+    public final Setting<Boolean> removeSlowBlocks = sgMine.add(new BoolSetting.Builder()
+        .name("remove-slow-blocks")
+        .description("Also remove blocks below the instant-break threshold client-side.")
+        .defaultValue(false)
+        .visible(() -> !validateBreak.get())
+        .build());
+
     public final Setting<Boolean> autoRebreak = sgMine.add(new BoolSetting.Builder()
         .name("auto-rebreak")
         .description("Rebreak the last position if a block reappears there.")
@@ -110,6 +172,12 @@ public class Speedmine extends Module {
     public final Setting<Boolean> silentSwap = sgMine.add(new BoolSetting.Builder()
         .name("silent-swap")
         .description("Swap to the best tool via packet without visually changing your held item.")
+        .defaultValue(true)
+        .build());
+
+    public final Setting<Boolean> toolHold = sgMine.add(new BoolSetting.Builder()
+        .name("tool-hold")
+        .description("Keep the swapped tool held until mining is done, so the server breaks with it.")
         .defaultValue(true)
         .build());
 
@@ -133,6 +201,14 @@ public class Speedmine extends Module {
     public  BlockPos    lastBrokenPos;
     public final Deque<BlockPos> queue = new ArrayDeque<>();
 
+    /** Slot currently held server-side by the silent swap; -1 = server is on the client's real slot. */
+    private int heldSlot       = -1;
+    private int lastClientSlot = -1;
+    private int idleTicks      = 0;
+
+    private BlockPos bedrockPos;
+    private boolean  warnedSwingBlocked;
+
     // ── Constructor ───────────────────────────────────────────────────────────
 
     public Speedmine() {
@@ -144,9 +220,12 @@ public class Speedmine extends Module {
 
     @Override
     public void onDeactivate() {
-        primary       = null;
-        secondary     = null;
-        lastBrokenPos = null;
+        releaseHeldSlot();
+        primary            = null;
+        secondary          = null;
+        lastBrokenPos      = null;
+        bedrockPos         = null;
+        warnedSwingBlocked = false;
         queue.clear();
     }
 
@@ -168,6 +247,15 @@ public class Speedmine extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.world == null || mc.player == null) return;
 
+        // The player picking a slot themselves resyncs the server to it, dropping our hold
+        int clientSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
+        if (clientSlot != lastClientSlot) {
+            lastClientSlot = clientSlot;
+            heldSlot       = -1;
+        }
+
+        tickAutoMine();
+
         // Auto-rebreak: if the last broken position got a block placed in it, break it again
         if (lastBrokenPos != null
                 && autoRebreak.get()
@@ -184,6 +272,13 @@ public class Speedmine extends Module {
         if (primary   != null && primary.progress()   >= 1.0) finishBreak(primary,   silentSwap.get());
 
         drainQueue();
+
+        // Give the slot back only once nothing is mining anymore. The server breaks a block in its
+        // own update() when its mining timer completes, which can be several ticks after our STOP —
+        // reverting on a fixed short delay races that and the break lands with the wrong item.
+        if (!toolHold.get()) releaseHeldSlot();
+        else if (primary != null || secondary != null || !queue.isEmpty()) idleTicks = 0;
+        else if (heldSlot != -1 && ++idleTicks >= IDLE_RELEASE_TICKS) releaseHeldSlot();
     }
 
     @EventHandler
@@ -191,6 +286,7 @@ public class Speedmine extends Module {
         if (mc.world == null || mc.player == null) return;
 
         for (BlockPos pos : queue) renderBlock(event, pos);
+        if (bedrockPos != null) renderBlock(event, bedrockPos);
         if (secondary != null) renderMineContext(event, secondary);
         if (primary   != null) renderMineContext(event, primary);
 
@@ -210,12 +306,12 @@ public class Speedmine extends Module {
         if (primary == null) {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
-            sendStart(pos);
+            sendStart(primary);
         } else if (canAddSecondary) {
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, primary.pos);
+            stopWithTool(primary, silentSwap.get());
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(pos, state, true);
-            sendStart(pos);
+            sendStart(primary);
         } else {
             if (queueEnabled.get() && !queue.contains(pos)) queue.addLast(pos);
         }
@@ -239,41 +335,45 @@ public class Speedmine extends Module {
             BlockState state = mc.world.getBlockState(pos);
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
-            sendStart(pos);
+            sendStart(primary);
         } else if (doubleBreak.get() && secondary == null) {
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, primary.pos);
+            stopWithTool(primary, silentSwap.get());
             BlockPos   nextPos   = queue.pollFirst();
             BlockState nextState = mc.world.getBlockState(nextPos);
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(nextPos, nextState, true);
-            sendStart(nextPos);
+            sendStart(primary);
         }
     }
 
     // ── Packet building ───────────────────────────────────────────────────────
 
-    private void sendStart(BlockPos pos) {
+    private void sendStart(MineContext ctx) {
+        // Server mines with whatever it thinks we hold, so the tool goes in before the START
+        if (silentSwap.get()) holdTool(ctx.startSlot);
         if (grimBypass.get()) {
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, pos);
+            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
         }
-        sendSequencedAction(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos);
+        sendSequencedAction(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, ctx.pos);
     }
 
     private void sendStopPacket(MineContext ctx, boolean silent) {
         if (mc.world == null || mc.player == null) return;
 
-        int bestSlot = findBestHotbarSlot(ctx.state);
-        int prevSlot = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
-        boolean needSwap = silent && bestSlot != -1 && bestSlot != prevSlot;
+        if (silent) holdTool(ctx.startSlot);
+        // Vanilla insta-break already sent its START+STOP in sendStart; the held tool is all it needs
+        if (!ctx.instaBreak) stopWithTool(ctx, silent);
+    }
 
-        if (!ctx.instaBreak) {
-            if (needSwap) sendSequencedUpdateSlot(bestSlot);
-            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
-            if (needSwap) sendSequencedUpdateSlot(prevSlot);
-        } else if (needSwap) {
-            // Vanilla insta-break: START+STOP already in sendStart, just fix the server slot
-            sendSequencedUpdateSlot(bestSlot);
-        }
+    /**
+     * Sends a STOP for {@code ctx} with the tool it was started with held server-side, so the
+     * server resolves the break with that tool in hand. Always sends the STOP.
+     */
+    private void stopWithTool(MineContext ctx, boolean silent) {
+        if (mc.world == null || mc.player == null) return;
+
+        if (silent) holdTool(ctx.startSlot);
+        sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
     }
 
     private void finishBreak(MineContext ctx, boolean silent) {
@@ -281,7 +381,7 @@ public class Speedmine extends Module {
 
         sendStopPacket(ctx, silent);
 
-        if ((ctx.instaBreak || ctx.aboveThreshold) && !validateBreak.get()) {
+        if (!validateBreak.get() && (removeSlowBlocks.get() || ctx.instaBreak || ctx.aboveThreshold)) {
             mc.world.syncWorldEvent(WorldEvents.BLOCK_BROKEN, ctx.pos, Block.getRawIdFromState(ctx.state));
             mc.world.setBlockState(ctx.pos, Blocks.AIR.getDefaultState(), 3);
         }
@@ -314,6 +414,157 @@ public class Speedmine extends Module {
         if (swap) sendSequencedUpdateSlot(best);
         action.run();
         if (swap) sendSequencedUpdateSlot(prev);
+    }
+
+    // ── Auto Mine ─────────────────────────────────────────────────────────────
+
+    /**
+     * Picks blocks to break around nearby enemies, in BlackOut AutoMine's priority order, and
+     * hands them to the normal packet miner via {@link #requestBreak(BlockPos)}. Bedrock can't be
+     * packet-mined, so it goes down Nuker's vanilla progress+swing path instead.
+     */
+    private void tickAutoMine() {
+        if (!autoMine.get()) {
+            bedrockPos = null;
+            return;
+        }
+
+        bedrockPos = null;
+        int budget = autoDoubleMine.get() && doubleBreak.get() ? 2 : 1;
+
+        for (BlockPos target : findAutoTargets()) {
+            if (mc.world.getBlockState(target).getBlock() == Blocks.BEDROCK) {
+                // Bedrock is mined one at a time — it's a vanilla progress bar, not a packet break
+                if (bedrockPos == null) mineBedrock(target);
+                continue;
+            }
+            if (budget-- <= 0) break;
+            requestBreak(target);
+        }
+    }
+
+    /** Every valid target around nearby enemies, nearest first. */
+    private List<BlockPos> findAutoTargets() {
+        List<PlayerEntity> enemies = new ArrayList<>();
+        for (PlayerEntity player : mc.world.getPlayers()) {
+            if (player == mc.player || player.isSpectator()) continue;
+            if (Friends.get().isFriend(player)) continue;
+            if (THMSystem.get().ignoreThmMembers.get() && ThmMembers.isThmMember(player)) continue;
+            if (player.distanceTo(mc.player) > enemyRange.get()) continue;
+            enemies.add(player);
+        }
+        if (enemies.isEmpty()) return List.of();
+
+        // Digging an enemy out beats chipping at their surround
+        List<BlockPos> targets = new ArrayList<>();
+        if (antiPhase.get())    targets.addAll(collect(enemies, this::phaseBlocks));
+        if (targets.isEmpty() && antiSurround.get()) targets.addAll(collect(enemies, this::surroundBlocks));
+        return targets;
+    }
+
+    private List<BlockPos> collect(List<PlayerEntity> enemies, Function<PlayerEntity, List<BlockPos>> candidates) {
+        List<BlockPos> out = new ArrayList<>();
+        for (PlayerEntity enemy : enemies) {
+            for (BlockPos pos : candidates.apply(enemy)) {
+                if (pos != null && !outOfRange(pos) && !out.contains(pos)) out.add(pos);
+            }
+        }
+        out.sort(Comparator.comparingDouble(pos -> mc.player.getEyePos().squaredDistanceTo(pos.toCenterPos())));
+        return out;
+    }
+
+    /** Every block the enemy's hitbox overlaps. */
+    private List<BlockPos> phaseBlocks(PlayerEntity enemy) {
+        List<BlockPos> out = new ArrayList<>();
+        for (BlockPos pos : BlockPos.iterate(BlockPos.ofFloored(enemy.getBoundingBox().getMinPos()),
+                                             BlockPos.ofFloored(enemy.getBoundingBox().getMaxPos()))) {
+            if (mineable(pos)) out.add(pos.toImmutable());
+        }
+        return out;
+    }
+
+    /** Everything boxing the enemy in: surround ring, head-level ring, and the block above their head. */
+    private List<BlockPos> surroundBlocks(PlayerEntity enemy) {
+        BlockPos feet = feet(enemy);
+        BlockPos head = new BlockPos(enemy.getBlockX(), (int) Math.floor(enemy.getBoundingBox().maxY), enemy.getBlockZ());
+
+        List<BlockPos> out = new ArrayList<>();
+        for (Direction dir : Direction.Type.HORIZONTAL) {
+            out.add(feet.offset(dir));
+            out.add(head.offset(dir));
+        }
+        out.add(head.up());
+        return mineableOf(out.toArray(new BlockPos[0]));
+    }
+
+    private List<BlockPos> mineableOf(BlockPos... positions) {
+        List<BlockPos> out = new ArrayList<>();
+        for (BlockPos pos : positions) if (mineable(pos)) out.add(pos);
+        return out;
+    }
+
+    private BlockPos feet(PlayerEntity enemy) {
+        return new BlockPos(enemy.getBlockX(), (int) Math.round(enemy.getY()), enemy.getBlockZ());
+    }
+
+    private boolean mineable(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
+        if (state.isAir() || !BlockUtils.canBreak(pos, state)) return false;
+        if (state.isOf(Blocks.BEDROCK)) return mineBedrock.get() && canSwing();
+        return true;
+    }
+
+    // ── Bedrock (vanilla progress + swing, like Nuker — packets can't break it) ───
+
+    /**
+     * The server's bedrock plugin needs the hand-swing packet, which PaketLimiter's own default
+     * preset puts in its always-block list — so bedrock silently wouldn't break with it enabled.
+     */
+    private boolean canSwing() {
+        PaketLimiter limiter = Modules.get().get(PaketLimiter.class);
+        if (limiter == null || !limiter.isActive() || limiter.limit.get() == 0) return true;
+        if (!limiter.alwaysBlock.get().contains(HandSwingC2SPacket.class)) return true;
+
+        if (!warnedSwingBlocked) {
+            warnedSwingBlocked = true;
+            warning("Bedrock needs hand swings, but Paket Limiter is blocking them — remove HandSwingC2SPacket from its always-block list.");
+        }
+        return false;
+    }
+
+    private void mineBedrock(BlockPos pos) {
+        if (mc.interactionManager == null) return;
+
+        // No tool swap — bedrock breaks at the same speed with anything, so whatever is held works
+        bedrockPos = pos;
+
+        Direction dir = BlockUtils.getDirection(pos);
+        mc.interactionManager.updateBlockBreakingProgress(pos, dir == null ? Direction.UP : dir);
+        mc.player.swingHand(Hand.MAIN_HAND);
+    }
+
+    // ── Silent tool hold ──────────────────────────────────────────────────────
+
+    /** Ticks with nothing left to mine before the slot is handed back to the client's real one. */
+    private static final int IDLE_RELEASE_TICKS = 3;
+
+    /** Silently holds {@code slot} server-side (no visual change), keeping it until mining goes idle. */
+    private void holdTool(int slot) {
+        if (slot < 0 || mc.player == null) return;
+
+        int serverSlot = heldSlot != -1
+            ? heldSlot
+            : ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
+        if (serverSlot != slot) sendSequencedUpdateSlot(slot);
+        heldSlot = slot;
+    }
+
+    private void releaseHeldSlot() {
+        if (heldSlot != -1 && mc.player != null) {
+            sendSequencedUpdateSlot(((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot());
+        }
+        heldSlot  = -1;
+        idleTicks = 0;
     }
 
     // ── Sequenced packet helpers ──────────────────────────────────────────────
@@ -395,6 +646,8 @@ public class Speedmine extends Module {
         public final boolean    isPrimary;
         public final boolean    instaBreak;
         public final boolean    aboveThreshold;
+        /** Hotbar slot holding the tool this block was started with; -1 if none. */
+        public final int        startSlot;
         public boolean          active = true;
 
         public MineContext(BlockPos pos, BlockState state, boolean isPrimary) {
@@ -402,6 +655,7 @@ public class Speedmine extends Module {
             this.state          = state;
             this.hardness       = mc.world != null ? state.getHardness(mc.world, pos) : 0;
             this.isPrimary      = isPrimary;
+            this.startSlot      = findBestHotbarSlot(state);
             this.startMs        = System.currentTimeMillis();
             float delta         = calcDelta();
             this.instaBreak     = delta >= 1.0f;

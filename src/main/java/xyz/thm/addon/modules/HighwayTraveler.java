@@ -112,7 +112,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Boolean> autoRepairSwap = sgAutoRepair.add(
         new BoolSetting.Builder()
             .name("auto-repair-swap")
-            .description("When the highway ahead is broken (missing floor block or an obstruction), hand control to Highway Builder to repair it, then resume traveling.")
+            .description("Hands control to Highway Builder when the highway ahead is broken.")
             .defaultValue(false)
             .build()
     );
@@ -131,7 +131,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Integer> repairCheckInterval = sgAutoRepair.add(
         new IntSetting.Builder()
             .name("repair-check-interval")
-            .description("How often (in ticks) to re-scan the highway ahead for breaks. Lower is more accurate but more expensive.")
+            .description("How often to re-scan the highway ahead for breaks.")
             .defaultValue(10)
             .min(1)
             .sliderMax(40)
@@ -142,7 +142,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Boolean> repairToleratesBounce = sgAutoRepair.add(
         new BoolSetting.Builder()
             .name("tolerate-bounce")
-            .description("Also accepts a healthy highway a couple blocks above/below your current height, so normal elytra-bounce altitude changes aren't mistaken for a broken highway.")
+            .description("Ignores bounce altitude changes, so they aren't read as a broken highway.")
             .defaultValue(true)
             .visible(autoRepairSwap::get)
             .build()
@@ -151,7 +151,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Double> handoffLandingDelay = sgAutoRepair.add(
         new DoubleSetting.Builder()
             .name("landing-delay")
-            .description("Seconds to stop and hold still after detecting a broken highway before handing control to Highway Builder, so you land on the highway first instead of it building at your mid-air/bounce height.")
+            .description("Seconds to hold still and land before handing over to Highway Builder.")
             .defaultValue(5)
             .min(0)
             .sliderMax(20)
@@ -162,7 +162,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Boolean> autoBounce = sgBounce.add(
         new BoolSetting.Builder()
             .name("auto-bounce")
-            .description("Deploys and continuously recasts your elytra the same way Elytra Fly's Bounce mode does, so traveling doesn't depend on Elytra Fly being separately configured.")
+            .description("Deploys and recasts your elytra like Elytra Fly's Bounce mode.")
             .defaultValue(true)
             .build()
     );
@@ -199,7 +199,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Boolean> bounceRestart = sgBounce.add(
         new BoolSetting.Builder()
             .name("restart")
-            .description("Restarts flying with the elytra when rubberbanding. Unequips the elytra to force an actual stop, then re-equips it after restart-delay ticks and takes off again - more reliable than just resending the fly packet.")
+            .description("Unequips and re-equips the elytra to restart flight after a rubberband.")
             .defaultValue(true)
             .visible(autoBounce::get)
             .build()
@@ -208,7 +208,7 @@ public class HighwayTraveler extends Module {
     private final Setting<Integer> bounceRestartDelay = sgBounce.add(
         new IntSetting.Builder()
             .name("restart-delay")
-            .description("How many ticks to keep the elytra unequipped before re-equipping and restarting flight after rubberbanding.")
+            .description("Ticks to keep the elytra off before re-equipping and taking off again.")
             .defaultValue(10)
             .min(0)
             .sliderRange(0, 20)

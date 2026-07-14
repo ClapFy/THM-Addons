@@ -27,7 +27,7 @@ public class DiscordNotifs extends Module
 
     private final Setting<String> webhookURL = sgGeneral.add(new StringSetting.Builder()
         .name("webhook-link")
-        .description("The discord webhook to use, looks like this: https://discord.com/api/webhooks/webhookUserId/webHookTokenOrSomething")
+        .description("The Discord webhook URL to post to.")
         .defaultValue("")
         .build()
     );
@@ -41,7 +41,7 @@ public class DiscordNotifs extends Module
 
     private final Setting<Boolean> queueMessages = sgGeneral.add(new BoolSetting.Builder()
         .name("queue-messages")
-        .description("Will queue messages if they are sent too quickly. This could result in a long delay between messages being logged if the queue gets too big.")
+        .description("Queues messages sent too quickly, at the cost of delay.")
         .defaultValue(false)
         .build()
     );
