@@ -48,9 +48,6 @@
     "suggests": {
       "baritone": "*",
       "baritone-meteor": "*"
-    },
-    "breaks": {
-      "anarchymod": "*"
     }
   }
 }
