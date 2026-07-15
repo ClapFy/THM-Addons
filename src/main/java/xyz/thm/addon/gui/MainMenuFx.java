@@ -18,21 +18,32 @@ import java.util.Random;
 // it doesn't add meaningfully to title screen render time.
 public class MainMenuFx {
 
-    // THMAddon.THMColor/THMSideColor are the addon's actual brand colors (already used as the
-    // line/side colors for THM's block-ESP-style renders elsewhere) instead of a guessed accent.
-    private static final int THM_COLOR = THMAddon.THMColor.getPacked();
-    private static final int THM_SIDE = THMAddon.THMSideColor.getPacked();
+    // Brand colors are now live and player-editable from the THM tab (THMSystem.thmColor /
+    // thmSideColor); these read the current setting each call (fall back to the THMAddon defaults
+    // if the system isn't up yet). The main color is the "line" color (border/title bar/buttons/
+    // text/particles), the side color the translucent "fill" color (window body) - the same
+    // line/side split THM's block-ESP renders use. All ARGB ints (getPacked() returns ARGB).
+    private static int thmColor() {
+        THMSystem sys = THMSystem.get();
+        return sys != null ? sys.thmColor.get().getPacked() : THMAddon.THMColor.getPacked();
+    }
 
-    private static final int BORDER_TOP = ColorHelper.lerp(0.3f, 0xff000000, THM_COLOR);
-    private static final int BORDER_BOTTOM = THM_COLOR;
-    private static final int TITLEBAR_LEFT = ColorHelper.lerp(0.75f, 0xff000000, THM_COLOR);
-    private static final int TITLEBAR_RIGHT = ColorHelper.lerp(0.55f, 0xff000000, THM_COLOR);
-    // Genuinely see-through now that the backdrop behind it is actually blurred (see
-    // ShaderBackground.renderBlurredRegion) - a soft, low-contrast blurred image can sit behind
-    // a much more transparent pane than a sharp/busy one without hurting text readability.
-    private static final int BODY_FILL = withAlpha(ColorHelper.lerp(0.8f, 0xff000000, THM_COLOR), 0x70);
-    private static final int BUTTON_FILL = withAlpha(ColorHelper.lerp(0.7f, 0xff000000, THM_COLOR), 0xe0);
-    private static final int BUTTON_FILL_HOVER = withAlpha(THM_COLOR, 0xe0);
+    private static int thmSide() {
+        THMSystem sys = THMSystem.get();
+        return sys != null ? sys.thmSideColor.get().getPacked() : THMAddon.THMSideColor.getPacked();
+    }
+
+    // Public so the THM Meteor theme (ThmTheme / ThmChrome) reuses the exact same window chrome
+    // colors when restyling Meteor's own GUI to match this window - recomputed live from thmColor().
+    public static int borderTop()      { return ColorHelper.lerp(0.3f, 0xff000000, thmColor()); }
+    public static int borderBottom()   { return thmColor(); }
+    public static int titlebarLeft()   { return ColorHelper.lerp(0.75f, 0xff000000, thmColor()); }
+    public static int titlebarRight()  { return ColorHelper.lerp(0.55f, 0xff000000, thmColor()); }
+    // Body/fill is the side color directly (already a translucent tint, like the block side color);
+    // it sits over a blurred backdrop so a see-through pane stays readable.
+    public static int bodyFill()       { return thmSide(); }
+    public static int buttonFill()     { return withAlpha(ColorHelper.lerp(0.7f, 0xff000000, thmColor()), 0xe0); }
+    public static int buttonFillHover(){ return withAlpha(thmColor(), 0xe0); }
 
     // Header text above the buttons - edit this to change it. Defaults to "Minecraft" (the
     // word the vanilla logo it replaces used to show).
@@ -75,7 +86,7 @@ public class MainMenuFx {
         renderBigTitle(context, tr, centerX, headerY);
 
         String version = "THM Addon v" + THMAddon.VERSION;
-        context.drawTextWithShadow(tr, version, centerX - tr.getWidth(version) / 2, headerY + (int) (10 * HEADER_SCALE) + 2, THM_COLOR);
+        context.drawTextWithShadow(tr, version, centerX - tr.getWidth(version) / 2, headerY + (int) (10 * HEADER_SCALE) + 2, thmColor());
     }
 
     /** Mouse particle trail - draw this AFTER the screen's buttons so it drifts over everything. */
@@ -84,19 +95,19 @@ public class MainMenuFx {
 
         for (Particle p : particles) {
             for (int[] pos : p.points) {
-                context.fill(pos[0], pos[1], pos[0] + 1, pos[1] + 1, THM_COLOR);
+                context.fill(pos[0], pos[1], pos[0] + 1, pos[1] + 1, thmColor());
             }
         }
     }
 
     /** BleachHack-styled flat button chrome, drawn in place of a repositioned vanilla button. */
     public static void renderButton(DrawContext context, TextRenderer tr, int x1, int y1, int x2, int y2, String text, boolean hovered, boolean active) {
-        int fill = hovered && active ? BUTTON_FILL_HOVER : BUTTON_FILL;
+        int fill = hovered && active ? buttonFillHover() : buttonFill();
 
-        context.fill(x1, y1 + 1, x1 + 1, y2 - 1, BORDER_TOP);
-        horizontalGradient(context, x1 + 1, y1, x2 - 1, y1 + 1, BORDER_TOP, BORDER_BOTTOM);
-        context.fill(x2 - 1, y1 + 1, x2, y2 - 1, BORDER_BOTTOM);
-        horizontalGradient(context, x1 + 1, y2 - 1, x2 - 1, y2, BORDER_TOP, BORDER_BOTTOM);
+        context.fill(x1, y1 + 1, x1 + 1, y2 - 1, borderTop());
+        horizontalGradient(context, x1 + 1, y1, x2 - 1, y1 + 1, borderTop(), borderBottom());
+        context.fill(x2 - 1, y1 + 1, x2, y2 - 1, borderBottom());
+        horizontalGradient(context, x1 + 1, y2 - 1, x2 - 1, y2, borderTop(), borderBottom());
         context.fill(x1 + 1, y1 + 1, x2 - 1, y2 - 1, fill);
 
         int color = active ? 0xffffffff : 0xffa0a0a0;
@@ -116,7 +127,7 @@ public class MainMenuFx {
         context.getMatrices().pushMatrix();
         context.getMatrices().translate(centerX - textWidth / 2f, (float) y);
         context.getMatrices().scale(HEADER_SCALE, HEADER_SCALE);
-        context.drawTextWithShadow(tr, HEADER_TEXT, 0, 0, THM_COLOR);
+        context.drawTextWithShadow(tr, HEADER_TEXT, 0, 0, thmColor());
         context.getMatrices().popMatrix();
     }
 
@@ -126,13 +137,13 @@ public class MainMenuFx {
     // them here).
     // Public so MainMenuSettingsScreen (the non-Meteor settings screen) can reuse the same look.
     public static void renderChrome(DrawContext context, TextRenderer tr, int x1, int y1, int x2, int y2, String title) {
-        context.fill(x1, y1 + 1, x1 + 1, y2 - 1, BORDER_TOP);
-        horizontalGradient(context, x1 + 1, y1, x2 - 1, y1 + 1, BORDER_TOP, BORDER_BOTTOM);
-        context.fill(x2 - 1, y1 + 1, x2, y2 - 1, BORDER_BOTTOM);
-        horizontalGradient(context, x1 + 1, y2 - 1, x2 - 1, y2, BORDER_TOP, BORDER_BOTTOM);
+        context.fill(x1, y1 + 1, x1 + 1, y2 - 1, borderTop());
+        horizontalGradient(context, x1 + 1, y1, x2 - 1, y1 + 1, borderTop(), borderBottom());
+        context.fill(x2 - 1, y1 + 1, x2, y2 - 1, borderBottom());
+        horizontalGradient(context, x1 + 1, y2 - 1, x2 - 1, y2, borderTop(), borderBottom());
 
-        context.fill(x1 + 1, y1 + 12, x2 - 1, y2 - 1, BODY_FILL);
-        horizontalGradient(context, x1 + 1, y1 + 1, x2 - 1, y1 + 12, TITLEBAR_LEFT, TITLEBAR_RIGHT);
+        context.fill(x1 + 1, y1 + 12, x2 - 1, y2 - 1, bodyFill());
+        horizontalGradient(context, x1 + 1, y1 + 1, x2 - 1, y1 + 12, titlebarLeft(), titlebarRight());
 
         context.drawTextWithShadow(tr, title, x1 + 4, y1 + 3, -1);
 

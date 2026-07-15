@@ -13,6 +13,7 @@
     "HighwayBuilderBowMixin",
     "HighwayBuilderCameraMixin",
     "HighwayBuilderEntityMixin",
+    "ImHighMixin",
     "MenuParticlesMixin",
     "NativeImageWebpMixin",
     "ScreenshotClipboardMixin",
@@ -60,6 +61,11 @@
     "meteor.NotifierMixin",
     "meteor.ScaffoldMixin",
     "meteor.SpeedMixin",
+    "meteor.ThmHeaderClickMixin",
+    "meteor.ThmMeteorHeaderMixin",
+    "meteor.ThmMeteorTriangleMixin",
+    "meteor.ThmMeteorWidgetMixin",
+    "meteor.ThmMeteorWindowMixin",
     "meteor.TimerMixin"
   ]
 }

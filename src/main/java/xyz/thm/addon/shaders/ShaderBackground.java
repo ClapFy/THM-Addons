@@ -40,6 +40,7 @@ public class ShaderBackground {
     private static GpuBuffer uniformBuffer;
     private static boolean blurBroken;
     private static boolean scaledBroken;
+    private static boolean tripBroken;
 
     /** @return true if a shader was drawn (caller should skip the vanilla panorama). */
     public static boolean render() {
@@ -91,6 +92,24 @@ public class ShaderBackground {
         } catch (Throwable t) {
             THMAddon.LOG.warn("[THM] Main-menu window blur failed, disabling it for this session", t);
             blurBroken = true;
+            return false;
+        }
+    }
+
+    /**
+     * Joke "I'm high" full-frame post-process: wavey nausea distortion + greenish/red pulsing tint
+     * + a "melt into each other" double-sample, applied over the ENTIRE main framebuffer (world +
+     * HUD + Meteor GUI). {@code intensity} 0..1. Latches off on any failure so a broken driver
+     * can never crash a frame.
+     */
+    public static boolean renderTrip(float intensity) {
+        if (intensity <= 0 || tripBroken) return false;
+
+        try {
+            return TripBackground.render(intensity);
+        } catch (Throwable t) {
+            THMAddon.LOG.warn("[THM] 'I'm high' effect failed, disabling it for this session", t);
+            tripBroken = true;
             return false;
         }
     }

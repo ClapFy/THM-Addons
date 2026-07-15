@@ -29,12 +29,15 @@ public class THMSystem extends System<THMSystem> {
 
     public final Settings settings = new Settings();
 
+    // Group creation order = display order in the THM tab. Appearance first (brand colors), Hash
+    // last (rarely touched).
+    private final SettingGroup sgAppearance = settings.createGroup("Appearance");
     private final SettingGroup sgGeneral = settings.createGroup("General");
-    private final SettingGroup sgPrefix = settings.createGroup("Hash");
     private final SettingGroup sgProfiles = settings.createGroup("Highway Profiles");
     private final SettingGroup sgPvp = settings.createGroup("PVP");
     private final SettingGroup sgRender = settings.createGroup("THM Rendering");
     private final SettingGroup sgKitbot = settings.createGroup("KitBot");
+    private final SettingGroup sgPrefix = settings.createGroup("Hash");
 
     // Separate settings object for the Wavy Capes screen (not shown in the main THM tab)
     public final Settings wavyCapesSettings = new Settings();
@@ -43,6 +46,24 @@ public class THMSystem extends System<THMSystem> {
     // Separate settings object for the Main Menu screen, opened from a button on the title screen
     public final Settings mainMenuSettings = new Settings();
     private final SettingGroup sgMainMenu = mainMenuSettings.createGroup("Main Menu");
+
+    // Appearance Settings - the addon's brand colors. Drive the THM main-menu window and the THM
+    // Meteor theme (see MainMenuFx / ThmChrome): the main color is the "line" color (border,
+    // title bar, button fills, title text, particles); the side color is the translucent "fill"
+    // color (the window body), mirroring how THM's block-ESP renders use a line + side color.
+    public final Setting<meteordevelopment.meteorclient.utils.render.color.SettingColor> thmColor = sgAppearance.add(new ColorSetting.Builder()
+        .name("thm-color")
+        .description("Main THM brand color - borders, title bar, buttons and text of the THM window/theme.")
+        .defaultValue(new meteordevelopment.meteorclient.utils.render.color.SettingColor(145, 60, 255, 255))
+        .build()
+    );
+
+    public final Setting<meteordevelopment.meteorclient.utils.render.color.SettingColor> thmSideColor = sgAppearance.add(new ColorSetting.Builder()
+        .name("thm-side-color")
+        .description("Translucent THM fill color - the window body of the THM window/theme.")
+        .defaultValue(new meteordevelopment.meteorclient.utils.render.color.SettingColor(145, 60, 255, 75))
+        .build()
+    );
 
     // General Settings
     public final Setting<Boolean> screenshotToClipboard = sgGeneral.add(new BoolSetting.Builder()
