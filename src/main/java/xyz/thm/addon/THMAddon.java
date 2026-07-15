@@ -59,6 +59,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
     }
     @Override
     public void onInitializeClient() {
+        try {
             PayloadTypeRegistry.playC2S().register(JoinPayload.ID, JoinPayload.CODEC);
             ClientPlayConnectionEvents.JOIN.register((listener, sender, client) -> {
                 if (!THMUtils.isNot6B6T()) {
@@ -68,6 +69,9 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
                     LOG.info("Join payload not sent.");
                 }
             });
+        }  catch (Exception e) {
+        LOG.error("Failed to send the Packet:", e);
+    }
     }
 
     @Override
