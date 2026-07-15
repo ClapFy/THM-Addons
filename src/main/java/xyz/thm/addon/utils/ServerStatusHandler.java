@@ -27,8 +27,8 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  * <ul>
  *     <li>Sampling cadence: about every 100 ms on client thread.</li>
  *     <li>Commit stabilization: 3 consistent candidate samples with minimum confidence 3.</li>
- *     <li>Deterministic scoring source: self {@code PlayerListEntry} gamemode only.
- *     If that source is unavailable, state remains {@link ServerState#UNKNOWN}.</li>
+ *     <li>Deterministic scoring source: self {@code PlayerListEntry} gamemode plus dimension.
+ *     If the gamemode source is unavailable, state remains {@link ServerState#UNKNOWN}.</li>
  *     <li>System-message spoof hardening for cracked prompt:
  *     only system-indicated chat can arm cracked-login evidence.</li>
  * </ul>
@@ -36,13 +36,15 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  * <p><b>State rules</b>
  * <ul>
  *     <li>{@link ServerState#CRACKED_LOGIN}:
- *     trusted prompt active + ADVENTURE + {@code minecraft:the_end} + teleport gate not met.</li>
+ *     trusted prompt seen on this connection + ADVENTURE + {@code minecraft:the_end}
+ *     + teleport gate not met.</li>
  *     <li>{@link ServerState#CRACKED_LOBBY}:
- *     ADVENTURE + {@code minecraft:the_end} + teleport gate met
+ *     trusted prompt seen on this connection + ADVENTURE + {@code minecraft:the_end} + teleport gate met
  *     (distance from captured prompt position >= 3 blocks).</li>
  *     <li>{@link ServerState#MAIN_LOBBY}:
  *     ADVENTURE + {@code minecraft:overworld}.</li>
- *     <li>{@link ServerState#TRANSFER_SERVER}: SPECTATOR.</li>
+ *     <li>{@link ServerState#TRANSFER_SERVER}:
+ *     ADVENTURE + {@code minecraft:the_end} without cracked-auth evidence, or SPECTATOR.</li>
  *     <li>{@link ServerState#MAIN_SERVER}: SURVIVAL (dimension-agnostic).</li>
  *     <li>Otherwise {@link ServerState#UNKNOWN}.</li>
  * </ul>
@@ -127,7 +129,6 @@ public final class ServerStatusHandler {
     private static final int STABILIZATION_TICKS = 3;
     private static final int MIN_CONFIDENCE = 3;
     private static final long CRACKED_PROMPT_JOIN_WINDOW_MS = 45_000L;
-    private static final long CRACKED_PROMPT_TTL_MS = 20_000L;
     private static final int CRACKED_LOGIN_TELEPORT_MIN_BLOCKS = 3;
     private static final long SAMPLE_QUEUE_STUCK_RESET_MS = 2_000L;
     private static final boolean DEBUG_LOGS = false;
@@ -140,7 +141,7 @@ public final class ServerStatusHandler {
     private int candidateConfidence;
     private long lastTransitionAtMs;
     private String lastEvidenceSummary = "no-evidence";
-    private long lastCrackedPromptAtMs;
+    private boolean crackedPromptSeenThisConnection;
     private boolean crackedPromptPosValid;
     private int crackedPromptX;
     private int crackedPromptY;
@@ -270,7 +271,7 @@ public final class ServerStatusHandler {
         if (!isSystemIndicator(event.getIndicator())) return;
         if (!isTrustedCrackedPrompt(lower, now)) return;
 
-        lastCrackedPromptAtMs = now;
+        crackedPromptSeenThisConnection = true;
         if (mc != null && mc.player != null) {
             crackedPromptPosValid = true;
             crackedPromptX = mc.player.getBlockX();
@@ -402,10 +403,9 @@ public final class ServerStatusHandler {
 
     private EvidenceScore scoreStrictEvidence() {
         EvidenceScore score = new EvidenceScore();
-        long now = System.currentTimeMillis();
 
-        // Deterministic commit policy: only self PlayerListEntry gamemode is authoritative.
-        // If unavailable, remain UNKNOWN to avoid false positives from weaker sources.
+        // Deterministic commit policy: self PlayerListEntry gamemode and the live dimension are
+        // authoritative. Trusted cracked-auth evidence only disambiguates Adventure + End.
         GameMode gm = resolvePlayerListGameMode();
         if (gm == null) {
             score.reasons.add("strict:missing-player-list-gamemode");
@@ -421,21 +421,26 @@ public final class ServerStatusHandler {
             }
         }
 
-        boolean promptActive = isCrackedPromptActive(now);
         boolean crackedAdventureEnd = gm == GameMode.ADVENTURE && "minecraft:the_end".equals(dimensionId);
         boolean postLoginTeleported = hasMetPostLoginTeleportGate();
 
-        if (promptActive && crackedAdventureEnd && !postLoginTeleported) {
+        if (crackedPromptSeenThisConnection && crackedAdventureEnd && !postLoginTeleported) {
             score.crackedLogin = 100;
-            score.reasons.add("strict:trusted-prompt+adventure-the_end-awaiting-post-login-teleport+gm-source:" + gmSource);
+            score.reasons.add("strict:connection-trusted-prompt+adventure-the_end-awaiting-post-login-teleport+gm-source:" + gmSource);
             return score;
         }
 
-        if (gm == GameMode.ADVENTURE
-            && "minecraft:the_end".equals(dimensionId)
+        if (crackedPromptSeenThisConnection
+            && crackedAdventureEnd
             && postLoginTeleported) {
             score.cracked = 100;
-            score.reasons.add("strict:gamemode:ADVENTURE+dimension:the_end+teleport->cracked-lobby+gm-source:" + gmSource);
+            score.reasons.add("strict:connection-trusted-prompt+adventure-the_end+teleport->cracked-lobby+gm-source:" + gmSource);
+            return score;
+        }
+
+        if (crackedAdventureEnd) {
+            score.transfer = 100;
+            score.reasons.add("strict:gamemode:ADVENTURE+dimension:the_end+no-cracked-evidence->transfer+gm-source:" + gmSource);
             return score;
         }
 
@@ -492,10 +497,6 @@ public final class ServerStatusHandler {
         return ServerState.UNKNOWN;
     }
 
-    private boolean isCrackedPromptActive(long nowMs) {
-        return nowMs - lastCrackedPromptAtMs <= CRACKED_PROMPT_TTL_MS;
-    }
-
     private boolean hasMetPostLoginTeleportGate() {
         if (!crackedPromptPosValid) return false;
         if (mc == null || mc.player == null) return false;
@@ -522,7 +523,7 @@ public final class ServerStatusHandler {
         lastDetectionStepAtMs = 0L;
         lastEvidenceSummary = "scores[lobby=0,main=0,crackedLogin=0,cracked=0,transfer=0],reasons=forced-unknown:" + reason;
 
-        lastCrackedPromptAtMs = 0L;
+        crackedPromptSeenThisConnection = false;
         crackedPromptPosValid = false;
         crackedPromptX = 0;
         crackedPromptY = 0;
