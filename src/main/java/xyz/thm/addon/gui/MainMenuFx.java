@@ -42,6 +42,11 @@ public class MainMenuFx {
     private static final List<Particle> particles = new ArrayList<>();
     private static final Random RAND = new Random();
 
+    // Shader-only preview toggle. Static/unpersisted (a dev/design aid, resets on relaunch);
+    // lives here rather than in the mixin so MainMenuSettingsScreen can flip it on. Read by
+    // TitleScreenMenuMixin to strip the UI down to just the shader background.
+    public static boolean previewMode = false;
+
     public static void tick(int mouseX, int mouseY) {
         if (!THMSystem.get().mainMenuParticles.get()) return;
 

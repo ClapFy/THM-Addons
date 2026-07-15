@@ -39,11 +39,6 @@ import java.util.List;
 @Mixin(TitleScreen.class)
 public abstract class TitleScreenMenuMixin extends Screen {
 
-    // Static so it survives clearAndInit() (window minimize, preview toggle, resize all
-    // recreate the screen) - a dev/design toggle, not a real setting, so it isn't persisted
-    // to THMSystem and resets to off on relaunch.
-    private static boolean thm$previewMode = false;
-
     protected TitleScreenMenuMixin(Text title) {
         super(title);
     }
@@ -52,11 +47,6 @@ public abstract class TitleScreenMenuMixin extends Screen {
     private void thm$layoutWindow(CallbackInfo ci) {
         ShaderManager.reroll();
 
-        // The "THM Menu" button is the only way back into the settings screen (e.g. to turn
-        // the window back on after disabling it), so it must stay reachable even with every
-        // main-menu toggle off - unlike the rest of this method, it's not gated on
-        // mainMenuWindow.
-        ClickableWidget menuButton;
         if (THMSystem.get().mainMenuWindow.get()) {
             int[] bounds = MainMenuFx.windowBounds(this.width, this.height);
             int x1 = bounds[0], y1 = bounds[1], x2 = bounds[2], y2 = bounds[3];
@@ -78,34 +68,30 @@ public abstract class TitleScreenMenuMixin extends Screen {
             // not re-skinned, since BleachHack's own recreation doesn't have icon buttons either.
             if (!iconButtons.isEmpty()) iconButtons.get(0).setPosition(centerX - 124, maxY);
             if (iconButtons.size() > 1) iconButtons.get(1).setPosition(centerX + 104, maxY);
-
-            menuButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("THM Menu"), b ->
-                    this.client.setScreen(new MainMenuSettingsScreen(this)))
-                .dimensions(x2 - 90, y1 + 16, 82, 16)
-                .build());
-        } else {
-            // No window to anchor to - park it in the top-left corner instead.
-            menuButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("THM Menu"), b ->
-                    this.client.setScreen(new MainMenuSettingsScreen(this)))
-                .dimensions(6, 6, 82, 16)
-                .build());
         }
-        ThmStyledButtons.mark(menuButton);
 
-        // Shader preview toggle: fixed corner, independent of window on/off, so it's always
-        // reachable both to enter and to leave preview mode.
-        ClickableWidget previewButton = this.addDrawableChild(ButtonWidget.builder(
-                Text.literal(thm$previewMode ? "Show UI" : "Preview Shader"), b -> {
-                    thm$previewMode = !thm$previewMode;
-                    this.clearAndInit();
-                })
+        // The "THM Menu" button is the only way into the settings screen (which now also hosts the
+        // shader preview toggle), so it lives in the bottom-left corner - always reachable
+        // regardless of window on/off.
+        ClickableWidget menuButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("THM Menu"), b ->
+                this.client.setScreen(new MainMenuSettingsScreen(this)))
             .dimensions(6, this.height - 22, 90, 16)
             .build());
-        ThmStyledButtons.mark(previewButton);
+        ThmStyledButtons.mark(menuButton);
 
-        if (thm$previewMode) {
+        // Preview mode strips everything down to the raw shader; the toggle to *enter* it lives in
+        // the settings screen, but the exit has to live here since that screen is hidden meanwhile.
+        if (MainMenuFx.previewMode) {
+            ClickableWidget showUi = this.addDrawableChild(ButtonWidget.builder(Text.literal("Show UI"), b -> {
+                    MainMenuFx.previewMode = false;
+                    this.client.setScreen(new MainMenuSettingsScreen(this));
+                })
+                .dimensions(6, this.height - 22, 90, 16)
+                .build());
+            ThmStyledButtons.mark(showUi);
+
             for (Element el : this.children()) {
-                if (el instanceof ClickableWidget widget && widget != previewButton) {
+                if (el instanceof ClickableWidget widget && widget != showUi) {
                     widget.visible = false;
                 }
             }
@@ -128,7 +114,7 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // MenuParticlesMixin (every world-not-loaded screen, not just this one).
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/screen/Screen;render(Lnet/minecraft/client/gui/DrawContext;IIF)V"))
     private void thm$renderWindowChrome(DrawContext context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
-        if (thm$previewMode) return;
+        if (MainMenuFx.previewMode) return;
 
         if (THMSystem.get().mainMenuWindow.get()) {
             int[] bounds = MainMenuFx.windowBounds(this.width, this.height);
@@ -147,7 +133,7 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // back afterwards.
     @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
     private void thm$handleChromeClick(Click click, boolean doubled, CallbackInfoReturnable<Boolean> cir) {
-        if (!THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
+        if (!THMSystem.get().mainMenuWindow.get() || MainMenuFx.previewMode) return;
 
         int[] bounds = MainMenuFx.windowBounds(this.width, this.height);
         int x1 = bounds[0], y1 = bounds[1], x2 = bounds[2], y2 = bounds[3];
@@ -170,20 +156,20 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // at whichever of our render calls is responsible.
     @Inject(method = "render", at = @At("TAIL"))
     private void thm$restoreVersionText(DrawContext context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
-        if (!THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
+        if (!THMSystem.get().mainMenuWindow.get() || MainMenuFx.previewMode) return;
         String text = "Minecraft " + SharedConstants.getGameVersion().name();
         context.drawTextWithShadow(this.textRenderer, text, 2, this.height - 10, -1);
     }
 
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/LogoDrawer;draw(Lnet/minecraft/client/gui/DrawContext;IF)V"))
     private void thm$suppressLogo(LogoDrawer logoDrawer, DrawContext context, int screenWidth, float alpha) {
-        if (THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
+        if (THMSystem.get().mainMenuWindow.get() || MainMenuFx.previewMode) return;
         logoDrawer.draw(context, screenWidth, alpha);
     }
 
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/screen/SplashTextRenderer;render(Lnet/minecraft/client/gui/DrawContext;ILnet/minecraft/client/font/TextRenderer;F)V"))
     private void thm$suppressSplash(SplashTextRenderer splashText, DrawContext context, int screenWidth, TextRenderer textRenderer, float alpha) {
-        if (THMSystem.get().mainMenuWindow.get() || thm$previewMode) return;
+        if (THMSystem.get().mainMenuWindow.get() || MainMenuFx.previewMode) return;
         splashText.render(context, screenWidth, textRenderer, alpha);
     }
 }

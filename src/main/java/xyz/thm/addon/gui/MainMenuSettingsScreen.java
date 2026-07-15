@@ -69,6 +69,18 @@ public class MainMenuSettingsScreen extends Screen {
 
         y = addBlurSlider(system, contentX, y, contentWidth);
 
+        // Enters shader-only preview mode and drops back to the title screen (which strips its own
+        // UI while previewMode is on). The exit ("Show UI") lives on the title screen since this
+        // screen is hidden meanwhile - see TitleScreenMenuMixin.
+        ButtonWidget preview = this.addDrawableChild(ButtonWidget.builder(Text.literal("Preview Shader"), b -> {
+                MainMenuFx.previewMode = true;
+                this.client.setScreen(parent);
+            })
+            .dimensions(contentX, y, contentWidth, 20)
+            .build());
+        ThmStyledButtons.mark(preview);
+        y += ROW_HEIGHT;
+
         ButtonWidget close = this.addDrawableChild(ButtonWidget.builder(Text.literal("Close"), b -> this.close())
             .dimensions(contentX, y, contentWidth, 20)
             .build());
@@ -160,6 +172,7 @@ public class MainMenuSettingsScreen extends Screen {
         y += ROW_HEIGHT * 3; // Styled Window, Particle Trail, Random Shader
         y += random ? (12 + gridRows() * 14 + 4) : ROW_HEIGHT; // shader pool grid vs. shader choice
         y += ROW_HEIGHT; // blur slider
+        y += ROW_HEIGHT; // preview shader button
         y += 20 + 10; // close button + bottom padding
         return y;
     }
