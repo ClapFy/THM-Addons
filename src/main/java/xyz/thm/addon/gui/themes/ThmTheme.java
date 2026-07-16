@@ -51,6 +51,15 @@ public class ThmTheme extends MeteorGuiTheme implements RecolorGuiTheme {
         return INSTANCE.imHigh.get();
     }
 
+    // ponytail: im-high never survives a restart - reset it right after the persisted settings
+    // load, instead of racing Meteor's save order with a shutdown hook.
+    @Override
+    public meteordevelopment.meteorclient.gui.GuiTheme fromTag(net.minecraft.nbt.NbtCompound tag) {
+        var theme = super.fromTag(tag);
+        imHigh.reset();
+        return theme;
+    }
+
     @Override
     public String getName() {
         return "THM";
