@@ -72,6 +72,7 @@ import net.minecraft.inventory.Inventory;
 import net.minecraft.item.*;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.network.packet.s2c.play.EntityPositionSyncS2CPacket;
 import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
@@ -13053,6 +13054,12 @@ public class HighwayBuilderTHM extends Module {
                             b.restockDebug("ThrowOutTrash dropping trash item from slot %d (%s).", i, itemStack.getItem());
                         }
 
+                        // Resend rotation right before the throw so the server drops in the
+                        // aligned direction — vanilla only flushes the look packet at tick end,
+                        // after this throw would already have been processed. Fixes drop desync.
+                        b.mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(
+                            b.mc.player.getYaw(), b.mc.player.getPitch(),
+                            b.mc.player.isOnGround(), b.mc.player.horizontalCollision));
                         InvUtils.drop().slot(i);
 
                         ItemStack afterDrop = b.mc.player.getInventory().getStack(i);
