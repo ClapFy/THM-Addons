@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+#
+# This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+# Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+#
+
 # Preview a THM main-menu background shader outside Minecraft, using a real
 # desktop OpenGL 3.3 core context so the .fsh runs completely unmodified.
 #

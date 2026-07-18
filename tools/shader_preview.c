@@ -1,3 +1,8 @@
+/*
+ * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+ * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ */
+
 // Standalone native-GL preview harness for THM main-menu shaders (.fsh).
 // Renders the shader completely unmodified through a real desktop GL 3.3 core
 // context with a ThmShaderData UBO (time/mouse/resolution), matching the

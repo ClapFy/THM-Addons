@@ -1,3 +1,8 @@
+<!--
+  This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+  Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+-->
+
 # Highway Settings Guide
 
 This public guide explains the user-facing settings in `THM-HighwayBuilder` (`HighwayBuilderTHM`), `THM Highway Monitor` (`THMHwyMonitor`), and the Highway Profiles section of the THM Addon tab.

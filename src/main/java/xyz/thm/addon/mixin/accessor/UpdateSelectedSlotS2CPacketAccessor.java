@@ -1,3 +1,8 @@
+/*
+ * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+ * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ */
+
 package xyz.thm.addon.mixin.accessor;
 import net.minecraft.network.packet.s2c.play.UpdateSelectedSlotS2CPacket;
 import org.spongepowered.asm.mixin.Mixin;

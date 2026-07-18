@@ -1,4 +1,9 @@
 /*
+ * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+ * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ */
+
+/*
  * This file is part of the Meteor Client distribution (https://github.com/MeteorDevelopment/meteor-client).
  * Copyright (c) Meteor Development.
  */

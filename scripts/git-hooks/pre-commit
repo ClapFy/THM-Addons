@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Credit any newly added/modified source file before it's committed, whatever
+# editor created it (IntelliJ, VSCode, CLI). ponytail: re-stages touched files
+# wholesale; if a file has mixed staged/unstaged hunks the header pulls the rest
+# in too — fine for an additive header, revisit only if partial staging matters.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+files=$(git diff --cached --name-only --diff-filter=AM)
+[ -z "$files" ] && exit 0
+printf '%s\n' "$files" | xargs -r "$root/scripts/add-credits.sh"
+printf '%s\n' "$files" | xargs -r git add
+exit 0

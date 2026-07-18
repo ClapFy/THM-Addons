@@ -1,4 +1,9 @@
 /*
+ * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+ * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ */
+
+/*
  * Base module copied from Meteor Client AutoTrap
  * https://github.com/MeteorDevelopment/meteor-client/blob/master/src/main/java/meteordevelopment/meteorclient/systems/modules/combat/AutoTrap.java
  */

@@ -1,3 +1,8 @@
+<!--
+  This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+  Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+-->
+
 # THM Addons for Meteor Client
 
 THM Addons is a Meteor Client addon focused on highway automation, travel utilities, PvP tooling, and quality-of-life HUD widgets for Minecraft 1.21.11.

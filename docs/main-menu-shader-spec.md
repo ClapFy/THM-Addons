@@ -1,3 +1,8 @@
+<!--
+  This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+  Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+-->
+
 # Main Menu Background Shader — Requirements
 
 To add a new animated background for the title screen / main-menu panorama, drop a `.fsh`

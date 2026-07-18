@@ -1,3 +1,8 @@
+<!--
+  This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+  Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+-->
+
 # THM Addons Features
 
 This document lists the modules, HUD widgets, and utilities shipped with THM Addons. Module names match the in-game Meteor module list.

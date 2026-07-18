@@ -1,3 +1,8 @@
+<!--
+  This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+  Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+-->
+
 ---
 description: Port a Shadertoy shader into a THM Addons main-menu background shader (.fsh)
 argument-hint: <shadertoy-url> [output-name]

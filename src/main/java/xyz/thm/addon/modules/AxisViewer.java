@@ -1,3 +1,8 @@
+/*
+ * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+ * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ */
+
 //Thank you https://github.com/1exmc that you have alr added support for Ring and diamond Highways
 
 package xyz.thm.addon.modules;
