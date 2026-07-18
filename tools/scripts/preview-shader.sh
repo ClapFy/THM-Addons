@@ -15,7 +15,7 @@
 # Requires: gcc, glfw3, glew (dev packages), and ImageMagick's `convert` for --shot.
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 name="${1:?usage: preview-shader.sh <name> [--shot out.png] [--time T]}"
 shift || true

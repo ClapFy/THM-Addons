@@ -7,6 +7,6 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 files=$(git diff --cached --name-only --diff-filter=AM)
 [ -z "$files" ] && exit 0
-printf '%s\n' "$files" | xargs -r "$root/scripts/add-credits.sh"
+printf '%s\n' "$files" | xargs -r "$root/tools/scripts/add-credits.sh"
 printf '%s\n' "$files" | xargs -r git add
 exit 0

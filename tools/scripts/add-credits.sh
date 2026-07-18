@@ -3,7 +3,7 @@
 # Usage: scripts/add-credits.sh [file ...]   (no args = all tracked source files)
 # Skipped by design: .json (no comment syntax), .fsh (#version must stay line 1).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 REPO="https://github.com/Leonn170709/THM-Addons"
 MARK="This file is part of THM Addons"
