@@ -26,6 +26,7 @@ import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.combat.AutoTotem;
 import meteordevelopment.meteorclient.systems.modules.combat.KillAura;
 import meteordevelopment.meteorclient.systems.modules.movement.Velocity;
 import meteordevelopment.meteorclient.systems.modules.movement.speed.Speed;
@@ -1124,6 +1125,24 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
+    public final Setting<Boolean> noSwapLoadout = sgInventory.add(new BoolSetting.Builder()
+        .name("no-swap-loadout")
+        .description("Keeps a pickaxe in the main hand and obsidian in the offhand (placing from offhand), so mining and placing never swap. Disables Meteor's AutoTotem and equips a totem itself when you're about to die.")
+        .defaultValue(false)
+        .onChanged(v -> syncNoSwapAutoTotem())
+        .build()
+    );
+
+    private final Setting<Integer> noSwapTotemHealth = sgInventory.add(new IntSetting.Builder()
+        .name("no-swap-totem-health")
+        .description("Health (after possible incoming damage) at or below which a totem is equipped instead of obsidian.")
+        .defaultValue(10)
+        .range(0, 36)
+        .sliderMax(36)
+        .visible(noSwapLoadout::get)
+        .build()
+    );
+
     private final Setting<Integer> minEmpty = sgInventory.add(new IntSetting.Builder()
         .name("minimum-empty-slots")
         .description("The minimum amount of empty slots you want left after mining obsidian.")
@@ -1406,6 +1425,7 @@ public class HighwayBuilderTHM extends Module {
     private long tpsThrottleSettleUntilMs;
     private long nextTpsThrottlePauseReasonLogAtMs;
     private boolean safetyPlacedThisTick;
+    private boolean disabledAutoTotem; // we turned Meteor AutoTotem off for no-swap-loadout; re-enable it when we're done
     private boolean tpsSafetyEnclosureActive;
     private boolean tpsSafetyEnclosureTriggeredThisEpisode;
     private boolean tpsSafetyCenterOwned;
@@ -2184,6 +2204,7 @@ public class HighwayBuilderTHM extends Module {
         validateManagedHotbarReserveSlots();
         if (!Modules.get().get(AntiDrop.class).isActive() && antidrop.get()) { Modules.get().get(AntiDrop.class).toggle();}
         syncManagedSpeedMineOwnership();
+        syncNoSwapAutoTotem();
 
     }
     @Override
@@ -2283,6 +2304,11 @@ public class HighwayBuilderTHM extends Module {
         }
         if (Modules.get().get(HotbarManager.class).isActive() && hotbarmanager.get()) { Modules.get().get(HotbarManager.class).toggle();}
         if (Modules.get().get(AntiDrop.class).isActive() && antidrop.get()) { Modules.get().get(AntiDrop.class).toggle();}
+        if (disabledAutoTotem) { // no-swap-loadout no longer owns the offhand; give AutoTotem back
+            AutoTotem autoTotem = Modules.get().get(AutoTotem.class);
+            if (autoTotem != null && !autoTotem.isActive()) autoTotem.toggle();
+            disabledAutoTotem = false;
+        }
 
         if (!hasActiveInMemoryStatsSession()) {
             statsCacheDebug("skipped deactivate persistence because no active in-memory stats session exists.");
@@ -4336,6 +4362,8 @@ public class HighwayBuilderTHM extends Module {
         maybeQueuePickaxeRestock();
         maybeQueueEnderChestReserveRestock();
         maybeQueueFoodRestock();
+        tickNoSwapLoadout();
+        tickPacketBuildMainHandObby();
         boolean restockWatchdogOwnedTick = restockWatchdog.tickBeforeState();
         if (!restockWatchdogOwnedTick) {
             if (autoHandoffToTraveler.get() && state == State.Forward
@@ -6379,18 +6407,22 @@ public class HighwayBuilderTHM extends Module {
             hitPos = hitPos.add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
         }
 
+        boolean offhandPlace = noSwapLoadout.get() && offhandHoldsPlaceable();
         boolean swapped = false;
-        if (silentForwardPlaceSwap.get()) {
-            if (mc.player.getInventory().getSelectedSlot() != slot) {
-                if (!InvUtils.swap(slot, true)) return false;
-                swapped = true;
+        if (!offhandPlace) {
+            if (silentForwardPlaceSwap.get()) {
+                if (mc.player.getInventory().getSelectedSlot() != slot) {
+                    if (!InvUtils.swap(slot, true)) return false;
+                    swapped = true;
+                }
+            } else if (mc.player.getInventory().getSelectedSlot() != slot) {
+                InvUtils.swap(slot, false);
             }
-        } else if (mc.player.getInventory().getSelectedSlot() != slot) {
-            InvUtils.swap(slot, false);
         }
 
         try {
-            BlockUtils.interact(new BlockHitResult(hitPos, side.getOpposite(), neighbour, false), Hand.MAIN_HAND, true);
+            BlockUtils.interact(new BlockHitResult(hitPos, side.getOpposite(), neighbour, false),
+                offhandPlace ? Hand.OFF_HAND : Hand.MAIN_HAND, true);
         } finally {
             if (swapped) InvUtils.swapBack();
         }
@@ -6408,10 +6440,85 @@ public class HighwayBuilderTHM extends Module {
         return false;
     }
 
+    // ---- No-swap loadout: pickaxe in the main hand, obsidian in the offhand, self-managed totem ----
+
+    /** True when the offhand currently holds a block we're allowed to place (obsidian), so we can place straight from it. */
+    private boolean offhandHoldsPlaceable() {
+        return mc.player != null
+            && mc.player.getOffHandStack().getItem() instanceof BlockItem bi
+            && blocksToPlace.get().contains(bi.getBlock());
+    }
+
+    /** Turn Meteor's AutoTotem off while no-swap-loadout owns the offhand, and restore it when we let go. */
+    private void syncNoSwapAutoTotem() {
+        AutoTotem autoTotem = Modules.get().get(AutoTotem.class);
+        if (autoTotem == null) return;
+        boolean want = isActive() && noSwapLoadout.get();
+        if (want && autoTotem.isActive()) {
+            autoTotem.toggle();
+            disabledAutoTotem = true;
+        } else if (!want && disabledAutoTotem) {
+            if (!autoTotem.isActive()) autoTotem.toggle();
+            disabledAutoTotem = false;
+        }
+    }
+
+    private boolean noSwapShouldHoldTotem() {
+        if (mc.player == null) return false;
+        float effective = mc.player.getHealth() + mc.player.getAbsorptionAmount()
+            - PlayerUtils.possibleHealthReductions(true, true);
+        return effective <= noSwapTotemHealth.get();
+    }
+
+    private void tickNoSwapLoadout() {
+        if (!noSwapLoadout.get() || mc.player == null) return;
+        syncNoSwapAutoTotem();
+
+        // About to die: a totem takes the offhand over obsidian.
+        if (noSwapShouldHoldTotem()) {
+            if (mc.player.getOffHandStack().getItem() != Items.TOTEM_OF_UNDYING) {
+                FindItemResult totem = InvUtils.find(Items.TOTEM_OF_UNDYING);
+                if (totem.found()) InvUtils.move().from(totem.slot()).toOffhand();
+            }
+        } else if (!offhandHoldsPlaceable()) {
+            // Restock obsidian into the offhand (search hotbar + main inv, i.e. not the offhand slot itself).
+            FindItemResult obby = InvUtils.find(
+                s -> s.getItem() instanceof BlockItem bi && blocksToPlace.get().contains(bi.getBlock()), 0, 35);
+            if (obby.found()) InvUtils.move().from(obby.slot()).toOffhand();
+        }
+
+        ensurePickaxeInMainHand();
+    }
+
+    /** Feature: while packet-build paving, rest with obsidian actually held in the main hand. */
+    private void tickPacketBuildMainHandObby() {
+        if (!packetBuild.get() || noSwapLoadout.get() || mc.player == null) return;
+        ItemStack held = mc.player.getInventory().getStack(mc.player.getInventory().getSelectedSlot());
+        if (held.getItem() instanceof BlockItem bi && blocksToPlace.get().contains(bi.getBlock())) return;
+        FindItemResult obby = InvUtils.findInHotbar(
+            s -> s.getItem() instanceof BlockItem bi && blocksToPlace.get().contains(bi.getBlock()));
+        if (obby.found() && obby.isHotbar()) InvUtils.swap(obby.slot(), false);
+    }
+
+    private void ensurePickaxeInMainHand() {
+        int sel = mc.player.getInventory().getSelectedSlot();
+        if (mc.player.getInventory().getStack(sel).isIn(ItemTags.PICKAXES)) return;
+        FindItemResult pick = InvUtils.findInHotbar(s -> s.isIn(ItemTags.PICKAXES));
+        if (pick.found() && pick.isHotbar()) {
+            InvUtils.swap(pick.slot(), false);
+        } else {
+            int moved = State.Forward.findAndMoveToHotbar(this, s -> s.isIn(ItemTags.PICKAXES), false);
+            if (moved != -1) InvUtils.swap(moved, false);
+        }
+    }
+
     private boolean tryForwardPlaceBlockPacket(BlockPos pos, int slot, ItemStack stack) {
         if (!isForwardPlaceableBlock(stack) && !isForwardTrashPlacementStack(stack)) return false;
         Direction side = BlockUtils.getPlaceSide(pos);
-        FindItemResult item = new FindItemResult(slot, stack.getCount());
+        // no-swap-loadout: place straight from the offhand obsidian instead of swapping the main hand.
+        FindItemResult item = (noSwapLoadout.get() && offhandHoldsPlaceable())
+            ? new FindItemResult(SlotUtils.OFFHAND, mc.player.getOffHandStack().getCount())
+            : new FindItemResult(slot, stack.getCount());
         AirPlaceMode mode = packetBuildAirPlace.get();
         boolean swapBack = silentForwardPlaceSwap.get();
 
