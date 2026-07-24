@@ -1126,16 +1126,16 @@ public class HighwayBuilderTHM extends Module {
     );
 
     public final Setting<Boolean> noSwapLoadout = sgInventory.add(new BoolSetting.Builder()
-        .name("no-swap-loadout")
-        .description("Keeps a pickaxe in the main hand and obsidian in the offhand (placing from offhand), so mining and placing never swap. Disables Meteor's AutoTotem and equips a totem itself when you're about to die.")
+        .name("offhand-build")
+        .description("Mine with the pickaxe in your main hand, place from obsidian in your offhand. Nothing ever swaps hotbar slots, which is faster and looks far less botlike. Takes over your offhand: Meteor's AutoTotem is turned off while this is on, and a totem is swapped in for you at low health instead.")
         .defaultValue(false)
         .onChanged(v -> syncNoSwapAutoTotem())
         .build()
     );
 
     private final Setting<Integer> noSwapTotemHealth = sgInventory.add(new IntSetting.Builder()
-        .name("no-swap-totem-health")
-        .description("Health (after possible incoming damage) at or below which a totem is equipped instead of obsidian.")
+        .name("offhand-totem-health")
+        .description("Health (counting incoming damage you could still take) at or below which the offhand holds a totem instead of obsidian. Placing falls back to normal hotbar swapping until you are back above it.")
         .defaultValue(10)
         .range(0, 36)
         .sliderMax(36)
@@ -1338,6 +1338,7 @@ public class HighwayBuilderTHM extends Module {
         .description("Sends statistics to a Api when disabling Highway Builder.")
         .defaultValue(false)
         .visible(printStatistics::get)
+        .onChanged(v -> enforceCreativeStatisticsGuard())
         .build()
     );
 
@@ -1407,6 +1408,8 @@ public class HighwayBuilderTHM extends Module {
     private final MBlockPos lastBreakingPos = new MBlockPos();
     private boolean displayInfo;
     private boolean suspended = true, inventory = true;
+    private String lastTickDebugMessage;
+    private long lastTickDebugAtMs;
     private int placeTimer, breakTimer, count, syncId, statusLogTimer;
     private int forwardMineCount, forwardPlaceCount;
     private int forwardLatchedPlaceSlot = -1;
@@ -1816,7 +1819,16 @@ public class HighwayBuilderTHM extends Module {
         int blocksPlaced,
         String statsCode,
         boolean restartDistanceWarning
-    ) {}
+    ) {
+        // ponytail: whole-session average, not a windowed/rolling one
+        private double brokenPerBlock() {
+            return distance > 0 ? blocksBroken / distance : 0.0;
+        }
+
+        private double placedPerBlock() {
+            return distance > 0 ? blocksPlaced / distance : 0.0;
+        }
+    }
 
     private enum StatsScreenshotSurface {
         CHAT("chat"),
@@ -1863,6 +1875,12 @@ public class HighwayBuilderTHM extends Module {
 
     private void sendStatusLog() {
         if (!statuslog.get() || mc.player == null || dir == null) return;
+
+        // Silent on purpose — see enforceCreativeStatisticsGuard().
+        if (mc.player.isCreative()) {
+            highwayDebug("HB status log skipped: player is in creative.");
+            return;
+        }
 
         if (isNot6B6T()) {
             warning("Status not sent. You are not on 6B6T");
@@ -2017,6 +2035,22 @@ public class HighwayBuilderTHM extends Module {
         if (!MANAGED_SPEEDMINE_SETTING_ENABLED && speedmine.get()) speedmine.set(false);
         if (!MODULE_MANAGER_INTEGRATION_ENABLED && manageModuleManager.get()) manageModuleManager.set(false);
         if (!manageThmHwyMonitor.get() && fallSaveAirPlace.get()) fallSaveAirPlace.set(false);
+        enforceCreativeStatisticsGuard();
+    }
+
+    /**
+     * Creative blocks are free, so creative stats are fake — the API toggle can never be on in creative.
+     * Runs whenever the setting is switched on and again on activate / after a THM profile load (the
+     * setting can be on from a saved config long before a player exists to check).
+     * <p>
+     * Deliberately silent: never tell the player that creative is what blocked the submission, otherwise
+     * they know exactly which check to work around. Only the local debug log records the reason.
+     */
+    private void enforceCreativeStatisticsGuard() {
+        if (!sendStatisticsapi.get() || mc.player == null || !mc.player.isCreative()) return;
+
+        sendStatisticsapi.set(false);
+        highwayDebug("HB statistics(API) force-disabled: player is in creative.");
     }
 
     public void normalizeAfterThmProfileLoad() {
@@ -2056,6 +2090,14 @@ public class HighwayBuilderTHM extends Module {
     public void onActivate() {
         if (mc.player == null || mc.world == null) return;
         if (!Utils.canUpdate()) return;
+
+        // Creative may build freely — it just never reports anything (enforceCreativeStatisticsGuard plus
+        // the silent creative skips in sendStatusLog / commitAndSendFinalExternalStats).
+        if (sendStatisticsapi.get() && THMUtils.isNot6B6T()) {
+            errorEarly("You can only build on 6b6t");
+            return;
+        }
+
         ReconnectResumeContext reconnectResume = reconnectResumeContext;
         reconnectResumeContext = null;
         boolean reconnectActivation = reconnectResume != null;
@@ -4245,6 +4287,7 @@ public class HighwayBuilderTHM extends Module {
                 kitbotUpdateOnFinishActive = false;
                 disconnect("KitBot update timeout");
             }
+            tickDebug("idle: waiting for kitbot update-on-finish (tpAccepted=%s)", kitbotUpdateOnFinishTpAccepted);
             return;
         }
 
@@ -4263,6 +4306,7 @@ public class HighwayBuilderTHM extends Module {
             if (!executionAllowed) {
                 logServerStatePause(committedState);
                 pauseExecutionForServerState(committedState);
+                tickDebug("idle: server state %s not allowed (resumeGate=%s)", committedState, mainServerResumeGateActive);
                 return;
             }
 
@@ -4284,6 +4328,7 @@ public class HighwayBuilderTHM extends Module {
         if (shouldPauseForTpsThrottle()) {
             boolean preserveCenterInput = tickTpsSafetyEnclosureDuringPause();
             handleTpsThrottlePauseTick(!preserveCenterInput);
+            tickDebug("idle: tps throttle paused (%s, sampledTps=%s)", tpsThrottlePauseReason, formatTpsThrottleSample(tpsThrottleSampledTps));
             return;
         }
 
@@ -4299,6 +4344,7 @@ public class HighwayBuilderTHM extends Module {
         tickKitbotPeriodicUpdate();
 
         if (dir == null) {
+            tickDebug("idle: dir == null, re-running onActivate");
             onActivate();
             return;
         }
@@ -4309,7 +4355,10 @@ public class HighwayBuilderTHM extends Module {
                 suspended = false;
                 resumeThmSpeedAfterReconnectIfReady("tick-unsuspended");
             }
-            else return;
+            else {
+                tickDebug("idle: suspended (inventoryPacketSeen=%s canUpdate=%s)", inventory, Utils.canUpdate());
+                return;
+            }
         }
 
         if (width.get() < 3 && dir.diagonal) {
@@ -4336,6 +4385,7 @@ public class HighwayBuilderTHM extends Module {
             }
 
             input.stop();
+            tickDebug("idle: paused for eating=%s killAura=%s", shouldPauseForEatingWatchdog, killAuraPauseActive);
             return;
         }
 
@@ -4351,6 +4401,7 @@ public class HighwayBuilderTHM extends Module {
 
         if (mc.player.getY() < start.y - 0.5) setState(State.ReLevel); // don't let the current state keep ticking, switch to re-levelling straight away
         if (tickDesyncWiggleProbe()) {
+            tickDebug("idle: desync wiggle probe running");
             if (breakTimer > 0) breakTimer--;
             if (placeTimer > 0) placeTimer--;
             return;
@@ -4376,8 +4427,17 @@ public class HighwayBuilderTHM extends Module {
                     return;
                 }
             }
+            tickDebug("state=%s restock=%s mineActions=%d placeActions=%d creative=%s",
+                stateName(state),
+                restockTask.activeSummary(),
+                mineActionsThisTick,
+                placeActionsThisTick,
+                mc.player.isCreative()
+            );
             state.tick(this);
             restockWatchdog.tickAfterState();
+        } else {
+            tickDebug("idle: restock watchdog owns the tick (restock=%s)", restockTask.activeSummary());
         }
         maybeLogMovement();
 
@@ -6289,7 +6349,15 @@ public class HighwayBuilderTHM extends Module {
 
     private boolean tryPlaceBlock(BlockPos pos, int slot, boolean rotate) {
         if (!isWithinConfiguredForwardRange(pos)) return false;
-        boolean placed = BlockUtils.place(pos, Hand.MAIN_HAND, slot, rotate, 0, true, true, true);
+        // Meteor's place() rejects anything outside the hotbar, so an offhand place keeps the selected slot
+        // (making its internal swap a no-op) and only switches the hand.
+        boolean offhand = slot == SlotUtils.OFFHAND;
+        boolean placed = BlockUtils.place(
+            pos,
+            offhand ? Hand.OFF_HAND : Hand.MAIN_HAND,
+            offhand ? mc.player.getInventory().getSelectedSlot() : slot,
+            rotate, 0, true, true, true
+        );
         if (!placed) return false;
 
         placeTimer = placeDelay.get();
@@ -6331,6 +6399,7 @@ public class HighwayBuilderTHM extends Module {
             : State.Forward.findBlocksToPlace(this);
 
         forwardLatchedPlaceSlot = slot;
+        if (slot == -1) tickDebug("idle: no hotbar slot with a placement block (%s)", blocksToPlace.get());
         return slot;
     }
 
@@ -6379,15 +6448,18 @@ public class HighwayBuilderTHM extends Module {
         clearForwardLatchedMineSlot();
         int slot = State.Forward.findAndMoveBestToolToHotbar(this, blockState, noSilkTouch);
         forwardLatchedMineSlot = slot;
+        if (slot == -1) tickDebug("idle: no usable tool slot for %s", blockState.getBlock());
         return slot;
     }
 
     private boolean tryForwardPlaceBlock(BlockPos pos, int slot) {
         if (mc.player == null || mc.world == null) return false;
         if (!isWithinConfiguredForwardRange(pos)) return false;
-        if (slot < 0 || slot > 8) return false;
 
-        ItemStack stack = mc.player.getInventory().getStack(slot);
+        boolean offhandPlace = slot == SlotUtils.OFFHAND || placeFromOffhand();
+        if (!offhandPlace && (slot < 0 || slot > 8)) return false;
+
+        ItemStack stack = offhandPlace ? mc.player.getOffHandStack() : mc.player.getInventory().getStack(slot);
         if (!(stack.getItem() instanceof BlockItem blockItem)) return false;
         if (!BlockUtils.canPlaceBlock(pos, true, blockItem.getBlock())) return false;
 
@@ -6407,7 +6479,6 @@ public class HighwayBuilderTHM extends Module {
             hitPos = hitPos.add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
         }
 
-        boolean offhandPlace = noSwapLoadout.get() && offhandHoldsPlaceable();
         boolean swapped = false;
         if (!offhandPlace) {
             if (silentForwardPlaceSwap.get()) {
@@ -6447,6 +6518,16 @@ public class HighwayBuilderTHM extends Module {
         return mc.player != null
             && mc.player.getOffHandStack().getItem() instanceof BlockItem bi
             && blocksToPlace.get().contains(bi.getBlock());
+    }
+
+    /**
+     * True when placement should come out of the offhand. The block-finding paths only search the hotbar and
+     * main inventory, so once offhand-build has parked the only obsidian in the offhand they find nothing and
+     * the builder just stops placing — they return {@link SlotUtils#OFFHAND} instead, which every place path
+     * below understands.
+     */
+    private boolean placeFromOffhand() {
+        return noSwapLoadout.get() && offhandHoldsPlaceable();
     }
 
     /** Turn Meteor's AutoTotem off while no-swap-loadout owns the offhand, and restore it when we let go. */
@@ -6515,8 +6596,8 @@ public class HighwayBuilderTHM extends Module {
     private boolean tryForwardPlaceBlockPacket(BlockPos pos, int slot, ItemStack stack) {
         if (!isForwardPlaceableBlock(stack) && !isForwardTrashPlacementStack(stack)) return false;
         Direction side = BlockUtils.getPlaceSide(pos);
-        // no-swap-loadout: place straight from the offhand obsidian instead of swapping the main hand.
-        FindItemResult item = (noSwapLoadout.get() && offhandHoldsPlaceable())
+        // offhand-build: place straight from the offhand obsidian instead of swapping the main hand.
+        FindItemResult item = (slot == SlotUtils.OFFHAND || placeFromOffhand())
             ? new FindItemResult(SlotUtils.OFFHAND, mc.player.getOffHandStack().getCount())
             : new FindItemResult(slot, stack.getCount());
         AirPlaceMode mode = packetBuildAirPlace.get();
@@ -6626,6 +6707,25 @@ public class HighwayBuilderTHM extends Module {
     private void highwayDebug(String message, Object... args) {
         if (!debugLog.get()) return;
         writeThmDebugLog(HIGHWAYBUILDER_DEBUG_FILE_NAME, formatThmDebugLine(message, args));
+    }
+
+    /**
+     * ponytail: one throttled "what is the builder doing right now / why is it doing nothing" line.
+     * Goes to chat and the debug file, only while debug-log is on. Repeats an unchanged reason every
+     * 2s so a stall is visibly a stall rather than a single old message.
+     */
+    private void tickDebug(String reason, Object... args) {
+        if (!debugLog.get()) return;
+
+        String message = args.length == 0 ? reason : String.format(Locale.ROOT, reason, args);
+        long now = System.currentTimeMillis();
+        if (message.equals(lastTickDebugMessage) && now - lastTickDebugAtMs < 2000) return;
+        if (now - lastTickDebugAtMs < 1000) return; // ponytail: hard rate limit so a fast state machine can't spam chat
+
+        lastTickDebugMessage = message;
+        lastTickDebugAtMs = now;
+        info("tick: (highlight)%s", message);
+        highwayDebug("HB tick %s", message);
     }
 
     private void writeReconnectDebug(String message, Object... args) {
@@ -9197,7 +9297,10 @@ public class HighwayBuilderTHM extends Module {
 
         if (sendStatisticsWebhhok.get() && !working.webhookSendCommitted()) {
             String webhookUrl = resolveWebhookUrl(encryptedWebhook.get());
-            if (webhookUrl != null) {
+            if (mc.player.isCreative()) {
+                // Silent on purpose — see enforceCreativeStatisticsGuard().
+                logExternalStatsDecision(working, report, reason, "webhook", "skipped-creative", 0.0);
+            } else if (webhookUrl != null) {
                 double distance = PlayerUtils.distanceTo(report.startPos());
                 if (distance > 1) {
                     StatsArtifactSnapshot committed = updateFinalizationRecord(
@@ -9239,6 +9342,9 @@ public class HighwayBuilderTHM extends Module {
                     if (report.blocksPlaced() < 300 && report.blocksBroken() < 1000) {
                         warning("Repair detected. Use the /calculate repair command to calculate the distance.");
                         logExternalStatsDecision(working, report, reason, "api", "skipped-repair-detected", distance);
+                    } else if (mc.player.isCreative()) {
+                        // Silent on purpose — see enforceCreativeStatisticsGuard().
+                        logExternalStatsDecision(working, report, reason, "api", "skipped-creative", distance);
                     } else if (isNot6B6T()) {
                         warning("API not sent. You are not on 6B6T");
                         logExternalStatsDecision(working, report, reason, "api", "skipped-not-6b6t", distance);
@@ -9564,7 +9670,7 @@ public class HighwayBuilderTHM extends Module {
             report.statsCodeTimestampMs()
         );
         statsCacheDebug(
-            "final-report reason={} session={} generation={} state={} resumeAllowed={} broken={} placed={} distance={} statsCode={} statsCodeTimestampMs={} printed={} webhookCommitted={} apiCommitted={} finalizationReason={}",
+            "final-report reason={} session={} generation={} state={} resumeAllowed={} broken={} placed={} brokenPerBlock={} placedPerBlock={} distance={} statsCode={} statsCodeTimestampMs={} printed={} webhookCommitted={} apiCommitted={} finalizationReason={}",
             reason,
             shortSessionId(snapshot.sessionId()),
             snapshot.generation(),
@@ -9572,6 +9678,8 @@ public class HighwayBuilderTHM extends Module {
             snapshot.resumeAllowed(),
             report.blocksBroken(),
             report.blocksPlaced(),
+            String.format(Locale.ROOT, "%.2f", display.brokenPerBlock()),
+            String.format(Locale.ROOT, "%.2f", display.placedPerBlock()),
             String.format(Locale.ROOT, "%.0f", display.distance()),
             display.statsCode(),
             report.statsCodeTimestampMs(),
@@ -12071,7 +12179,12 @@ public class HighwayBuilderTHM extends Module {
 
         // In paket mode, skip place work while mine tasks are pending so the UpdateSelectedSlot
         // packet (pickaxe switch) and the mine packets are not dropped by the packet rate limiter.
-        boolean skipPlaceForPaketMine = packetBuild.get() && activeRow != null && !activeRow.mineQueue.isEmpty();
+        // offhand-build has no slot switch to protect (pickaxe stays in the main hand, obsidian in the
+        // offhand), so mining and placing can share the tick.
+        boolean skipPlaceForPaketMine = packetBuild.get()
+            && !placeFromOffhand()
+            && activeRow != null
+            && !activeRow.mineQueue.isEmpty();
         boolean skipPlaceForSafetyPlacement = safetyPlacedThisTick;
 
         boolean placedChangedWorld = false;
@@ -16936,6 +17049,8 @@ public class HighwayBuilderTHM extends Module {
         }
 
         protected int findBlocksToPlace(HighwayBuilderTHM b) {
+            if (b.placeFromOffhand()) return SlotUtils.OFFHAND;
+
             // find a block and move it to your hotbar
             int slot = findAndMoveToHotbar(b, itemStack -> itemStack.getItem() instanceof BlockItem blockItem && b.blocksToPlace.get().contains(blockItem.getBlock()));
 
@@ -19116,6 +19231,11 @@ public class HighwayBuilderTHM extends Module {
         }
 
         private void setTask(Type type) {
+            // ponytail: creative players carry nothing, so every restock trigger fires on the first tick and
+            // then waits forever for shulkers/e-chests that don't exist. They conjure supplies instead (see
+            // giveCreativePlacementBlock / the creative early-out in findAndMoveBestToolToHotbar).
+            if (b.mc.player != null && b.mc.player.isCreative()) return;
+
             if (isActive(type)) return;
 
             if (!sequenceActive) {

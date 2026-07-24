@@ -467,6 +467,15 @@ public final class ServerStatusHandler {
             return score;
         }
 
+        // ponytail: creative is never a lobby/transfer state, so it counts as the main server. Without this
+        // it scores UNKNOWN and every server-state-gated module (HighwayBuilder) pauses forever. Creative
+        // sessions are barred from reporting anything, so this can't be used to fake stats.
+        if (gm == GameMode.CREATIVE) {
+            score.main = 100;
+            score.reasons.add("strict:gamemode:CREATIVE->main+gm-source:" + gmSource);
+            return score;
+        }
+
         score.reasons.add("strict:no-consistent-signal");
         return score;
     }
