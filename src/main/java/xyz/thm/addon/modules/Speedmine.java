@@ -13,6 +13,8 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -95,6 +97,13 @@ public class Speedmine extends Module {
         .defaultValue(false)
         .build());
 
+    public final Setting<Keybind> autoMineBind = sgAuto.add(new KeybindSetting.Builder()
+        .name("auto-mine-bind")
+        .description("Hold this to auto-mine. Leave unbound to have auto-mine run whenever the module is on.")
+        .defaultValue(Keybind.none())
+        .visible(autoMine::get)
+        .build());
+
     public final Setting<Double> enemyRange = sgAuto.add(new DoubleSetting.Builder()
         .name("enemy-range")
         .description("How far away an enemy can be to be considered.")
@@ -128,6 +137,26 @@ public class Speedmine extends Module {
         .description("Also target bedrock, broken vanilla-style with hand swings instead of packets.")
         .defaultValue(false)
         .visible(autoMine::get)
+        .build());
+
+    public final Setting<Boolean> bedrockOnly = sgAuto.add(new BoolSetting.Builder()
+        .name("bedrock-only")
+        .description("Only break bedrock, ignore every other block.")
+        .defaultValue(false)
+        .visible(() -> autoMine.get() && mineBedrock.get())
+        .build());
+
+    public final Setting<Boolean> bedrockRotate = sgAuto.add(new BoolSetting.Builder()
+        .name("bedrock-rotate")
+        .description("Silently look at the bedrock before breaking it. Usually not needed.")
+        .defaultValue(false)
+        .visible(() -> autoMine.get() && mineBedrock.get())
+        .build());
+
+    public final Setting<Boolean> rotate = sgMine.add(new BoolSetting.Builder()
+        .name("rotate")
+        .description("Silently look at each block before mining it. Bedrock has its own toggle.")
+        .defaultValue(false)
         .build());
 
     public final Setting<Boolean> grimBypass = sgMine.add(new BoolSetting.Builder()
@@ -195,6 +224,20 @@ public class Speedmine extends Module {
     private final Setting<SettingColor> renderColor = sgRender.add(new ColorSetting.Builder()
         .name("color")
         .defaultValue(THMColor)
+        .build());
+
+    private final Setting<SettingColor> bedrockColor = sgRender.add(new ColorSetting.Builder()
+        .name("bedrock-color")
+        .description("Color of the bedrock blocks currently being broken.")
+        .defaultValue(new SettingColor(255, 70, 70, 255))
+        .visible(mineBedrock::get)
+        .build());
+
+    private final Setting<ShapeMode> bedrockShape = sgRender.add(new EnumSetting.Builder<ShapeMode>()
+        .name("bedrock-shape")
+        .description("How the bedrock being broken is drawn.")
+        .defaultValue(ShapeMode.Both)
+        .visible(mineBedrock::get)
         .build());
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -291,7 +334,11 @@ public class Speedmine extends Module {
         if (mc.world == null || mc.player == null) return;
 
         for (BlockPos pos : queue) renderBlock(event, pos);
-        if (bedrockPos != null) renderBlock(event, bedrockPos);
+        if (bedrockPos != null) {
+            RenderUtilsTHM.renderBlockShape(event, bedrockPos, mc.world.getBlockState(bedrockPos),
+                RenderUtilsTHM.withAlpha(bedrockColor.get(), bedrockColor.get().a / 3),
+                bedrockColor.get(), bedrockShape.get());
+        }
         if (secondary != null) renderMineContext(event, secondary);
         if (primary   != null) renderMineContext(event, primary);
 
@@ -354,6 +401,7 @@ public class Speedmine extends Module {
     // ── Packet building ───────────────────────────────────────────────────────
 
     private void sendStart(MineContext ctx) {
+        if (rotate.get()) lookAt(ctx.pos);
         // Server mines with whatever it thinks we hold, so the tool goes in before the START
         if (silentSwap.get()) holdTool(ctx.startSlot);
         if (grimBypass.get()) {
@@ -429,10 +477,13 @@ public class Speedmine extends Module {
      * packet-mined, so it goes down Nuker's vanilla progress+swing path instead.
      */
     private void tickAutoMine() {
-        if (!autoMine.get()) {
+        if (!autoMine.get() || !autoMineHeld()) {
             bedrockPos = null;
             return;
         }
+
+        // Warn about blocked swings even when no bedrock is in range yet
+        if (mineBedrock.get()) canSwing();
 
         bedrockPos = null;
         int budget = autoDoubleMine.get() && doubleBreak.get() ? 2 : 1;
@@ -446,6 +497,11 @@ public class Speedmine extends Module {
             if (budget-- <= 0) break;
             requestBreak(target);
         }
+    }
+
+    /** A bound key is hold-to-mine; an unbound one means "always on". */
+    private boolean autoMineHeld() {
+        return !autoMineBind.get().isSet() || autoMineBind.get().isPressed();
     }
 
     /** Every valid target around nearby enemies, nearest first. */
@@ -514,9 +570,10 @@ public class Speedmine extends Module {
 
     private boolean mineable(BlockPos pos) {
         BlockState state = mc.world.getBlockState(pos);
-        if (state.isAir() || !BlockUtils.canBreak(pos, state)) return false;
+        if (state.isAir()) return false;
+        // Bedrock's hardness is -1, so BlockUtils.canBreak always rejects it — it has to be checked first
         if (state.isOf(Blocks.BEDROCK)) return mineBedrock.get() && canSwing();
-        return true;
+        return !bedrockOnly.get() && BlockUtils.canBreak(pos, state);
     }
 
     // ── Bedrock (vanilla progress + swing, like Nuker — packets can't break it) ───
@@ -527,8 +584,12 @@ public class Speedmine extends Module {
      */
     private boolean canSwing() {
         PaketLimiter limiter = Modules.get().get(PaketLimiter.class);
-        if (limiter == null || !limiter.isActive() || limiter.limit.get() == 0) return true;
-        if (!limiter.alwaysBlock.get().contains(HandSwingC2SPacket.class)) return true;
+        boolean blocked = limiter != null && limiter.isActive() && limiter.limit.get() != 0
+            && limiter.alwaysBlock.get().contains(HandSwingC2SPacket.class);
+        if (!blocked) {
+            warnedSwingBlocked = false;
+            return true;
+        }
 
         if (!warnedSwingBlocked) {
             warnedSwingBlocked = true;
@@ -537,11 +598,18 @@ public class Speedmine extends Module {
         return false;
     }
 
+    /**
+     * Vanilla break: bedrock is a server-side progress bar driven by holding the dig, not something a
+     * START/STOP packet pair can pop, so it has to go through {@code updateBlockBreakingProgress} —
+     * which tracks exactly one position, hence one block at a time.
+     *
+     * No tool swap — bedrock breaks at the same speed with anything, so whatever is held works.
+     */
     private void mineBedrock(BlockPos pos) {
         if (mc.interactionManager == null) return;
 
-        // No tool swap — bedrock breaks at the same speed with anything, so whatever is held works
         bedrockPos = pos;
+        if (bedrockRotate.get()) lookAt(pos);
 
         Direction dir = BlockUtils.getDirection(pos);
         mc.interactionManager.updateBlockBreakingProgress(pos, dir == null ? Direction.UP : dir);
@@ -620,6 +688,11 @@ public class Speedmine extends Module {
         return (primary   != null && primary.pos.equals(pos))
             || (secondary != null && secondary.pos.equals(pos))
             || queue.contains(pos);
+    }
+
+    /** Server-side only look at {@code pos} — the camera doesn't move. */
+    private void lookAt(BlockPos pos) {
+        Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos));
     }
 
     public boolean outOfRange(BlockPos pos) {

@@ -102,6 +102,7 @@ public class Nuker extends Module {
     private final Setting<Boolean> avoidLiquidContact = sgGeneral.add(new BoolSetting.Builder().name("avoid-liquid-contact").description("Skips mining blocks that are touching water or lava.").defaultValue(false).build());
     private final Setting<Boolean> mineBedrock = sgGeneral.add(new BoolSetting.Builder().name("mine-bedrock").description("Allows Nuker to mine bedrock.").defaultValue(false).build());
     private final Setting<Double> bedrockRange = sgGeneral.add(new DoubleSetting.Builder().name("bedrock-range").description("Range for bedrock mining.").defaultValue(10.0).min(0.0).sliderRange(0.0, 20.0).visible(mineBedrock::get).build());
+    private final Setting<Boolean> keepOuterBedrock = sgGeneral.add(new BoolSetting.Builder().name("keep-outer-bedrock").description("Never mine the world's top or bottom bedrock layer, so you can't punch through the nether roof or into the void.").defaultValue(true).visible(mineBedrock::get).build());
     private final Setting<Boolean> doubleMine = sgGeneral.add(new BoolSetting.Builder().name("double-mine").description("Mines non-instaminable blocks using normal and packet mining simultaneously.").defaultValue(false).build());
 
     private final Setting<ListMode> listMode = sgWhitelist.add(new EnumSetting.Builder<ListMode>().name("list-mode").description("Selection mode.").defaultValue(ListMode.Blacklist).build());
@@ -409,6 +410,7 @@ public class Nuker extends Module {
 
         if (activeBedrockPos != null && mc.world.getBlockState(activeBedrockPos).getBlock() != Blocks.BEDROCK) activeBedrockPos = null;
         if (activeBedrockPos != null && isOutOfBedrockRange(activeBedrockPos)) activeBedrockPos = null;
+        if (activeBedrockPos != null && isOuterLayer(activeBedrockPos)) activeBedrockPos = null;
         if (activeBedrockPos != null && mode.get() == Mode.Flatten && activeBedrockPos.getY() + 0.5 < mc.player.getY()) activeBedrockPos = null;
 
         if (activeBedrockPos == null) {
@@ -551,6 +553,7 @@ public class Nuker extends Module {
                 for (int dz = -radius; dz <= radius; dz++) {
                     BlockPos pos = origin.add(dx, dy, dz);
                     if (mc.world.getBlockState(pos).getBlock() != Blocks.BEDROCK) continue;
+                    if (isOuterLayer(pos)) continue;
 
                     Vec3d center = pos.toCenterPos();
                     double distSq = mc.player.squaredDistanceTo(center);
@@ -565,6 +568,13 @@ public class Nuker extends Module {
         }
 
         return best;
+    }
+
+    /** The world's very top and very bottom layer — the nether roof's top skin and the void floor. */
+    private boolean isOuterLayer(BlockPos pos) {
+        if (!keepOuterBedrock.get()) return false;
+        int bottom = mc.world.getBottomY();
+        return pos.getY() <= bottom || pos.getY() >= bottom + mc.world.getHeight() - 1;
     }
 
     private boolean isOutOfBedrockRange(BlockPos pos) {

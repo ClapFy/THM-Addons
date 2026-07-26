@@ -132,7 +132,6 @@ public abstract class MeteorGuiThemeMixin {
     private void backgroundColor(Args args) {
         if (args.get(0) instanceof RecolorGuiTheme RecolorGuiTheme) {
             RecolorGuiTheme.TriColorSetting triColorSetting = RecolorGuiTheme.getBackgroundColor();
-            THMAddon.LOG.info("[THM] Setting theme background color!");
             args.set(3, triColorSetting.c1());
             args.set(4, triColorSetting.c2());
             args.set(5, triColorSetting.c3());
