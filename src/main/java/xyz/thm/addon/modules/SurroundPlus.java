@@ -41,6 +41,7 @@ import net.minecraft.util.math.*;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.mixin.accessor.ExplosionS2CPacketAccessor;
 import xyz.thm.addon.utils.PacketPlaceUtils;
+import xyz.thm.addon.utils.PlacementUtils;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -349,7 +350,7 @@ public class SurroundPlus extends Module {
 
             // If support is enabled and the target block has no placeable side,
             // try to place a support block underneath first.
-            if (support.get() && BlockUtils.getPlaceSide(pos) == null) {
+            if (support.get() && PlacementUtils.getPlaceSide(pos) == null) {
                 BlockPos supportPos = pos.down();
                 if (mc.world.getBlockState(supportPos).isReplaceable()) {
                     if (placed >= blocksPerTick.get()) {
@@ -403,7 +404,7 @@ public class SurroundPlus extends Module {
             return true;
         }
 
-        if (BlockUtils.place(pos, item, rotate.get(), 50, true)) {
+        if (PlacementUtils.placeOnSolidSide(pos, item, rotate.get(), 50, true)) {
             setBlock(pos, item);
             renderMap.put(pos, System.currentTimeMillis());
             packetPlacedAt.put(pos, System.currentTimeMillis());
@@ -411,7 +412,7 @@ public class SurroundPlus extends Module {
         }
 
         // Airplace fallback for normal mode: no adjacent face found, send packet directly
-        if (airplace.get() && BlockUtils.getPlaceSide(pos) == null && BlockUtils.canPlace(pos)) {
+        if (airplace.get() && PlacementUtils.getPlaceSide(pos) == null && BlockUtils.canPlace(pos)) {
             if (PacketPlaceUtils.placeBlockPacket(pos, item, rotate.get(), 50, true)) {
                 renderMap.put(pos, System.currentTimeMillis());
                 packetPlacedAt.put(pos, System.currentTimeMillis());

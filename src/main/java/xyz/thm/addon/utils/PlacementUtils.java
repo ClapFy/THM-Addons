@@ -8,7 +8,9 @@ package xyz.thm.addon.utils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
@@ -80,20 +82,57 @@ public class PlacementUtils {
         }
         return !strictDirection || getPlaceSide(pos) != null;
     }
+    /**
+     * A neighbour face that can actually be clicked to place at {@code pos}.
+     *
+     * Meteor's own {@code BlockUtils.getPlaceSide} only rejects <i>air</i> neighbours, so it happily
+     * returns a snow layer, grass or any other replaceable block — and clicking a replaceable block
+     * makes vanilla place into <i>that</i> block instead of offsetting to {@code pos}, so the block
+     * lands in the wrong spot. This one requires a real, non-replaceable face (which also covers air
+     * and fluids, both replaceable) and skips blocks whose right-click opens a GUI.
+     */
     public static Direction getPlaceSide(BlockPos pos) {
-        if (!mc.world.getBlockState(pos.down()).isReplaceable()) {
-            return Direction.DOWN;
-        }
+        if (isSolidFace(pos.down())) return Direction.DOWN;
         for (Direction side : Direction.Type.HORIZONTAL) {
-            BlockPos neighbor = pos.offset(side);
-            if (!mc.world.getBlockState(neighbor).isReplaceable()) {
-                return side;
-            }
+            if (isSolidFace(pos.offset(side))) return side;
         }
-        if (!mc.world.getBlockState(pos.up()).isReplaceable()) {
-            return Direction.UP;
-        }
+        if (isSolidFace(pos.up())) return Direction.UP;
         return null;
+    }
+
+    private static boolean isSolidFace(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
+        return !state.isReplaceable() && !BlockUtils.isClickable(state.getBlock());
+    }
+
+    /**
+     * {@code BlockUtils.place} with {@link #getPlaceSide} in place of Meteor's air-only side check —
+     * same rotation priority, swap and swap-back behaviour, just aimed at a face that works.
+     */
+    public static boolean placeOnSolidSide(BlockPos pos, FindItemResult item, boolean rotate, int rotationPriority, boolean swapBack) {
+        if (!item.found() || !BlockUtils.canPlace(pos)) return false;
+
+        Direction side = getPlaceSide(pos);
+        if (side == null) return false;
+
+        Hand hand = item.isOffhand() ? Hand.OFF_HAND : Hand.MAIN_HAND;
+        if (hand == Hand.MAIN_HAND && !item.isHotbar()) return false;
+
+        Vec3d hitPos = Vec3d.ofCenter(pos)
+            .add(side.getOffsetX() * 0.5, side.getOffsetY() * 0.5, side.getOffsetZ() * 0.5);
+        BlockHitResult hit = new BlockHitResult(hitPos, side.getOpposite(), pos.offset(side), false);
+
+        Runnable place = () -> {
+            boolean swap = hand == Hand.MAIN_HAND;
+            if (swap) InvUtils.swap(item.slot(), swapBack);
+            BlockUtils.interact(hit, hand, true);
+            if (swap && swapBack) InvUtils.swapBack();
+        };
+
+        if (rotate) Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), rotationPriority, place);
+        else place.run();
+
+        return true;
     }
     public static BlockPos getDirectionalPlacement(float yaw, BlockPos basePos) {
         float normalizedYaw = yaw % 360.0f;

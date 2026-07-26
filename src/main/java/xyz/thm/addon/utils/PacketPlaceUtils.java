@@ -25,7 +25,7 @@ public final class PacketPlaceUtils {
         if (!BlockUtils.canPlace(pos)) return false;
         if (!offhand && (hotbarSlot < 0 || hotbarSlot > 8)) return false;
 
-        Direction side = BlockUtils.getPlaceSide(pos);
+        Direction side = PlacementUtils.getPlaceSide(pos);
         BlockPos neighbour = side == null ? pos : pos.offset(side);
         Direction hitSide = side == null ? Direction.UP : side.getOpposite();
         Vec3d hitPos = Vec3d.ofCenter(pos);
@@ -78,7 +78,7 @@ public final class PacketPlaceUtils {
     public static boolean placeBlockPacket(BlockPos pos, FindItemResult item, boolean rotate, int rotateTicks, boolean airPlace, boolean swapBack) {
         if (!BlockUtils.canPlace(pos)) return false;
 
-        Direction side = BlockUtils.getPlaceSide(pos);
+        Direction side = PlacementUtils.getPlaceSide(pos);
         if (side == null && !airPlace) return false;
         BlockPos neighbour = side == null ? pos : pos.offset(side);
         Direction hitSide = side == null ? Direction.UP : side.getOpposite();

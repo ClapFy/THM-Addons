@@ -218,7 +218,7 @@ public class Speedmine extends Module {
     public final Setting<Double> range = sgMine.add(new DoubleSetting.Builder()
         .name("range")
         .description("Maximum block-breaking distance.")
-        .defaultValue(4.5).min(1).max(6).decimalPlaces(1)
+        .defaultValue(5.2).min(1).max(6).decimalPlaces(1)
         .build());
 
     private final Setting<SettingColor> renderColor = sgRender.add(new ColorSetting.Builder()

@@ -6,8 +6,10 @@
 package xyz.thm.addon.modules;
 
 import meteordevelopment.meteorclient.events.entity.EntityAddedEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -15,7 +17,11 @@ import meteordevelopment.meteorclient.utils.entity.DamageUtils;
 import meteordevelopment.meteorclient.utils.entity.EntityUtils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.LivingEntity;
@@ -35,9 +41,11 @@ import net.minecraft.util.math.Vec3d;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.mixin.accessor.PlayerInteractEntityC2SPacketAccessor;
 import xyz.thm.addon.system.THMSystem;
+import xyz.thm.addon.utils.PlacementUtils;
 import xyz.thm.addon.utils.RenderUtilsTHM;
 import xyz.thm.addon.utils.RotationUtils;
 import xyz.thm.addon.utils.ThmMembers;
+import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -148,7 +156,11 @@ public class CrystalAuraTHM extends Module {
 
     private final Setting<Double> placeRange = sgPlace.add(new DoubleSetting.Builder()
         .name("place-range").description("Range in which to place crystals.")
-        .defaultValue(4.5).min(0).sliderMax(6).build());
+        .defaultValue(5.2).min(0).sliderMax(6).build());
+
+    private final Setting<Boolean> raytrace = sgPlace.add(new BoolSetting.Builder()
+        .name("raytrace").description("Only places on faces you can actually see. Off places through walls, which is faster but obvious.")
+        .defaultValue(true).build());
 
     private final Setting<Boolean> oldPlacement = sgPlace.add(new BoolSetting.Builder()
         .name("1.12-placement").description("Requires two air blocks above the base, like pre-1.13 clients.")
@@ -157,6 +169,18 @@ public class CrystalAuraTHM extends Module {
     private final Setting<Integer> existedCooldown = sgPlace.add(new IntSetting.Builder()
         .name("existed-cooldown").description("Ticks before placing again on a spot just placed or broken on.")
         .defaultValue(10).min(0).sliderMax(40).build());
+
+    private final Setting<Boolean> support = sgPlace.add(new BoolSetting.Builder()
+        .name("support").description("Places obsidian to build a base where a good crystal spot would otherwise not exist.")
+        .defaultValue(false).build());
+
+    private final Setting<Double> supportMinGain = sgPlace.add(new DoubleSetting.Builder()
+        .name("support-min-gain").description("Extra damage a support spot must beat the best existing spot by. High values make support a last resort.")
+        .defaultValue(6).min(0).sliderMax(20).visible(support::get).build());
+
+    private final Setting<Integer> supportDelay = sgPlace.add(new IntSetting.Builder()
+        .name("support-delay").description("Ticks to wait after placing a support block, before placing anything else.")
+        .defaultValue(4).min(0).sliderMax(20).visible(support::get).build());
 
     private final Setting<Integer> placeCPT = sgPlace.add(new IntSetting.Builder()
         .name("place-cpt").description("Crystals to place per tick.")
@@ -173,7 +197,7 @@ public class CrystalAuraTHM extends Module {
 
     private final Setting<Double> explodeRange = sgExplode.add(new DoubleSetting.Builder()
         .name("explode-range").description("Range in which to attack crystals.")
-        .defaultValue(4.5).min(0).sliderMax(6).build());
+        .defaultValue(5.2).min(0).sliderMax(6).build());
 
     private final Setting<Integer> explodeCPT = sgExplode.add(new IntSetting.Builder()
         .name("explode-cpt").description("Crystals to attack per tick.")
@@ -230,13 +254,17 @@ public class CrystalAuraTHM extends Module {
         .name("rotation-mode").description("Silent only sends the rotation to the server. Client also turns your camera.")
         .defaultValue(RotationMode.Silent).visible(rotate::get).build());
 
+    private final Setting<RotateOn> rotateOn = sgRotation.add(new EnumSetting.Builder<RotateOn>()
+        .name("rotate-on").description("Which actions rotate.")
+        .defaultValue(RotateOn.Both).visible(rotate::get).build());
+
     private final Setting<Double> yawStepLimit = sgRotation.add(new DoubleSetting.Builder()
         .name("yaw-step-limit").description("Maximum degrees allowed to rotate per tick. 180 = unlimited (instant snap).")
         .defaultValue(180).range(1, 180).visible(rotate::get).build());
 
     private final Setting<Integer> rotationPriority = sgRotation.add(new IntSetting.Builder()
         .name("rotation-priority").description("Priority of this module's rotations relative to other modules using silent rotation.")
-        .defaultValue(1000).min(0).sliderMax(5000).visible(() -> rotate.get() && rotationMode.get() == RotationMode.Silent).build());
+        .defaultValue(1000).min(0).sliderMax(5000).visible(() -> rotate.get() && rotationMode.get() != RotationMode.Client).build());
 
     // Render
 
@@ -264,6 +292,18 @@ public class CrystalAuraTHM extends Module {
         .name("break-line-color").description("Line color for explosions.")
         .defaultValue(new SettingColor(255, 60, 60)).build());
 
+    private final Setting<CrystalRender> renderMode = sgRender.add(new EnumSetting.Builder<CrystalRender>()
+        .name("render-mode").description("How the box behaves over its lifetime.")
+        .defaultValue(CrystalRender.Fade).build());
+
+    private final Setting<Boolean> damageText = sgRender.add(new BoolSetting.Builder()
+        .name("damage-text").description("Draws the damage dealt to the target on the crystal position.")
+        .defaultValue(true).build());
+
+    private final Setting<Double> damageTextScale = sgRender.add(new DoubleSetting.Builder()
+        .name("damage-text-scale").description("Size of the damage text.")
+        .defaultValue(1.5).min(0.1).sliderRange(0.5, 4).visible(damageText::get).build());
+
     private final Setting<Integer> renderDuration = sgRender.add(new IntSetting.Builder()
         .name("render-duration").description("How long placements/explosions render for, in ticks.")
         .defaultValue(10).min(0).sliderMax(40).build());
@@ -273,6 +313,8 @@ public class CrystalAuraTHM extends Module {
     private final List<LivingEntity> targets = new ArrayList<>();
     private final Map<BlockPos, Integer> recentlyUsed = new HashMap<>();
     private final List<PendingPredict> pendingPredicts = new ArrayList<>();
+    private final List<DamageLabel> damageLabels = new ArrayList<>();
+    private final Vector3d labelPos = new Vector3d(0);
     private int ticksEnabled;
     private int explodeTimer, placeTimer;
     private int confirmedEntityId = Integer.MIN_VALUE;
@@ -305,6 +347,11 @@ public class CrystalAuraTHM extends Module {
     @EventHandler
     private void onEntityAdded(EntityAddedEvent event) {
         if (event.entity.getId() > confirmedEntityId) confirmedEntityId = event.entity.getId();
+
+        // The crystal we were guessing at has arrived, so the normal explode path will take it this tick.
+        // Dropping the guesses here is what keeps the server from logging an invalid-entity attack for
+        // every id we never needed to try.
+        if (event.entity instanceof EndCrystalEntity) pendingPredicts.clear();
     }
 
     @EventHandler
@@ -317,6 +364,7 @@ public class CrystalAuraTHM extends Module {
         if (lastTargetTimer > 0) lastTargetTimer--;
         recentlyUsed.entrySet().removeIf(e -> ticksEnabled - e.getValue() >= existedCooldown.get());
         tickPendingPredicts();
+        damageLabels.removeIf(label -> --label.ticks <= 0);
 
         double health = mc.player.getHealth() + mc.player.getAbsorptionAmount();
         if (health <= pauseHealth.get()) return;
@@ -381,7 +429,7 @@ public class CrystalAuraTHM extends Module {
                 if (!switchToWeaponFor(crystal)) continue;
             }
 
-            performRotation(crystal.getEntityPos().add(0, 0.5, 0));
+            if (!performRotation(crystal.getEntityPos().add(0, 0.5, 0), true)) continue;
 
             mc.interactionManager.attackEntity(mc.player, crystal);
             mc.player.swingHand(Hand.MAIN_HAND);
@@ -389,10 +437,8 @@ public class CrystalAuraTHM extends Module {
             finishRotation();
 
             recentlyUsed.remove(obsidianPos.up());
-            if (render.get()) {
-                RenderUtilsTHM.renderTickingBlock(obsidianPos.up(), breakSideColor.get(), breakLineColor.get(),
-                    shapeMode.get(), 0, renderDuration.get(), true, false);
-            }
+            renderAction(obsidianPos.up(), breakSideColor.get(), breakLineColor.get());
+            addDamageLabel(obsidianPos.up(), result);
 
             lastTarget = result.enemyEntity;
             lastTargetTimer = 20;
@@ -432,6 +478,13 @@ public class CrystalAuraTHM extends Module {
         DamageResult bestResult = null;
         double bestDamage = 0;
 
+        // Support spots are tracked separately, never in the same comparison as real ones. Meteor's aura
+        // treats support as a pure last resort — any real obsidian/bedrock spot that passes the checks
+        // wins outright, whatever the damage. Scoring them together is what made this overplace.
+        BlockPos bestSupportFloor = null;
+        double bestSupportDamage = 0;
+        FindItemResult supportItem = support.get() ? PlacementUtils.findResistantBlock() : null;
+
         for (int x = -r; x <= r; x++) {
             for (int y = -r; y <= r; y++) {
                 for (int z = -r; z <= r; z++) {
@@ -440,7 +493,10 @@ public class CrystalAuraTHM extends Module {
                     if (floor.getY() < mc.world.getBottomY() || floor.getY() >= mc.world.getTopYInclusive()) continue;
 
                     var floorBlock = mc.world.getBlockState(floor).getBlock();
-                    if (floorBlock != Blocks.OBSIDIAN && floorBlock != Blocks.BEDROCK) continue;
+                    boolean needsSupport = floorBlock != Blocks.OBSIDIAN && floorBlock != Blocks.BEDROCK;
+                    // A support candidate is scored as if the obsidian were already there — the crystal
+                    // itself lands next tick, once the base exists.
+                    if (needsSupport && !(supportItem != null && supportItem.found() && BlockUtils.canPlace(floor))) continue;
 
                     BlockPos above = floor.up();
                     if (!mc.world.getBlockState(above).isAir()) continue;
@@ -452,16 +508,22 @@ public class CrystalAuraTHM extends Module {
 
                     Direction dir = null;
                     Vec3d hitVec = null;
-                    for (Direction d : Direction.values()) {
-                        Vec3d face = Vec3d.ofCenter(floor).add(d.getOffsetX() * 0.5, d.getOffsetY() * 0.5, d.getOffsetZ() * 0.5);
-                        if (face.distanceTo(mc.player.getEyePos()) > placeRange.get()) continue;
-                        if (RotationUtils.canSeePosition(mc.player.getEyePos(), face)) {
+                    if (needsSupport) {
+                        // The base isn't there yet, so there is no face to click for the crystal.
+                        // PlacementUtils picks the support block's own click face when we get there.
+                        if (PlacementUtils.getPlaceSide(floor) == null) continue;
+                        if (raytrace.get() && !RotationUtils.canSeePosition(mc.player.getEyePos(), Vec3d.ofCenter(floor))) continue;
+                    } else {
+                        for (Direction d : Direction.values()) {
+                            Vec3d face = Vec3d.ofCenter(floor).add(d.getOffsetX() * 0.5, d.getOffsetY() * 0.5, d.getOffsetZ() * 0.5);
+                            if (face.distanceTo(mc.player.getEyePos()) > placeRange.get()) continue;
+                            if (raytrace.get() && !RotationUtils.canSeePosition(mc.player.getEyePos(), face)) continue;
                             dir = d;
                             hitVec = face;
                             break;
                         }
+                        if (dir == null) continue;
                     }
-                    if (dir == null) continue;
 
                     Box occupied = new Box(floor.getX(), floor.getY() + 1, floor.getZ(),
                         floor.getX() + 1, floor.getY() + 1 + (oldPlacement.get() ? 2 : 1), floor.getZ() + 1);
@@ -470,7 +532,12 @@ public class CrystalAuraTHM extends Module {
                     DamageResult result = computeDamage(crystalPos, floor);
                     if (!isSafe(result)) continue;
 
-                    if (result.enemyDamage > bestDamage) {
+                    if (needsSupport) {
+                        if (result.enemyDamage > bestSupportDamage) {
+                            bestSupportDamage = result.enemyDamage;
+                            bestSupportFloor = floor;
+                        }
+                    } else if (result.enemyDamage > bestDamage) {
                         bestDamage = result.enemyDamage;
                         bestFloor = floor;
                         bestDir = dir;
@@ -479,6 +546,20 @@ public class CrystalAuraTHM extends Module {
                     }
                 }
             }
+        }
+
+        // Only build a base when it is worth strictly more than the best spot that already exists. With
+        // the default gain that means "nothing real found", i.e. Meteor's last-resort rule; lowering it
+        // lets support outbid a weak real spot.
+        if (bestSupportFloor != null && bestSupportDamage >= bestDamage + supportMinGain.get()) {
+            if (PlacementUtils.placeOnSolidSide(bestSupportFloor, supportItem, rotate.get(), rotationPriority.get(), silentSwitch.get())) {
+                recentlyUsed.put(bestSupportFloor.up(), ticksEnabled);
+                renderAction(bestSupportFloor, placeSideColor.get(), placeLineColor.get());
+                // The crystal needs the server to confirm the base first, and without this the next tick
+                // just picks another airy spot and stacks a second support block.
+                placeTimer = Math.max(placeTimer, supportDelay.get());
+            }
+            return;
         }
 
         if (bestFloor == null) return;
@@ -496,6 +577,9 @@ public class CrystalAuraTHM extends Module {
 
     private void placeCrystal(BlockPos floor, Direction dir, Vec3d hitVec, FindItemResult hotbarCrystal,
                                boolean mainHand, boolean offHand, DamageResult result) {
+        // Checked before the swap: bailing out after it would leave the wrong item selected.
+        if (!performRotation(hitVec, false)) return;
+
         boolean switched = false;
         Hand hand;
 
@@ -509,8 +593,6 @@ public class CrystalAuraTHM extends Module {
             hand = Hand.MAIN_HAND;
         }
 
-        performRotation(hitVec);
-
         mc.interactionManager.interactBlock(mc.player, hand, new BlockHitResult(hitVec, dir, floor, false));
         mc.player.swingHand(hand);
 
@@ -519,10 +601,8 @@ public class CrystalAuraTHM extends Module {
 
         BlockPos above = floor.up();
         recentlyUsed.put(above, ticksEnabled);
-        if (render.get()) {
-            RenderUtilsTHM.renderTickingBlock(above, placeSideColor.get(), placeLineColor.get(),
-                shapeMode.get(), 0, renderDuration.get(), true, false);
-        }
+        renderAction(above, placeSideColor.get(), placeLineColor.get());
+        addDamageLabel(above, result);
 
         lastTarget = result.enemyEntity;
         lastTargetTimer = 20;
@@ -533,8 +613,21 @@ public class CrystalAuraTHM extends Module {
 
     // Rotation - module-local helpers, no shared/global RotationUtils state is written.
 
-    private void performRotation(Vec3d target) {
-        if (!rotate.get()) return;
+    /**
+     * Returns false when the action must wait — Normal mode steps the yaw toward the target and defers,
+     * the way Meteor's own aura does, rather than firing while still pointing the wrong way.
+     */
+    private boolean performRotation(Vec3d target, boolean breaking) {
+        if (!rotate.get() || !rotateOn.get().covers(breaking)) return true;
+
+        if (rotationMode.get() == RotationMode.Normal) {
+            double yaw = Rotations.getYaw(target);
+            double pitch = Rotations.getPitch(target);
+            if (!stepTowards(yaw, pitch)) return false;
+
+            Rotations.rotate(yaw, pitch, rotationPriority.get());
+            return true;
+        }
 
         float[] rot = RotationUtils.getRotationsTo(mc.player.getEyePos(), target);
         float yaw = stepYaw(RotationUtils.getInstance().getServerYaw(), rot[0], yawStepLimit.get().floatValue());
@@ -544,6 +637,23 @@ public class CrystalAuraTHM extends Module {
         } else {
             RotationUtils.getInstance().setRotationSilent(yaw, rot[1], rotationPriority.get());
         }
+        return true;
+    }
+
+    /**
+     * True when the target is already within one step. Otherwise it queues a single step at priority
+     * -100 (last packet of the tick, same as Meteor) and reports not-ready.
+     */
+    private boolean stepTowards(double targetYaw, double targetPitch) {
+        double limit = yawStepLimit.get();
+        if (limit >= 180) return true;
+
+        float serverYaw = RotationUtils.getInstance().getServerYaw();
+        float delta = RotationUtils.wrapDegrees((float) targetYaw - serverYaw);
+        if (Math.abs(delta) <= limit) return true;
+
+        Rotations.rotate(serverYaw + Math.signum(delta) * limit, targetPitch, -100);
+        return false;
     }
 
     private void finishRotation() {
@@ -557,6 +667,74 @@ public class CrystalAuraTHM extends Module {
         float delta = RotationUtils.wrapDegrees(target - current);
         if (Math.abs(delta) <= maxStep) return target;
         return current + Math.signum(delta) * maxStep;
+    }
+
+    // Render
+
+    /** {@code pos} is the block to draw, not the base it sits on. */
+    private void renderAction(BlockPos pos, Color side, Color line) {
+        if (!render.get()) return;
+        RenderUtilsTHM.renderTickingBlock(pos, side, line, shapeMode.get(), 0,
+            renderDuration.get(), renderMode.get().fade, renderMode.get().shrink);
+    }
+
+    private void addDamageLabel(BlockPos crystalPos, DamageResult result) {
+        if (!damageText.get() || result.enemyEntity == null) return;
+
+        // One label per position. Stacking a second one on the same spot just draws the new number
+        // straight over the old, which reads as a smeared double-print rather than an update.
+        for (DamageLabel existing : damageLabels) {
+            if (existing.pos.equals(crystalPos)) {
+                existing.text = String.format("%.1f", result.enemyDamage);
+                existing.ticks = renderDuration.get();
+                return;
+            }
+        }
+        damageLabels.add(new DamageLabel(crystalPos, String.format("%.1f", result.enemyDamage), renderDuration.get()));
+    }
+
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (damageLabels.isEmpty()) return;
+
+        for (DamageLabel label : damageLabels) {
+            labelPos.set(label.pos.getX() + 0.5, label.pos.getY() + 0.5, label.pos.getZ() + 0.5);
+            if (!NametagUtils.to2D(labelPos, damageTextScale.get())) continue;
+
+            NametagUtils.begin(labelPos);
+            TextRenderer.get().begin(1.0, false, true);
+            double w = TextRenderer.get().getWidth(label.text) / 2.0;
+            TextRenderer.get().render(label.text, -w, 0.0, placeLineColor.get(), true);
+            TextRenderer.get().end();
+            NametagUtils.end();
+        }
+    }
+
+    private static final class DamageLabel {
+        final BlockPos pos;
+        String text;
+        int ticks;
+
+        DamageLabel(BlockPos pos, String text, int ticks) {
+            this.pos = pos;
+            this.text = text;
+            this.ticks = ticks;
+        }
+    }
+
+    /** Solid keeps the box at full size and opacity; the others are Meteor's own fade/shrink animations. */
+    public enum CrystalRender {
+        Solid(false, false),
+        Fade(true, false),
+        Shrink(false, true),
+        Smooth(true, true);
+
+        final boolean fade, shrink;
+
+        CrystalRender(boolean fade, boolean shrink) {
+            this.fade = fade;
+            this.shrink = shrink;
+        }
     }
 
     // ID Predict
@@ -638,7 +816,17 @@ public class CrystalAuraTHM extends Module {
     private record DamageResult(float enemyDamage, LivingEntity enemyEntity, float enemyHealth,
                                  float friendDamage, float selfDamage) {}
 
+    public enum RotateOn {
+        Place, Break, Both;
+
+        boolean covers(boolean breaking) {
+            return this == Both || (breaking ? this == Break : this == Place);
+        }
+    }
+
     public enum RotationMode {
+        /** Meteor's own rotation manager — shared with every other Meteor module. */
+        Normal,
         Silent,
         Client
     }

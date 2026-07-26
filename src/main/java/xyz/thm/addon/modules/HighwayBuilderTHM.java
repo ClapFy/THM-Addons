@@ -910,7 +910,7 @@ public class HighwayBuilderTHM extends Module {
     private final Setting<Double> placeRange = sgPaving.add(new DoubleSetting.Builder()
         .name("place-range")
         .description("The maximum distance at which you can place blocks.")
-        .defaultValue(4.5)
+        .defaultValue(5.2)
         .sliderMax(5.5)
         .build()
     );

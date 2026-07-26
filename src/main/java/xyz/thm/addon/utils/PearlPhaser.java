@@ -36,6 +36,7 @@ public class PearlPhaser {
 
     private final InventoryManager inventoryManager = InventoryManager.getInstance();
 
+    public final Setting<Boolean> autoPitch;
     public final Setting<Integer> pitch;
     public final Setting<Boolean> swapAlternative;
     /** Null when built without extras. */
@@ -48,24 +49,37 @@ public class PearlPhaser {
     public final Setting<Boolean> optimize;
     public final Setting<Boolean> selfPlaceRotate;
 
-    /** Everything, always visible. */
+    /** Everything, always visible. Unaimed owner — no auto-pitch, the slider is the only pitch there is. */
     public PearlPhaser(Settings settings) {
-        this(settings, true, () -> true);
+        this(settings, true, () -> true, false);
+    }
+
+    public PearlPhaser(Settings settings, boolean extras, BooleanSupplier visible) {
+        this(settings, extras, visible, true);
     }
 
     /**
      * {@code extras = false} leaves out attack and self-fill. {@code visible} hides every setting this
      * creates when it returns false — Meteor has no per-group visibility, so it's ANDed into each one.
+     * {@code aimed} says whether the owner calls {@link #throwPearl(Vec3d)}; only then can a pitch be
+     * solved, so only then is the auto-pitch toggle shown.
      */
-    public PearlPhaser(Settings settings, boolean extras, BooleanSupplier visible) {
+    public PearlPhaser(Settings settings, boolean extras, BooleanSupplier visible, boolean aimed) {
         SettingGroup sgPearl = settings.createGroup("Pearl");
 
+        autoPitch = sgPearl.add(new BoolSetting.Builder()
+            .name("auto-pitch")
+            .description("Solves the pitch from where the pearl has to land. Off uses the pitch slider instead.")
+            .defaultValue(true)
+            .visible(() -> visible.getAsBoolean() && aimed)
+            .build()
+        );
         pitch = sgPearl.add(new IntSetting.Builder()
             .name("pitch")
             .description("The pitch angle to throw pearls.")
             .defaultValue(85)
             .range(70, 90)
-            .visible(visible::getAsBoolean)
+            .visible(() -> visible.getAsBoolean() && (!aimed || !autoPitch.get()))
             .build()
         );
         swapAlternative = sgPearl.add(new BoolSetting.Builder()
@@ -135,14 +149,35 @@ public class PearlPhaser {
             && !mc.player.getItemCooldownManager().isCoolingDown(Items.ENDER_PEARL.getDefaultStack());
     }
 
+    /** Straight down into your own block, at the configured pitch. */
     public void throwPearl() {
+        throwPearl(null);
+    }
+
+    /**
+     * {@code aim} non-null aims the throw at that exact world point instead — yaw <i>and</i> pitch are
+     * solved from the real eye position, so any sub-block offset is accounted for and the {@code pitch}
+     * setting doesn't apply.
+     */
+    public void throwPearl(Vec3d aim) {
         int pearlSlot = PlacementUtils.getEnderPearlSlot();
         if (pearlSlot == -1 || mc.player.getItemCooldownManager().isCoolingDown(Items.ENDER_PEARL.getDefaultStack())) {
             return;
         }
-        final Vec3d pearlTargetVec = new Vec3d(Math.floor(mc.player.getX()) + 0.5, 0.0, Math.floor(mc.player.getZ()) + 0.5);
-        float[] rotations = RotationUtils.getRotationsTo(mc.player.getEyePos(), pearlTargetVec);
-        float yaw = rotations[0] + 180.0f;
+        float yaw, throwPitch;
+        if (aim != null) {
+            // Solve from where the pearl actually spawns (ThrownItemEntity: player x/z, eyeY - 0.1), not
+            // from the eye. Gravity is 0.03/tick against a 1.5 b/tick throw, so over the ~1 block this
+            // covers the trajectory is a straight line and no ballistic solve is needed.
+            float[] rotations = RotationUtils.getRotationsTo(mc.player.getEyePos().subtract(0.0, 0.1, 0.0), aim);
+            yaw = rotations[0];
+            // Yaw stays solved either way — a fixed yaw would just miss the block sideways.
+            throwPitch = autoPitch.get() ? rotations[1] : pitch.get();
+        } else {
+            Vec3d pearlTargetVec = new Vec3d(Math.floor(mc.player.getX()) + 0.5, 0.0, Math.floor(mc.player.getZ()) + 0.5);
+            yaw = RotationUtils.getRotationsTo(mc.player.getEyePos(), pearlTargetVec)[0] + 180.0f;
+            throwPitch = pitch.get();
+        }
 
         if (on(attack)) {
             handlePearlAttacks(yaw);
@@ -167,12 +202,12 @@ public class PearlPhaser {
         }
 
         inventoryManager.setSlot(targetSlot, InventoryManager.Priority.PEARL_PHASE);
-        rotationManager.setRotationSilent(yaw, pitch.get());
+        rotationManager.setRotationSilent(yaw, throwPitch);
         // Optimized: pearl is swapped in and rotation is set; self-place reuses that rotation.
         if (selfPlace.get() && optimize.get()) {
             performSelfPlace(true);
         }
-        mc.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, yaw, pitch.get()));
+        mc.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, yaw, throwPitch));
 
         if (swing.get()) {
             mc.player.swingHand(Hand.MAIN_HAND);
@@ -277,9 +312,7 @@ public class PearlPhaser {
             if (!optimized && selfPlaceRotate.get()) {
                 rotationManager.setRotationSilent(mc.player.getYaw(), 90.0f);
             }
-            BlockHitResult hitResult = new BlockHitResult(hitVec, Direction.UP, belowPos, false);
-            mc.getNetworkHandler().sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hitResult, 0));
-            mc.getNetworkHandler().sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
+            interact(new BlockHitResult(hitVec, Direction.UP, belowPos, false));
         } else {
             BlockPos feetPos = mc.player.getBlockPos();
             Direction side = PlacementUtils.getPlaceSide(feetPos);
@@ -291,9 +324,7 @@ public class PearlPhaser {
                 float[] rot = RotationUtils.getRotationsTo(mc.player.getEyePos(), hitVec);
                 rotationManager.setRotationSilent(rot[0], rot[1]);
             }
-            BlockHitResult hitResult = new BlockHitResult(hitVec, opposite, neighbor, false);
-            mc.getNetworkHandler().sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hitResult, 0));
-            mc.getNetworkHandler().sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
+            interact(new BlockHitResult(hitVec, opposite, neighbor, false));
         }
 
         if (swapAlternative.get()) {
@@ -307,6 +338,16 @@ public class PearlPhaser {
                 rotationManager.setRotationSilentSync();
             }
         }
+    }
+
+    /**
+     * Vanilla's own use-block path. The hand-rolled {@code PlayerInteractBlockC2SPacket} this replaces
+     * always sent sequence 0, so the server acked a stale block-change sequence and simply dropped the
+     * interaction — which is why self-place never lit the fire.
+     */
+    private void interact(BlockHitResult hitResult) {
+        mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
+        mc.getNetworkHandler().sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
     }
 
     private void performInventorySwapPVP(int pearlSlot) {

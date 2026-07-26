@@ -12,10 +12,13 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.player.BlockBreakingInfo;
+import net.minecraft.item.Items;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.utils.PearlPhaser;
+import xyz.thm.addon.utils.PlacementUtils;
 
 /**
  * Reacts to your surround being mined out.
@@ -39,6 +42,36 @@ public class AntiMine extends Module {
         .defaultValue(Mode.Clip)
         .build());
 
+    public final Setting<Integer> breakStage = sgGeneral.add(new IntSetting.Builder()
+        .name("break-stage")
+        .description("How far the block has to be broken before phasing. 0 fires the moment mining starts, 9 waits until it is about to pop.")
+        .defaultValue(5)
+        .range(0, 9)
+        .sliderRange(0, 9)
+        .visible(() -> mode.get() == Mode.Pearl)
+        .build());
+
+    public final Setting<Boolean> pearlClip = sgGeneral.add(new BoolSetting.Builder()
+        .name("clip-align")
+        .description("Runs Clip's positioning once the pearl has phased you, to square the hitbox up on the opening.")
+        .defaultValue(true)
+        .visible(() -> mode.get() == Mode.Pearl)
+        .build());
+
+    public final Setting<Boolean> selfMine = sgGeneral.add(new BoolSetting.Builder()
+        .name("trigger-on-self")
+        .description("Also triggers on blocks you mine yourself. Off is the real fight case; on is how you test it solo.")
+        .defaultValue(false)
+        .visible(() -> mode.get() == Mode.Pearl)
+        .build());
+
+    public final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Prints which gate stopped a phase — breaking blocks seen, target found, pearl ready.")
+        .defaultValue(false)
+        .visible(() -> mode.get() == Mode.Pearl)
+        .build());
+
     /**
      * Owns the Pearl / Self Place setting groups and the throw itself, minus attack and self-fill.
      * Every setting it creates is hidden unless the mode is Pearl.
@@ -48,14 +81,13 @@ public class AntiMine extends Module {
     private BlockPos lastPearlTarget;
     /** Both modes fire once per break — cleared again when the surround is whole. */
     private boolean triggered;
+    private long lastDebug;
+    /** Ticks left to wait for the pearl's teleport before clip-align gives up. */
+    private int alignTicks;
+    private static final int PHASE_WAIT = 60;
 
     public AntiMine() {
         super(THMAddon.PVP, "anti-mine", "Phases or clips when your surround gets mined out.");
-    }
-
-    @Override
-    public void onActivate() {
-        if (mode.get() == Mode.Pearl && mc.player != null) mc.player.noClip = true;
     }
 
     @Override
@@ -63,6 +95,7 @@ public class AntiMine extends Module {
         if (mc.player != null) mc.player.noClip = false;
         lastPearlTarget = null;
         triggered = false;
+        alignTicks = 0;
     }
 
     @EventHandler
@@ -70,7 +103,9 @@ public class AntiMine extends Module {
         if (mc.player == null || mc.world == null) return;
 
         if (mode.get() == Mode.Pearl) {
-            mc.player.noClip = true;
+            // Only while the hitbox is genuinely inside a block. A permanent noClip drops you straight
+            // through the floor, so you're never in a surround and nothing ever triggers.
+            mc.player.noClip = PlacementUtils.isPhasing();
             tickPearl();
         } else {
             mc.player.noClip = false;
@@ -81,9 +116,12 @@ public class AntiMine extends Module {
     // ── Pearl ─────────────────────────────────────────────────────────────────
 
     private void tickPearl() {
-        if (!pearl.canThrow()) return;
+        tickPendingAlign();
 
         BlockPos target = findBreakingNeighbor();
+        debug(target);
+
+        if (!pearl.canThrow()) return;
         if (target == null) {
             lastPearlTarget = null;
             return;
@@ -92,23 +130,78 @@ public class AntiMine extends Module {
         if (target.equals(lastPearlTarget)) return;
         lastPearlTarget = target;
 
-        straddleInto(target);
-        pearl.throwPearl();
+        pearl.throwPearl(pearlAim(target));
+        if (pearlClip.get()) alignTicks = PHASE_WAIT;
     }
 
-    // ponytail: only checks the 4 horizontal neighbors at feet level, matches the 1x1 tower defense case; add head/vertical if a different break angle needs covering too.
+    /**
+     * Where the pearl has to land: the floor of the boundary we share with {@code target}, not the
+     * target's centre. The teleport drops you exactly where the pearl stopped — aiming at the centre of a
+     * block that is still solid means hitting its side face partway up, which leaves you hovering against
+     * the wall instead of straddling it. Aiming at the boundary at floor level lands you on the seam at
+     * standing height whatever your sub-block offset is, which is the whole point of the phase.
+     */
+    private Vec3d pearlAim(BlockPos target) {
+        BlockPos feet = mc.player.getBlockPos();
+        int dx = target.getX() - feet.getX();
+        int dz = target.getZ() - feet.getZ();
+
+        double x = dx == 0 ? mc.player.getX() : (dx > 0 ? target.getX() : feet.getX());
+        double z = dz == 0 ? mc.player.getZ() : (dz > 0 ? target.getZ() : feet.getZ());
+        return new Vec3d(x, feet.getY(), z);
+    }
+
+    /** Aligns once the pearl has actually landed us inside a block, or gives up. */
+    private void tickPendingAlign() {
+        if (alignTicks <= 0) return;
+        alignTicks--;
+
+        if (PlacementUtils.isPhasing()) {
+            align();
+            alignTicks = 0;
+        }
+    }
+
+    /** Any block being broken that touches our own column at feet or head level. */
     private BlockPos findBreakingNeighbor() {
-        Int2ObjectMap<BlockBreakingInfo> infos = ((WorldRendererAccessor) mc.worldRenderer).meteor$getBlockBreakingInfos();
+        Int2ObjectMap<BlockBreakingInfo> infos = breakingInfos();
         if (infos.isEmpty()) return null;
 
         BlockPos feet = mc.player.getBlockPos();
-        for (Direction dir : Direction.Type.HORIZONTAL) {
-            BlockPos candidate = feet.offset(dir);
-            for (BlockBreakingInfo info : infos.values()) {
-                if (info.getActorId() != mc.player.getId() && info.getPos().equals(candidate)) return candidate;
-            }
+        for (BlockBreakingInfo info : infos.values()) {
+            if (!selfMine.get() && info.getActorId() == mc.player.getId()) continue;
+
+            if (info.getStage() < breakStage.get()) continue;
+
+            BlockPos pos = info.getPos();
+            int dy = pos.getY() - feet.getY();
+            if (dy != 0 && dy != 1) continue;
+            if (Math.abs(pos.getX() - feet.getX()) + Math.abs(pos.getZ() - feet.getZ()) == 1) return pos;
         }
         return null;
+    }
+
+    private Int2ObjectMap<BlockBreakingInfo> breakingInfos() {
+        return ((WorldRendererAccessor) mc.worldRenderer).meteor$getBlockBreakingInfos();
+    }
+
+    /** One line a second while debug is on, so a silent phase says which gate stopped it. */
+    private void debug(BlockPos target) {
+        if (!debug.get() || mc.world.getTime() - lastDebug < 20) return;
+        lastDebug = mc.world.getTime();
+
+        StringBuilder seen = new StringBuilder();
+        for (BlockBreakingInfo info : breakingInfos().values()) {
+            seen.append(' ').append(info.getPos().toShortString())
+                .append("/by").append(info.getActorId())
+                .append("/st").append(info.getStage());
+        }
+        info("feet=%s breaking=[%s] target=%s pearl=%s cooldown=%s",
+            mc.player.getBlockPos().toShortString(),
+            seen.toString().trim(),
+            target,
+            PlacementUtils.getEnderPearlSlot(),
+            mc.player.getItemCooldownManager().isCoolingDown(Items.ENDER_PEARL.getDefaultStack()));
     }
 
     // ── Clip ──────────────────────────────────────────────────────────────────
@@ -123,17 +216,26 @@ public class AntiMine extends Module {
         if (triggered) return;
         triggered = true;
 
+        align();
+    }
+
+    /**
+     * Takes the corner of a mined-out 2x2 if there is one, else straddles the edge into whichever
+     * single neighbour is open, so both blocks are denied.
+     */
+    private void align() {
+        BlockPos feet = mc.player.getBlockPos();
+
         BlockPos corner = bestOpenCorner(feet);
         if (corner != null) {
             mc.player.setPosition(corner.getX(), mc.player.getY(), corner.getZ());
             return;
         }
 
-        // No 2x2 to sit in the middle of — straddle the edge into the single hole instead
         for (Direction dir : Direction.Type.HORIZONTAL) {
-            BlockPos hole = feet.offset(dir);
-            if (open(hole.getX(), hole.getZ(), feet.getY())) {
-                straddleInto(hole);
+            BlockPos n = feet.offset(dir);
+            if (open(n.getX(), n.getZ(), feet.getY())) {
+                straddleInto(n);
                 return;
             }
         }
