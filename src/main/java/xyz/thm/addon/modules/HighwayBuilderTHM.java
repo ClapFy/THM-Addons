@@ -148,6 +148,15 @@ public class HighwayBuilderTHM extends Module {
         LowTps
     }
 
+    @Override
+    public String getInfoString() {
+        return switch (THMSystem.get().getMode()) {
+            case THMSystem.Mode.HighwayBuilding -> "Building";
+            case THMSystem.Mode.HighwayDigging -> "Digging";
+            default -> "Custom";
+        };
+    }
+
     private static final long STATS_CHECKPOINT_INTERVAL_MS = 10 * 60 * 1000L;
     private static final int STATS_SCREENSHOT_DELAY_MS = 250;
     private static final long STATS_MEMORY_RETRY_RECHECK_MS = 5_000L;

@@ -340,6 +340,10 @@ public class THMSystem extends System<THMSystem> {
         WaveyCapesConfig.syncFromSystem();
     }
 
+    public Mode getMode() {
+        return mode.get();
+    }
+
     public static THMSystem get() {
         return Systems.get(THMSystem.class);
     }
