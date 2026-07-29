@@ -7,6 +7,7 @@ package xyz.thm.addon.modules;
 
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.PacketListSetting;
 import meteordevelopment.meteorclient.settings.Setting;
@@ -32,6 +33,23 @@ public class PaketLimiter extends Module {
         .build()
     );
 
+    public final Setting<Boolean> allowBursts = sgGeneral.add(new BoolSetting.Builder()
+        .name("allow-bursts")
+        .description("Let one tick exceed the packet limit, at most once every 20 ticks.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Integer> burstLimit = sgGeneral.add(new IntSetting.Builder()
+        .name("burst-limit")
+        .description("Max packets on a burst tick.")
+        .defaultValue(60)
+        .min(0)
+        .sliderRange(0, 1000)
+        .visible(allowBursts::get)
+        .build()
+    );
+
     public final Setting<Set<Class<? extends Packet<?>>>> bypass = sgGeneral.add(new PacketListSetting.Builder()
         .name("bypass")
         .description("C2S packets that bypass the limiter.")
@@ -46,6 +64,8 @@ public class PaketLimiter extends Module {
     );
 
     private int sentThisTick = 0;
+    private int tick = 0;
+    private int lastBurstTick = -20;
 
     public PaketLimiter() {
         super(THMAddon.MAIN, "paket-limiter", "Limits outgoing packets per tick with a bypass list.");
@@ -77,6 +97,7 @@ public class PaketLimiter extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         sentThisTick = 0;
+        tick++;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST + 2)
@@ -90,8 +111,22 @@ public class PaketLimiter extends Module {
         if (bypass.get().contains(event.packet.getClass())) return;
 
         if (sentThisTick >= max) {
-            event.cancel();
-            return;
+            // ponytail: fixed 20-tick burst cooldown, make it a setting if someone asks
+            if (!allowBursts.get()) {
+                event.cancel();
+                return;
+            }
+            if (tick != lastBurstTick) { // not already bursting this tick — start a new one if off cooldown
+                if (tick - lastBurstTick < 20) {
+                    event.cancel();
+                    return;
+                }
+                lastBurstTick = tick;
+            }
+            if (sentThisTick >= burstLimit.get()) {
+                event.cancel();
+                return;
+            }
         }
         sentThisTick++;
     }
