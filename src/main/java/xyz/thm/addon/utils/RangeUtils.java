@@ -60,10 +60,17 @@ public final class RangeUtils {
         return isInRange(reach, pos, mc.player.getEyePos());
     }
 
-    /** Whether the server would accept an interaction with {@code pos} at all. */
+    /**
+     * Whether the server would accept an interaction with {@code pos} at all.
+     *
+     * <p>Strict {@code <}, unlike {@link #isInRange}: vanilla's own check is
+     * {@code squaredMagnitude < range * range}, so a block sitting exactly on the limit is rejected
+     * server-side. A user-configured range still uses {@code <=} — "range 5" should mine at 5.
+     */
     public static boolean isInReach(BlockPos pos) {
         if (mc.player == null) return false;
-        return isInRange(mc.player.getBlockInteractionRange(), pos);
+        double reach = mc.player.getBlockInteractionRange();
+        return squaredDistance(pos, mc.player.getEyePos()) < reach * reach;
     }
 
     /**
@@ -78,9 +85,7 @@ public final class RangeUtils {
         double bestOutside = -Double.MAX_VALUE;
 
         for (Direction dir : Direction.values()) {
-            double sign = dir.getDirection().offset();
-            double plane = dir.getAxis().choose(pos.getX(), pos.getY(), pos.getZ()) + (sign > 0 ? 1.0 : 0.0);
-            double outside = (dir.getAxis().choose(from.x, from.y, from.z) - plane) * sign;
+            double outside = outsideDistance(pos, dir, from);
 
             if (outside > bestOutside) {
                 bestOutside = outside;
@@ -95,5 +100,69 @@ public final class RangeUtils {
     public static Direction nearestFace(BlockPos pos) {
         if (mc.player == null) return Direction.UP;
         return nearestFace(pos, mc.player.getEyePos());
+    }
+
+    /**
+     * Like {@link #nearestFace}, but never picks a face that is buried behind a solid neighbour
+     * when an exposed one is available — clicking a covered face is something a real player can
+     * never do. Falls back to the plain geometric nearest face when the block is fully enclosed.
+     */
+    public static Direction nearestExposedFace(BlockPos pos, Vec3d from) {
+        if (mc.world == null) return nearestFace(pos, from);
+
+        Direction best = null;
+        double bestOutside = -Double.MAX_VALUE;
+
+        for (Direction dir : Direction.values()) {
+            BlockPos neighbor = pos.offset(dir);
+            if (mc.world.getBlockState(neighbor).isSolidBlock(mc.world, neighbor)) continue;
+
+            double outside = outsideDistance(pos, dir, from);
+            if (outside > bestOutside) {
+                bestOutside = outside;
+                best = dir;
+            }
+        }
+
+        return best != null ? best : nearestFace(pos, from);
+    }
+
+    /** The exposed block face facing the player's eyes. */
+    public static Direction nearestExposedFace(BlockPos pos) {
+        if (mc.player == null) return Direction.UP;
+        return nearestExposedFace(pos, mc.player.getEyePos());
+    }
+
+    /**
+     * Nearest point of one specific face of {@code pos} — an edge or corner of that face when
+     * {@code from} is off to the side of it.
+     *
+     * <p>{@link #nearestPoint} and {@link #nearestFace} are solved independently, so on a corner
+     * approach the nearest point can sit on an edge that is not part of the face being clicked.
+     * Aim and hit vectors should use this instead, so the point actually lies on the clicked face.
+     */
+    public static Vec3d nearestPointOnFace(BlockPos pos, Direction face, Vec3d from) {
+        Vec3d nearest = nearestPoint(pos, from);
+        double plane = face.getAxis().choose(pos.getX(), pos.getY(), pos.getZ())
+            + (face.getDirection().offset() > 0 ? 1.0 : 0.0);
+
+        return switch (face.getAxis()) {
+            case X -> new Vec3d(plane, nearest.y, nearest.z);
+            case Y -> new Vec3d(nearest.x, plane, nearest.z);
+            case Z -> new Vec3d(nearest.x, nearest.y, plane);
+        };
+    }
+
+    /** Nearest point of {@code face} to the player's eyes. */
+    public static Vec3d nearestPointOnFace(BlockPos pos, Direction face) {
+        if (mc.player == null) return pos.toCenterPos();
+        return nearestPointOnFace(pos, face, mc.player.getEyePos());
+    }
+
+    /** How far {@code from} lies beyond {@code dir}'s outward plane (negative when behind it). */
+    private static double outsideDistance(BlockPos pos, Direction dir, Vec3d from) {
+        double sign = dir.getDirection().offset();
+        double plane = dir.getAxis().choose(pos.getX(), pos.getY(), pos.getZ()) + (sign > 0 ? 1.0 : 0.0);
+        return (dir.getAxis().choose(from.x, from.y, from.z) - plane) * sign;
     }
 }

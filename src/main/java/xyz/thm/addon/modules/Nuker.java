@@ -327,8 +327,10 @@ public class Nuker extends Module {
                 if (count >= maxBlocksPerTick.get()) break;
 
                 boolean canInstaMine = BlockUtils.canInstaBreak(block);
-                if (rotate.get()) Rotations.rotate(Rotations.getYaw(block), Rotations.getPitch(block), () -> breakBlock(block));
-                else breakBlock(block);
+                if (rotate.get()) {
+                    Vec3d aim = aimPoint(block);
+                    Rotations.rotate(Rotations.getYaw(aim), Rotations.getPitch(aim), () -> breakBlock(block));
+                } else breakBlock(block);
 
                 if (enableRenderBreaking.get()) RenderUtils.renderTickingBlock(block, sideColor.get(), lineColor.get(), shapeModeBreak.get(), 0, 8, true, false);
                 lastBlockPos.set(block);
@@ -342,9 +344,19 @@ public class Nuker extends Module {
         });
     }
 
+    /** The face to click and the point on it to aim at — nearest exposed side, corner-accurate. */
+    private Direction clickFace(BlockPos pos) {
+        return RangeUtils.nearestExposedFace(pos);
+    }
+
+    private Vec3d aimPoint(BlockPos pos) {
+        return RangeUtils.nearestPointOnFace(pos, clickFace(pos));
+    }
+
     private void breakBlock(BlockPos blockPos) {
         if (interact.get()) {
-            BlockUtils.interact(new BlockHitResult(RangeUtils.nearestPoint(blockPos), RangeUtils.nearestFace(blockPos), blockPos, true), Hand.MAIN_HAND, swing.get());
+            Direction face = clickFace(blockPos);
+            BlockUtils.interact(new BlockHitResult(RangeUtils.nearestPointOnFace(blockPos, face), face, blockPos, true), Hand.MAIN_HAND, swing.get());
             interacted.add(blockPos);
             return;
         }
@@ -385,13 +397,20 @@ public class Nuker extends Module {
             }
         }
 
+        Direction dir = clickFace(blockPos);
+
         if (packetMine.get()) {
-            Direction dir = RangeUtils.nearestFace(blockPos);
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, blockPos, dir));
             if (swing.get()) mc.player.swingHand(Hand.MAIN_HAND);
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, blockPos, dir));
-        } else {
-            BlockUtils.breakBlock(blockPos, swing.get());
+        } else if (BlockUtils.canBreak(blockPos, mc.world.getBlockState(blockPos))) {
+            // ponytail: Meteor's BlockUtils.breakBlock picks its own face via getDirection (prefers
+            // UP/DOWN, then a block-position delta that can point away from you), so the mining
+            // side is inlined here instead. Skips Meteor's InstantRebreak hand-off with it.
+            BlockPos pos = blockPos.toImmutable();
+            if (mc.interactionManager.isBreakingBlock()) mc.interactionManager.updateBlockBreakingProgress(pos, dir);
+            else mc.interactionManager.attackBlock(pos, dir);
+            if (swing.get()) mc.player.swingHand(Hand.MAIN_HAND);
         }
 
         if (doInvSwap) {
@@ -428,9 +447,11 @@ public class Nuker extends Module {
             if (activeBedrockPos == null) return;
         }
 
-        if (rotate.get()) Rotations.rotate(Rotations.getYaw(activeBedrockPos), Rotations.getPitch(activeBedrockPos));
-        Direction direction = RangeUtils.nearestFace(activeBedrockPos);
-        if (direction == null) direction = Direction.UP;
+        Direction direction = clickFace(activeBedrockPos);
+        if (rotate.get()) {
+            Vec3d aim = RangeUtils.nearestPointOnFace(activeBedrockPos, direction);
+            Rotations.rotate(Rotations.getYaw(aim), Rotations.getPitch(aim));
+        }
         mc.interactionManager.updateBlockBreakingProgress(activeBedrockPos, direction);
         if (swing.get()) mc.player.swingHand(Hand.MAIN_HAND);
     }
@@ -649,7 +670,7 @@ public class Nuker extends Module {
             this.blockPos = pos.toImmutable();
             this.blockState = mc.world.getBlockState(this.blockPos);
             this.block = this.blockState.getBlock();
-            this.direction = RangeUtils.nearestFace(pos);
+            this.direction = clickFace(pos);
         }
 
         private DoubleMineTarget startDestroying() {
