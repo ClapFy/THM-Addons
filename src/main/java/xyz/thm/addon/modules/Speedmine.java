@@ -1,6 +1,7 @@
 /*
  * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
  * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ * By using this code you agree to the license terms and to keep your repo public.
  */
 
 package xyz.thm.addon.modules;
@@ -39,6 +40,7 @@ import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
 import xyz.thm.addon.system.THMSystem;
+import xyz.thm.addon.utils.RangeUtils;
 import xyz.thm.addon.utils.RenderUtilsTHM;
 import xyz.thm.addon.utils.ThmMembers;
 
@@ -611,8 +613,7 @@ public class Speedmine extends Module {
         bedrockPos = pos;
         if (bedrockRotate.get()) lookAt(pos);
 
-        Direction dir = BlockUtils.getDirection(pos);
-        mc.interactionManager.updateBlockBreakingProgress(pos, dir == null ? Direction.UP : dir);
+        mc.interactionManager.updateBlockBreakingProgress(pos, RangeUtils.nearestFace(pos));
         mc.player.swingHand(Hand.MAIN_HAND);
     }
 
@@ -696,9 +697,7 @@ public class Speedmine extends Module {
     }
 
     public boolean outOfRange(BlockPos pos) {
-        if (mc.player == null) return true;
-        double r = range.get() + 0.5;
-        return mc.player.getEyePos().squaredDistanceTo(pos.toCenterPos()) > r * r;
+        return !RangeUtils.isInRange(range.get(), pos);
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────

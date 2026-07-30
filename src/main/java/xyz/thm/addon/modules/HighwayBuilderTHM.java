@@ -1,6 +1,7 @@
 /*
  * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
  * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ * By using this code you agree to the license terms and to keep your repo public.
  */
 
 /*
@@ -160,10 +161,6 @@ public class HighwayBuilderTHM extends Module {
     private static final long STATS_CHECKPOINT_INTERVAL_MS = 10 * 60 * 1000L;
     private static final int STATS_SCREENSHOT_DELAY_MS = 250;
     private static final long STATS_MEMORY_RETRY_RECHECK_MS = 5_000L;
-    private static final long STATS_CODE_MAX_AGE_MS = 24L * 60L * 60L * 1000L;
-    private static final long STATS_CODE_MAX_FUTURE_SKEW_MS = 5L * 60L * 1000L;
-    private static final String STATS_CODE_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    private static final int STATS_CODE_LENGTH = 7;
     private static final String THM_DEBUG_LOG_DIR_NAME = "thm";
     private static final String HIGHWAYBUILDER_DEBUG_FILE_NAME = "highwaybuilder-debug.log";
     private static final String RESTOCK_DEBUG_FILE_NAME = "highwaybuilder-restock-debug.log";
@@ -1555,7 +1552,6 @@ public class HighwayBuilderTHM extends Module {
     private boolean eChestMemoryReflectionFailureLogged;
     private String activeStatsSessionId;
     private long activeStatsGeneration;
-    private long activeStatsCodeTimestampMs;
     private StatsArtifactSnapshot statsCacheSnapshot;
     private StatsArtifactIdentity loadedStatsArtifactIdentity;
     private final Set<String> consumedStatsArtifactKeys = new HashSet<>();
@@ -1753,7 +1749,6 @@ public class HighwayBuilderTHM extends Module {
         double startZ,
         int blocksBroken,
         int blocksPlaced,
-        long statsCodeTimestampMs,
         boolean displayInfo,
         long lastCheckpointAt,
         long printedAt,
@@ -1818,15 +1813,13 @@ public class HighwayBuilderTHM extends Module {
         long generation,
         Vec3d startPos,
         int blocksBroken,
-        int blocksPlaced,
-        long statsCodeTimestampMs
+        int blocksPlaced
     ) {}
 
     private record StatsDisplaySnapshot(
         double distance,
         int blocksBroken,
         int blocksPlaced,
-        String statsCode,
         boolean restartDistanceWarning
     ) {
         // ponytail: whole-session average, not a windowed/rolling one
@@ -1899,8 +1892,8 @@ public class HighwayBuilderTHM extends Module {
             warning("Status wont get send. You are not on a main highway");
             return;
         }
-        if (THMSystem.get() == null || Objects.equals(THMSystem.get().getHash(), "SetYourHash") || Objects.equals(THMSystem.get().getHash(), "")) {
-            warning("Status not sent. No Hash set.");
+        if (THMSystem.get() == null || !THMSystem.get().hasApiToken()) {
+            warning("Status not sent. No valid API token set.");
             return;
         }
 
@@ -1908,7 +1901,7 @@ public class HighwayBuilderTHM extends Module {
         String axis = dir.toString();
 
         String statusMessage = String.format("%s:%s:%s:%d:%d:%s",
-            THMSystem.get().getHash(),
+            THMSystem.get().getApiToken(),
             playerName,
             axis,
             blocksBroken,
@@ -6327,7 +6320,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private boolean isWithinConfiguredForwardRange(BlockPos pos) {
-        return pos.getSquaredDistance(mc.player.getEyePos()) <= placeRange.get() * placeRange.get();
+        return RangeUtils.isInRange(placeRange.get(), pos);
     }
 
     private boolean tryMineBlock(BlockPos pos, BlockState state, boolean rotate) {
@@ -8413,7 +8406,6 @@ public class HighwayBuilderTHM extends Module {
         displayInfo = false;
         activeStatsSessionId = null;
         activeStatsGeneration = 0L;
-        activeStatsCodeTimestampMs = 0L;
         lastPrintedStatsSessionId = null;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
@@ -8521,7 +8513,6 @@ public class HighwayBuilderTHM extends Module {
             snapshot.startZ(),
             snapshot.blocksBroken(),
             snapshot.blocksPlaced(),
-            snapshot.statsCodeTimestampMs(),
             snapshot.displayInfo(),
             System.currentTimeMillis(),
             snapshot.printedAt(),
@@ -8575,7 +8566,6 @@ public class HighwayBuilderTHM extends Module {
         displayInfo = true;
         activeStatsSessionId = UUID.randomUUID().toString();
         activeStatsGeneration = 0L;
-        activeStatsCodeTimestampMs = 0L;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
         persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "fresh-activate");
@@ -8592,7 +8582,6 @@ public class HighwayBuilderTHM extends Module {
         displayInfo = snapshot.displayInfo();
         activeStatsSessionId = snapshot.sessionId();
         activeStatsGeneration = snapshot.generation();
-        activeStatsCodeTimestampMs = snapshot.statsCodeTimestampMs();
         lastPrintedStatsSessionId = snapshot.printedToChat() ? snapshot.sessionId() : null;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
@@ -8666,7 +8655,6 @@ public class HighwayBuilderTHM extends Module {
             start.z,
             blocksBroken,
             blocksPlaced,
-            activeStatsCodeTimestampMs,
             displayInfo,
             checkpointAt,
             printedAt,
@@ -8714,7 +8702,6 @@ public class HighwayBuilderTHM extends Module {
             snapshot.startZ(),
             snapshot.blocksBroken(),
             snapshot.blocksPlaced(),
-            snapshot.statsCodeTimestampMs(),
             snapshot.displayInfo(),
             System.currentTimeMillis(),
             printedAt,
@@ -8722,36 +8709,6 @@ public class HighwayBuilderTHM extends Module {
             webhookSendCommitted,
             apiSendCommitted,
             finalizationReason,
-            snapshot.reconnectCycleId(),
-            snapshot.reconnectBaselinePayload()
-        );
-    }
-
-    private StatsArtifactSnapshot copyStatsArtifactWithCodeTimestamp(
-        StatsArtifactSnapshot snapshot,
-        long statsCodeTimestampMs,
-        long generation
-    ) {
-        return new StatsArtifactSnapshot(
-            snapshot.kind(),
-            snapshot.sessionId(),
-            generation,
-            snapshot.state(),
-            snapshot.resumeAllowed(),
-            snapshot.workingDirectionName(),
-            snapshot.startX(),
-            snapshot.startY(),
-            snapshot.startZ(),
-            snapshot.blocksBroken(),
-            snapshot.blocksPlaced(),
-            statsCodeTimestampMs,
-            snapshot.displayInfo(),
-            System.currentTimeMillis(),
-            snapshot.printedAt(),
-            snapshot.printedToChat(),
-            snapshot.webhookSendCommitted(),
-            snapshot.apiSendCommitted(),
-            snapshot.finalizationReason(),
             snapshot.reconnectCycleId(),
             snapshot.reconnectBaselinePayload()
         );
@@ -8980,7 +8937,6 @@ public class HighwayBuilderTHM extends Module {
         out.append("meta|startZ|").append(snapshot.startZ()).append('\n');
         out.append("meta|blocksBroken|").append(snapshot.blocksBroken()).append('\n');
         out.append("meta|blocksPlaced|").append(snapshot.blocksPlaced()).append('\n');
-        out.append("meta|statsCodeTimestampMs|").append(snapshot.statsCodeTimestampMs()).append('\n');
         out.append("meta|displayInfo|").append(snapshot.displayInfo()).append('\n');
         out.append("meta|lastCheckpointAt|").append(snapshot.lastCheckpointAt()).append('\n');
         out.append("meta|printedAt|").append(snapshot.printedAt()).append('\n');
@@ -9059,7 +9015,6 @@ public class HighwayBuilderTHM extends Module {
             parseDoubleSafe(meta.get("startZ"), 0.0),
             parseIntSafe(meta.get("blocksBroken"), 0),
             parseIntSafe(meta.get("blocksPlaced"), 0),
-            parseLongSafe(meta.get("statsCodeTimestampMs"), 0L),
             Boolean.parseBoolean(meta.getOrDefault("displayInfo", "true")),
             parseLongSafe(meta.get("lastCheckpointAt"), 0L),
             parseLongSafe(meta.get("printedAt"), 0L),
@@ -9133,8 +9088,7 @@ public class HighwayBuilderTHM extends Module {
             snapshot.generation(),
             new Vec3d(snapshot.startX(), snapshot.startY(), snapshot.startZ()),
             snapshot.blocksBroken(),
-            snapshot.blocksPlaced(),
-            snapshot.statsCodeTimestampMs()
+            snapshot.blocksPlaced()
         );
     }
 
@@ -9152,7 +9106,6 @@ public class HighwayBuilderTHM extends Module {
             start.z,
             blocksBroken,
             blocksPlaced,
-            activeStatsCodeTimestampMs,
             displayInfo,
             System.currentTimeMillis(),
             0L,
@@ -9209,54 +9162,10 @@ public class HighwayBuilderTHM extends Module {
         return persistFinalizationRecord(updated, reason) != null ? updated : null;
     }
 
-    private boolean shouldRefreshStatsCodeTimestamp(long timestampMs, long nowMs) {
-        if (timestampMs <= 0L) return true;
-        if (timestampMs > nowMs + STATS_CODE_MAX_FUTURE_SKEW_MS) return true;
-        return nowMs - timestampMs > STATS_CODE_MAX_AGE_MS;
-    }
-
-    private long ensureActiveStatsCodeTimestamp(String reason) {
-        if (!hasActiveInMemoryStatsSession()) return 0L;
-
-        long now = System.currentTimeMillis();
-        if (!shouldRefreshStatsCodeTimestamp(activeStatsCodeTimestampMs, now)) return activeStatsCodeTimestampMs;
-
-        activeStatsCodeTimestampMs = now;
-        statsSessionDirty = true;
-        if (!statsSessionTerminalOrFinalizing) {
-            persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, reason + "-stats-code");
-        }
-        return activeStatsCodeTimestampMs;
-    }
-
-    private StatsArtifactSnapshot ensureFinalizationStatsCodeTimestamp(StatsArtifactSnapshot snapshot, String reason) {
-        if (snapshot == null) return null;
-
-        long now = System.currentTimeMillis();
-        if (!shouldRefreshStatsCodeTimestamp(snapshot.statsCodeTimestampMs(), now)) {
-            activeStatsCodeTimestampMs = snapshot.statsCodeTimestampMs();
-            return snapshot;
-        }
-
-        StatsArtifactSnapshot updated = copyStatsArtifactWithCodeTimestamp(
-            snapshot,
-            now,
-            nextStatsGenerationAfter(snapshot.generation())
-        );
-        if (persistFinalizationRecord(updated, reason + "-stats-code") == null) return null;
-
-        activeStatsCodeTimestampMs = now;
-        return updated;
-    }
-
     private boolean completeFinalizationRecord(StatsArtifactSnapshot snapshot, String reason, boolean allowPrinting) {
         if (snapshot == null) return true;
 
         StatsArtifactSnapshot working = snapshot;
-        if (allowPrinting && !working.printedToChat()) {
-            working = ensureFinalizationStatsCodeTimestamp(working, reason);
-            if (working == null) return false;
-        }
 
         RetiredStatsReportSnapshot report = createRetiredStatsReportSnapshot(working);
         if (report == null) return false;
@@ -9357,9 +9266,9 @@ public class HighwayBuilderTHM extends Module {
                     } else if (isNot6B6T()) {
                         warning("API not sent. You are not on 6B6T");
                         logExternalStatsDecision(working, report, reason, "api", "skipped-not-6b6t", distance);
-                    } else if (THMSystem.get().getHash() == null || Objects.equals(THMSystem.get().getHash(), "SetYourHash") || Objects.equals(THMSystem.get().getHash(), "")) {
-                        warning("API not sent. No Hash set.");
-                        logExternalStatsDecision(working, report, reason, "api", "skipped-missing-hash", distance);
+                    } else if (!THMSystem.get().hasApiToken()) {
+                        warning("API not sent. No valid API token set.");
+                        logExternalStatsDecision(working, report, reason, "api", "skipped-missing-token", distance);
                     } else {
                         StatsArtifactSnapshot committed = updateFinalizationRecord(
                             working,
@@ -9372,7 +9281,7 @@ public class HighwayBuilderTHM extends Module {
                         if (committed != null) {
                             String server = mc.getCurrentServerEntry() != null ? mc.getCurrentServerEntry().address : "singleplayer";
                             String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
-                                THMSystem.get().getHash(),
+                                THMSystem.get().getApiToken(),
                                 playerName,
                                 server,
                                 distance,
@@ -9627,28 +9536,16 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
-    private static String encodeStatsCode(long timestampMs) {
-        char[] encoded = new char[STATS_CODE_LENGTH];
-        long value = timestampMs;
-        for (int i = encoded.length - 1; i >= 0; i--) {
-            encoded[i] = STATS_CODE_BASE58_ALPHABET.charAt((int) (value % STATS_CODE_BASE58_ALPHABET.length()));
-            value /= STATS_CODE_BASE58_ALPHABET.length();
-        }
-        return new String(encoded);
-    }
-
-    private StatsDisplaySnapshot createStatsDisplaySnapshot(Vec3d startPos, int broken, int placed, long statsCodeTimestampMs) {
+    private StatsDisplaySnapshot createStatsDisplaySnapshot(Vec3d startPos, int broken, int placed) {
         double distance = mc.player != null && startPos != null ? PlayerUtils.distanceTo(startPos) : 0.0;
-        String statsCode = encodeStatsCode(statsCodeTimestampMs);
-        return new StatsDisplaySnapshot(distance, broken, placed, statsCode, startPos != null && distance > 50000);
+        return new StatsDisplaySnapshot(distance, broken, placed, startPos != null && distance > 50000);
     }
 
-    private MutableText createStatsText(Vec3d statsStart, int statsBroken, int statsPlaced, long statsCodeTimestampMs) {
-        StatsDisplaySnapshot display = createStatsDisplaySnapshot(statsStart, statsBroken, statsPlaced, statsCodeTimestampMs);
+    private MutableText createStatsText(Vec3d statsStart, int statsBroken, int statsPlaced) {
+        StatsDisplaySnapshot display = createStatsDisplaySnapshot(statsStart, statsBroken, statsPlaced);
         MutableText text = Text.literal(String.format("%sDistance: %s%.0f\n", Formatting.GRAY, Formatting.WHITE, display.distance()));
         text.append(String.format("%sBlocks broken: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksBroken()));
         text.append(String.format("%sBlocks placed: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksPlaced()));
-        text.append(String.format("%sStats code: %s%s\n", Formatting.GRAY, Formatting.WHITE, display.statsCode()));
         if (display.restartDistanceWarning()) {
             text.append(String.format(
                 "%sRestart Detected. Please calculate the real distance using /calculate in proof-of-work\n",
@@ -9664,8 +9561,7 @@ public class HighwayBuilderTHM extends Module {
         return createStatsText(
             retiredStatsReportSnapshot.startPos(),
             retiredStatsReportSnapshot.blocksBroken(),
-            retiredStatsReportSnapshot.blocksPlaced(),
-            retiredStatsReportSnapshot.statsCodeTimestampMs()
+            retiredStatsReportSnapshot.blocksPlaced()
         );
     }
 
@@ -9675,11 +9571,10 @@ public class HighwayBuilderTHM extends Module {
         StatsDisplaySnapshot display = createStatsDisplaySnapshot(
             report.startPos(),
             report.blocksBroken(),
-            report.blocksPlaced(),
-            report.statsCodeTimestampMs()
+            report.blocksPlaced()
         );
         statsCacheDebug(
-            "final-report reason={} session={} generation={} state={} resumeAllowed={} broken={} placed={} brokenPerBlock={} placedPerBlock={} distance={} statsCode={} statsCodeTimestampMs={} printed={} webhookCommitted={} apiCommitted={} finalizationReason={}",
+            "final-report reason={} session={} generation={} state={} resumeAllowed={} broken={} placed={} brokenPerBlock={} placedPerBlock={} distance={} printed={} webhookCommitted={} apiCommitted={} finalizationReason={}",
             reason,
             shortSessionId(snapshot.sessionId()),
             snapshot.generation(),
@@ -9690,8 +9585,6 @@ public class HighwayBuilderTHM extends Module {
             String.format(Locale.ROOT, "%.2f", display.brokenPerBlock()),
             String.format(Locale.ROOT, "%.2f", display.placedPerBlock()),
             String.format(Locale.ROOT, "%.0f", display.distance()),
-            display.statsCode(),
-            report.statsCodeTimestampMs(),
             snapshot.printedToChat(),
             snapshot.webhookSendCommitted(),
             snapshot.apiSendCommitted(),
@@ -9709,10 +9602,8 @@ public class HighwayBuilderTHM extends Module {
     ) {
         if (snapshot == null || report == null) return;
 
-        String statsCode = encodeStatsCode(report.statsCodeTimestampMs());
-        if (statsCode == null) statsCode = "unavailable";
         statsCacheDebug(
-            "external-stats reason={} target={} decision={} session={} generation={} distance={} broken={} placed={} direction={} statsCode={} webhookCommitted={} apiCommitted={}",
+            "external-stats reason={} target={} decision={} session={} generation={} distance={} broken={} placed={} direction={} webhookCommitted={} apiCommitted={}",
             reason,
             target,
             decision,
@@ -9722,7 +9613,6 @@ public class HighwayBuilderTHM extends Module {
             report.blocksBroken(),
             report.blocksPlaced(),
             snapshot.workingDirectionName() == null || snapshot.workingDirectionName().isBlank() ? "unknown" : snapshot.workingDirectionName(),
-            statsCode,
             snapshot.webhookSendCommitted(),
             snapshot.apiSendCommitted()
         );
@@ -9735,23 +9625,20 @@ public class HighwayBuilderTHM extends Module {
         StatsDisplaySnapshot display = createStatsDisplaySnapshot(
             report.startPos(),
             report.blocksBroken(),
-            report.blocksPlaced(),
-            report.statsCodeTimestampMs()
+            report.blocksPlaced()
         );
         info("Distance: (highlight)%.0f", display.distance());
         info("Blocks broken: (highlight)%d", display.blocksBroken());
         info("Blocks placed: (highlight)%d", display.blocksPlaced());
-        info("Stats code: (highlight)%s", display.statsCode());
         if (display.restartDistanceWarning()) {
             warning("Restart Detected. Please calculate the real distance using /calculate in proof-of-work");
         }
         lastPrintedStatsSessionId = report.sessionId();
-        statsCacheDebug("printed reason={} session={} broken={} placed={} statsCodeTimestampMs={}",
+        statsCacheDebug("printed reason={} session={} broken={} placed={}",
             reason,
             shortSessionId(report.sessionId()),
             report.blocksBroken(),
-            report.blocksPlaced(),
-            report.statsCodeTimestampMs()
+            report.blocksPlaced()
         );
         return true;
     }
@@ -11299,7 +11186,7 @@ public class HighwayBuilderTHM extends Module {
                 MBlockPos pos = it.next();
                 BlockPos blockPos = pos.getBlockPos();
                 BlockState state = mc.world.getBlockState(blockPos);
-                boolean inRange = blockPos.getSquaredDistance(mc.player.getEyePos()) <= placeRange.get() * placeRange.get();
+                boolean inRange = RangeUtils.isInRange(placeRange.get(), blockPos);
                 boolean canPlaceHere = BlockUtils.canPlace(blockPos);
 
                 restockDebug("%s probe[%d] pos=%s block=%s replaceable=%s inRange=%s canPlace=%s",
@@ -11338,21 +11225,18 @@ public class HighwayBuilderTHM extends Module {
         Vec3d statsStart = null;
         int statsBroken = 0;
         int statsPlaced = 0;
-        long statsCodeTimestampMs = 0L;
 
         if (hasActiveInMemoryStatsSession()) {
             statsStart = start;
             statsBroken = blocksBroken;
             statsPlaced = blocksPlaced;
-            statsCodeTimestampMs = ensureActiveStatsCodeTimestamp("stats-text");
         } else if (retiredStatsReportSnapshot != null) {
             statsStart = retiredStatsReportSnapshot.startPos();
             statsBroken = retiredStatsReportSnapshot.blocksBroken();
             statsPlaced = retiredStatsReportSnapshot.blocksPlaced();
-            statsCodeTimestampMs = retiredStatsReportSnapshot.statsCodeTimestampMs();
         }
 
-        return createStatsText(statsStart, statsBroken, statsPlaced, statsCodeTimestampMs);
+        return createStatsText(statsStart, statsBroken, statsPlaced);
     }
 
     public StatsDisconnectPresentation getReconnectSafetyStopPresentation(String reason, long reconnectCycleId) {
@@ -12376,7 +12260,7 @@ public class HighwayBuilderTHM extends Module {
             }
 
             if (row.mineQueue.containsKey(task.pos) || hasActiveMineOwnership(task.pos)) continue;
-            if (task.pos.getSquaredDistance(mc.player.getEyePos()) > placeRange.get() * placeRange.get()) continue;
+            if (!RangeUtils.isInRange(placeRange.get(), task.pos)) continue;
 
             int slot = resolveForwardPlaceSlot(task);
             if (slot == -1) return changedWorld;
@@ -16681,7 +16565,7 @@ public class HighwayBuilderTHM extends Module {
                     return;
                 }
 
-                if (targetPos.getSquaredDistance(b.mc.player.getEyePos()) > b.placeRange.get() * b.placeRange.get()) {
+                if (!RangeUtils.isInRange(b.placeRange.get(), targetPos)) {
                     if (b.restockDebugLog.get() && throttleEnclosurePlacement) {
                         b.restockDebug("%s skipped %s: out of range.",
                             b.stateName(this),
@@ -18373,7 +18257,7 @@ public class HighwayBuilderTHM extends Module {
             this.blockPos = pos;
             this.blockState = b.mc.world.getBlockState(this.blockPos);
             this.block = this.blockState.getBlock();
-            this.direction = BlockUtils.getDirection(pos);
+            this.direction = RangeUtils.nearestFace(pos);
             this.packet = false;
         }
 
@@ -18401,7 +18285,7 @@ public class HighwayBuilderTHM extends Module {
         }
 
         public boolean shouldRemove() {
-            boolean distance = !packet && Utils.distance(b.mc.player.getEyePos().x, b.mc.player.getEyePos().y, b.mc.player.getEyePos().z, blockPos.getX() + direction.getOffsetX(), blockPos.getY() + direction.getOffsetY(), blockPos.getZ() + direction.getOffsetZ()) > b.mc.player.getBlockInteractionRange();
+            boolean distance = !packet && !RangeUtils.isInReach(blockPos);
 
             // a minimum amount of time needs to have elapsed for the timeout check to occur, otherwise it may trigger
             // when it isn't supposed to due to latency

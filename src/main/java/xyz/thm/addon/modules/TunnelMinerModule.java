@@ -1,6 +1,7 @@
 /*
  * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
  * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ * By using this code you agree to the license terms and to keep your repo public.
  */
 
 package xyz.thm.addon.modules;
@@ -44,6 +45,7 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.*;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.utils.RangeUtils;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -3587,15 +3589,7 @@ public class TunnelMinerModule extends Module {
     }
 
     private boolean isMineReachableNow(BlockPos pos) {
-        if (mc.player == null) return false;
-        Direction dir = BlockUtils.getDirection(pos);
-        if (dir == null) dir = Direction.UP;
-        Vec3d eyes = mc.player.getEyePos();
-        double tx = pos.getX() + dir.getOffsetX();
-        double ty = pos.getY() + dir.getOffsetY();
-        double tz = pos.getZ() + dir.getOffsetZ();
-        double range = mc.player.getBlockInteractionRange();
-        return eyes.squaredDistanceTo(tx, ty, tz) <= range * range;
+        return RangeUtils.isInReach(pos);
     }
 
     private List<BlockPos> getStepProfilePositions(int py, PathStep step, boolean includeFloor) {
@@ -7575,8 +7569,7 @@ public class TunnelMinerModule extends Module {
             this.blockPos = pos;
             this.blockState = module.mc.world.getBlockState(this.blockPos);
             this.block = this.blockState.getBlock();
-            Direction dir = BlockUtils.getDirection(pos);
-            this.direction = dir != null ? dir : Direction.UP;
+            this.direction = RangeUtils.nearestFace(pos);
             this.packet = false;
         }
 
@@ -7626,13 +7619,7 @@ public class TunnelMinerModule extends Module {
         private boolean shouldRemove() {
             if (module.mc.player == null) return true;
 
-            Vec3d eyes = module.mc.player.getEyePos();
-            double tx = blockPos.getX() + direction.getOffsetX();
-            double ty = blockPos.getY() + direction.getOffsetY();
-            double tz = blockPos.getZ() + direction.getOffsetZ();
-            double range = module.mc.player.getBlockInteractionRange();
-
-            boolean distance = !packet && eyes.squaredDistanceTo(tx, ty, tz) > range * range;
+            boolean distance = !packet && !RangeUtils.isInReach(blockPos);
             boolean timeout = progress() > 2.0 && (module.mc.player.age - (packet ? packetStartTime : normalStartTime) > 60);
 
             return distance || timeout;

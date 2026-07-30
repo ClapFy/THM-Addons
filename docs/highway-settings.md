@@ -1,6 +1,7 @@
 <!--
   This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
   Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+  By using this code you agree to the license terms and to keep your repo public.
 -->
 
 # Highway Settings Guide
@@ -255,7 +256,7 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `print-statistics` | `true` | Always | Prints HighwayBuilder statistics in chat when the module disables. |
 | `auto-screenshot-statistics` | `false` | `print-statistics` is on | Captures a proof screenshot shortly after statistics print. |
 | `restock-debug-log` | `false` | Always | Prints detailed blockade and restock diagnostics, including probes and state transitions. |
-| `Send-Status` | `true` | Always | Sends a status update every 5 minutes with digging/paving, axis, name, and hash. |
+| `Send-Status` | `true` | Always | Sends a status update every 5 minutes with digging/paving, axis, name, and API token. |
 | `sends-statistics(Webhook)` | `false` | `print-statistics` is on | Sends HighwayBuilder statistics to a webhook when the module disables. |
 | `webhook` | `MyWebhookInHere` | `print-statistics` and `sends-statistics(Webhook)` are on | Webhook URL used for statistics delivery. |
 | `sends-statistics(API)` | `false` | `print-statistics` is on | Sends statistics to the API when the module disables. |

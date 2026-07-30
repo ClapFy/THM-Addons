@@ -1,6 +1,7 @@
 /*
  * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
  * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ * By using this code you agree to the license terms and to keep your repo public.
  */
 
 package xyz.thm.addon.system;
@@ -27,6 +28,7 @@ import xyz.thm.addon.waveycapes.WindMode;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.UUID;
 
 public class THMSystem extends System<THMSystem> {
     private static final String HIGHWAY_PROFILE_SNAPSHOTS_TAG = "highwayProfileSnapshots";
@@ -34,15 +36,15 @@ public class THMSystem extends System<THMSystem> {
 
     public final Settings settings = new Settings();
 
-    // Group creation order = display order in the THM tab. Appearance first (brand colors), Hash
-    // last (rarely touched).
+    // Group creation order = display order in the THM tab. Appearance first (brand colors), API
+    // Token last (rarely touched).
     private final SettingGroup sgAppearance = settings.createGroup("Appearance");
     private final SettingGroup sgGeneral = settings.createGroup("General");
     private final SettingGroup sgProfiles = settings.createGroup("Highway Profiles");
     private final SettingGroup sgPvp = settings.createGroup("PVP");
     private final SettingGroup sgRender = settings.createGroup("THM Rendering");
     private final SettingGroup sgKitbot = settings.createGroup("KitBot");
-    private final SettingGroup sgPrefix = settings.createGroup("Hash");
+    private final SettingGroup sgPrefix = settings.createGroup("API Token");
 
     // Separate settings object for the Wavy Capes screen (not shown in the main THM tab)
     public final Settings wavyCapesSettings = new Settings();
@@ -78,11 +80,11 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    // Hash Settings
-    private final Setting<String> hash = sgPrefix.add(new StringSetting.Builder()
-        .name("Hash")
-        .description("The Hash that you got")
-        .defaultValue("SetYourHash")
+    // API Token Settings
+    private final Setting<String> apiToken = sgPrefix.add(new StringSetting.Builder()
+        .name("api-token")
+        .description("Your personal API token (UUID) - sent with every status/statistics/cape request.")
+        .defaultValue("")
         .build()
     );
 
@@ -189,7 +191,8 @@ public class THMSystem extends System<THMSystem> {
             if (mc == null || mc.player == null) return;
             if (!ThmMembers.isThmMember(mc.player)) return;
             String username = mc.player.getGameProfile().name();
-            APIUtils.postCapeSelection(username, id, getHash());
+            if (!hasApiToken()) return;
+            APIUtils.postCapeSelection(username, id, getApiToken());
         })
         .build()
     );
@@ -348,8 +351,18 @@ public class THMSystem extends System<THMSystem> {
         return Systems.get(THMSystem.class);
     }
 
-    public String getHash() {
-        return hash.get();
+    public String getApiToken() {
+        return apiToken.get().trim();
+    }
+
+    /** The API only accepts UUID tokens, so blank/malformed values count as "no token set". */
+    public boolean hasApiToken() {
+        try {
+            UUID.fromString(getApiToken());
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     public String getCrackedPassword() {

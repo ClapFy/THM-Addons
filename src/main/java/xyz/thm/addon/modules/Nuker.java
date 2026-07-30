@@ -1,6 +1,7 @@
 /*
  * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
  * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ * By using this code you agree to the license terms and to keep your repo public.
  */
 
 package xyz.thm.addon.modules;
@@ -50,6 +51,7 @@ import org.joml.Vector3d;
 import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
 import xyz.thm.addon.utils.Enums;
 import xyz.thm.addon.utils.InventoryManager;
+import xyz.thm.addon.utils.RangeUtils;
 
 import java.util.*;
 
@@ -88,7 +90,14 @@ public class Nuker extends Module {
     private final Setting<Integer> rangeForward = sgGeneral.add(new IntSetting.Builder().name("forward").description("The break range.").defaultValue(1).min(0).visible(() -> shape.get() == Shape.Cube).build());
     private final Setting<Integer> rangeBack = sgGeneral.add(new IntSetting.Builder().name("back").description("The break range.").defaultValue(1).min(0).visible(() -> shape.get() == Shape.Cube).build());
 
-    private final Setting<Double> wallsRange = sgGeneral.add(new DoubleSetting.Builder().name("walls-range").description("Range in which to break when behind blocks.").defaultValue(4.0).min(0).sliderMax(6).build());
+    private final Setting<Boolean> raycast = sgGeneral.add(new BoolSetting.Builder()
+        .name("raycast")
+        .description("Only break blocks with line of sight, using walls-range for the rest. Off breaks through walls at full range.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Double> wallsRange = sgGeneral.add(new DoubleSetting.Builder().name("walls-range").description("Range in which to break when behind blocks.").defaultValue(4.0).min(0).sliderMax(6).visible(raycast::get).build());
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder().name("delay").description("Delay in ticks between breaking blocks.").defaultValue(0).build());
     private final Setting<Integer> maxBlocksPerTick = sgGeneral.add(new IntSetting.Builder().name("max-blocks-per-tick").description("Maximum blocks to try to break per tick.").defaultValue(1).min(1).build());
 
@@ -212,7 +221,7 @@ public class Nuker extends Module {
         double pX = mc.player.getX();
         double pY = mc.player.getY();
         double pZ = mc.player.getZ();
-        double rangeSq = range.get() * range.get();
+        Vec3d eyePos = mc.player.getEyePos();
         BlockPos playerBlockPos = mc.player.getBlockPos();
 
         if (shape.get() == Shape.UniformCube) range.set((double) Math.round(range.get()));
@@ -261,12 +270,14 @@ public class Nuker extends Module {
 
         Box box = new Box(pos1.toCenterPos(), pos2.toCenterPos());
 
-        BlockIterator.register(Math.max((int) Math.ceil(range.get() + 1), maxh), Math.max((int) Math.ceil(range.get()), maxv), (blockPos, blockState) -> {
+        // +2 vertically: range is measured from the eyes now, which sit ~1.62 above the feet the
+        // iterator's radius is relative to.
+        BlockIterator.register(Math.max((int) Math.ceil(range.get() + 1), maxh), Math.max((int) Math.ceil(range.get() + 2), maxv), (blockPos, blockState) -> {
             Vec3d center = blockPos.toCenterPos();
 
             switch (shape.get()) {
                 case Sphere -> {
-                    if (Utils.squaredDistance(pX, pY, pZ, center.x, center.y, center.z) > rangeSq) return;
+                    if (!RangeUtils.isInRange(range.get(), blockPos, eyePos)) return;
                 }
                 case UniformCube -> {
                     if (chebyshevDist(playerBlockPos.getX(), playerBlockPos.getY(), playerBlockPos.getZ(), blockPos.getX(), blockPos.getY(), blockPos.getZ()) >= range.get()) return;
@@ -333,7 +344,7 @@ public class Nuker extends Module {
 
     private void breakBlock(BlockPos blockPos) {
         if (interact.get()) {
-            BlockUtils.interact(new BlockHitResult(blockPos.toCenterPos(), BlockUtils.getDirection(blockPos), blockPos, true), Hand.MAIN_HAND, swing.get());
+            BlockUtils.interact(new BlockHitResult(RangeUtils.nearestPoint(blockPos), RangeUtils.nearestFace(blockPos), blockPos, true), Hand.MAIN_HAND, swing.get());
             interacted.add(blockPos);
             return;
         }
@@ -375,8 +386,7 @@ public class Nuker extends Module {
         }
 
         if (packetMine.get()) {
-            Direction dir = BlockUtils.getDirection(blockPos);
-            if (dir == null) dir = Direction.UP;
+            Direction dir = RangeUtils.nearestFace(blockPos);
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, blockPos, dir));
             if (swing.get()) mc.player.swingHand(Hand.MAIN_HAND);
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, blockPos, dir));
@@ -419,7 +429,7 @@ public class Nuker extends Module {
         }
 
         if (rotate.get()) Rotations.rotate(Rotations.getYaw(activeBedrockPos), Rotations.getPitch(activeBedrockPos));
-        Direction direction = BlockUtils.getDirection(activeBedrockPos);
+        Direction direction = RangeUtils.nearestFace(activeBedrockPos);
         if (direction == null) direction = Direction.UP;
         mc.interactionManager.updateBlockBreakingProgress(activeBedrockPos, direction);
         if (swing.get()) mc.player.swingHand(Hand.MAIN_HAND);
@@ -544,7 +554,7 @@ public class Nuker extends Module {
         double rangeSq = range * range;
 
         BlockPos origin = mc.player.getBlockPos();
-        int radius = (int) Math.ceil(range);
+        int radius = (int) Math.ceil(range) + 2; // range is eye-relative, origin is feet-relative
         BlockPos best = null;
         double bestDistSq = Double.MAX_VALUE;
 
@@ -555,8 +565,7 @@ public class Nuker extends Module {
                     if (mc.world.getBlockState(pos).getBlock() != Blocks.BEDROCK) continue;
                     if (isOuterLayer(pos)) continue;
 
-                    Vec3d center = pos.toCenterPos();
-                    double distSq = mc.player.squaredDistanceTo(center);
+                    double distSq = RangeUtils.squaredDistance(pos, mc.player.getEyePos());
                     if (distSq > rangeSq) continue;
                     if (mode.get() == Mode.Flatten && pos.getY() + 0.5 < mc.player.getY()) continue;
                     if (distSq < bestDistSq) {
@@ -578,8 +587,7 @@ public class Nuker extends Module {
     }
 
     private boolean isOutOfBedrockRange(BlockPos pos) {
-        double range = getBedrockRange();
-        return mc.player.squaredDistanceTo(pos.toCenterPos()) > range * range;
+        return !RangeUtils.isInRange(getBedrockRange(), pos);
     }
 
     private double getBedrockRange() {
@@ -587,11 +595,16 @@ public class Nuker extends Module {
     }
 
     private boolean isOutOfRange(BlockPos blockPos) {
-        Vec3d pos = blockPos.toCenterPos();
+        if (!raycast.get()) return false;
+
+        // Aim just inside the nearest face rather than at the centre, so a block only its near side
+        // can see still counts as visible. Nudged inwards because a point exactly on the face is a
+        // coin flip for the raycast.
+        Vec3d pos = RangeUtils.nearestPoint(blockPos).lerp(blockPos.toCenterPos(), 0.05);
         RaycastContext raycastContext = new RaycastContext(mc.player.getEyePos(), pos, RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, mc.player);
         BlockHitResult result = mc.world.raycast(raycastContext);
         if (result == null || !result.getBlockPos().equals(blockPos)) {
-            return !PlayerUtils.isWithin(pos, wallsRange.get());
+            return !RangeUtils.isInRange(wallsRange.get(), blockPos);
         }
         return false;
     }
@@ -636,8 +649,7 @@ public class Nuker extends Module {
             this.blockPos = pos.toImmutable();
             this.blockState = mc.world.getBlockState(this.blockPos);
             this.block = this.blockState.getBlock();
-            Direction dir = BlockUtils.getDirection(pos);
-            this.direction = dir != null ? dir : Direction.UP;
+            this.direction = RangeUtils.nearestFace(pos);
         }
 
         private DoubleMineTarget startDestroying() {
@@ -662,7 +674,7 @@ public class Nuker extends Module {
         }
 
         private boolean shouldRemove() {
-            boolean distance = !packet && mc.player.squaredDistanceTo(this.blockPos.toCenterPos()) > mc.player.getBlockInteractionRange() * mc.player.getBlockInteractionRange();
+            boolean distance = !packet && !RangeUtils.isInReach(this.blockPos);
             boolean timeout = progress() > 2.0 && (mc.player.age - (packet ? packetStartTime : normalStartTime) > 60);
             return distance || timeout;
         }
