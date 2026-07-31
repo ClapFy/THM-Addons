@@ -2071,6 +2071,7 @@ public class HighwayBuilderTHM extends Module {
                 mineAboveRailings.set(true);
                 railings.set(true);
                 floor.set(Floor.Replace);
+                noSwapLoadout.set(true);
                 if (THMUtils.isBaritoneInstalled()) manageThmHwyMonitor.set(true);
                 kitbotEChestRestockKit.set(KitbotEChestRestockKit.Highway);
                 kitbotPickaxeRestockKit.set(KitbotPickaxeRestockKit.Highway);
@@ -2082,6 +2083,7 @@ public class HighwayBuilderTHM extends Module {
                 mineAboveRailings.set(true);
                 railings.set(true);
                 floor.set(Floor.Replace);
+                noSwapLoadout.set(true);
                 if (THMUtils.isBaritoneInstalled()) manageThmHwyMonitor.set(true);
                 kitbotPickaxeRestockKit.set(KitbotPickaxeRestockKit.Pickaxe);
             }
@@ -6515,6 +6517,11 @@ public class HighwayBuilderTHM extends Module {
 
     // ---- No-swap loadout: pickaxe in the main hand, obsidian in the offhand, self-managed totem ----
 
+    /** Offhand stack at or below this gets topped up from the inventory... */
+    private static final int OFFHAND_BLOCK_TOPUP_AT = 32;
+    /** ...and at or below this, with nothing left in the inventory, starts a container restock. */
+    private static final int OFFHAND_BLOCK_RESTOCK_AT = 16;
+
     /** True when the offhand currently holds a block we're allowed to place (obsidian), so we can place straight from it. */
     private boolean offhandHoldsPlaceable() {
         return mc.player != null
@@ -6553,6 +6560,24 @@ public class HighwayBuilderTHM extends Module {
         return effective <= noSwapTotemHealth.get();
     }
 
+    private boolean isPlaceableBlockStack(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem bi && blocksToPlace.get().contains(bi.getBlock());
+    }
+
+    /**
+     * offhand-build: placement reads {@link SlotUtils#OFFHAND} straight out of the hand, so
+     * {@code findBlocksToPlace}'s usual "nothing found anywhere → restock" path never fires until the
+     * offhand is completely empty — the builder runs dry mid-row and only then goes looking for a
+     * shulker. Start the restock while there are still blocks left to build with.
+     */
+    private void restockOffhandBlocksIfLow() {
+        if (mc.player.getOffHandStack().getCount() > OFFHAND_BLOCK_RESTOCK_AT) return;
+        if (InvUtils.find(this::isPlaceableBlockStack, 0, 35).found()) return;
+        if (searchEnderChest.get() || searchShulkers.get() || mineEnderChests.get() || kitbotRestock.get()) {
+            restockTask.setMaterials();
+        }
+    }
+
     private void tickNoSwapLoadout() {
         if (!noSwapLoadout.get() || mc.player == null) return;
         syncNoSwapAutoTotem();
@@ -6563,11 +6588,22 @@ public class HighwayBuilderTHM extends Module {
                 FindItemResult totem = InvUtils.find(Items.TOTEM_OF_UNDYING);
                 if (totem.found()) InvUtils.move().from(totem.slot()).toOffhand();
             }
-        } else if (!offhandHoldsPlaceable()) {
-            // Restock obsidian into the offhand (search hotbar + main inv, i.e. not the offhand slot itself).
-            FindItemResult obby = InvUtils.find(
-                s -> s.getItem() instanceof BlockItem bi && blocksToPlace.get().contains(bi.getBlock()), 0, 35);
-            if (obby.found()) InvUtils.move().from(obby.slot()).toOffhand();
+        } else {
+            ItemStack offhand = mc.player.getOffHandStack();
+            if (!offhandHoldsPlaceable()) {
+                // Fill the offhand (search hotbar + main inv, i.e. not the offhand slot itself).
+                FindItemResult obby = InvUtils.find(this::isPlaceableBlockStack, 0, 35);
+                if (obby.found()) InvUtils.move().from(obby.slot()).toOffhand();
+            } else if (offhand.getCount() <= OFFHAND_BLOCK_TOPUP_AT && offhand.getCount() < offhand.getMaxCount()) {
+                // Top up a partial stack instead of waiting for it to run out. Same item only:
+                // InvUtils.move() is a two-click pickup/place, which merges matching stacks but
+                // *swaps* different ones — pulling netherrack onto offhand obsidian would park the
+                // obsidian back in the inventory.
+                FindItemResult more = InvUtils.find(s -> s.getItem() == offhand.getItem(), 0, 35);
+                if (more.found()) InvUtils.move().from(more.slot()).toOffhand();
+            }
+
+            restockOffhandBlocksIfLow();
         }
 
         ensurePickaxeInMainHand();
