@@ -461,20 +461,21 @@ public class HighwayBuilderTHM extends Module {
 
     // Group declaration order is display order (Meteor renders settings groups in insertion
     // order - see Settings.groups/Settings.tick). Kept General-first, then the automation group
-    // that matters most up top, then each mode paired with its own render group for locality,
-    // and the niche/advanced groups (KitBot Integration, Debugging) pushed to the bottom and
-    // collapsed by default so they don't bury the settings people actually look for.
+    // that matters most up top, then the behaviour groups, with the niche/advanced ones (KitBot
+    // Integration, Debugging) and both render groups pushed to the bottom - rendering is pure
+    // looks, so it shouldn't sit between the two mode groups people actually configure. Every
+    // group must still be declared before the settings that add to it (field init order).
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAutoTravel = settings.createGroup("Auto Travel Handoff");
     private final SettingGroup sgDigging = settings.createGroup("Digging");
-    private final SettingGroup sgRenderDigging = settings.createGroup("Render Digging");
     private final SettingGroup sgPaving = settings.createGroup("Paving");
-    private final SettingGroup sgRenderPaving = settings.createGroup("Render Paving");
     private final SettingGroup sgInventory = settings.createGroup("Inventory");
     private final SettingGroup sgNotifies = settings.createGroup("Notifies");
     private final SettingGroup sgStatistics = settings.createGroup("Logging");
     private final SettingGroup sgKitBotIntegration = settings.createGroup("KitBot Integration", false);
     private final SettingGroup sgDebugging = settings.createGroup("Debugging", false);
+    private final SettingGroup sgRenderDigging = settings.createGroup("Render Digging");
+    private final SettingGroup sgRenderPaving = settings.createGroup("Render Paving");
 
     public final Setting<Integer> width = sgGeneral.add(new IntSetting.Builder()
         .name("width")
@@ -2060,6 +2061,10 @@ public class HighwayBuilderTHM extends Module {
         enforceKitbotFoodRestockFoodType();
     }
 
+    /**
+     * The preset values of a profile. Forced on top of the profile's snapshot every time the THM
+     * tab's "Apply Profile" button is pressed, so adding a setting here reaches existing users too.
+     */
     public void applyThmProfileSeed(THMSystem.Mode profile) {
         switch (profile) {
             case None -> {

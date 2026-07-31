@@ -376,18 +376,21 @@ public class THMSystem extends System<THMSystem> {
         Mode previousProfile = activeHighwayProfile == null ? Mode.None : activeHighwayProfile;
         Mode targetProfile = mode.get();
 
-        saveHighwayProfileSnapshot(hwBuilder, previousProfile);
+        // Park the live settings back on the profile they belong to — but never on the one we are
+        // about to apply, since saving then loading the same values is what made pressing Apply on
+        // the already-active profile do nothing at all.
+        if (previousProfile != targetProfile) saveHighwayProfileSnapshot(hwBuilder, previousProfile);
 
-        if (previousProfile != targetProfile) {
-            if (highwayProfileSnapshots.containsKey(targetProfile)) {
-                loadHighwayProfileSnapshot(hwBuilder, targetProfile);
-            } else {
-                hwBuilder.applyThmProfileSeed(targetProfile);
-                hwBuilder.normalizeAfterThmProfileLoad();
-                saveHighwayProfileSnapshot(hwBuilder, targetProfile);
-            }
-            activeHighwayProfile = targetProfile;
-        }
+        // Everything this profile isn't opinionated about comes from its snapshot (or the seed, the
+        // first time it's used)...
+        loadHighwayProfileSnapshot(hwBuilder, targetProfile);
+        // ...and the preset's own settings are then forced on top, every time. That's what the
+        // button means: pressing Apply with Building selected must leave you with the Building
+        // preset, whatever the profile's snapshot happened to hold.
+        hwBuilder.applyThmProfileSeed(targetProfile);
+        hwBuilder.normalizeAfterThmProfileLoad();
+        activeHighwayProfile = targetProfile;
+        saveHighwayProfileSnapshot(hwBuilder, targetProfile);
 
         if (toggleModules.get() && !hwBuilder.isActive()) {
             hwBuilder.toggle();
