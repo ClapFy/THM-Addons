@@ -28,8 +28,14 @@ import xyz.thm.addon.system.THMSystem;
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.net.URI;
 import java.net.URL;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -532,5 +538,45 @@ public class THMUtils {
     public static String getSaveName() {
         if (mc.player == null) return "Unknown";
         return mc.player.getName().getString();
+    }
+
+    /**
+     * Discord-style webhook POST carrying text and an attachment in one multipart request.
+     * Either part may be omitted (null/blank message = image only, null file = text only).
+     * Fires on a daemon thread, same as APIUtils' own webhook sends.
+     */
+    public static void sendToWebhookWithFile(String url, String message, Path file) {
+        Thread thread = new Thread(() -> {
+            try {
+                String boundary = "thm" + System.nanoTime();
+                byte[] sep = ("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8);
+                ByteArrayOutputStream body = new ByteArrayOutputStream();
+
+                String content = message == null ? "" : message;
+                String payload = "{\"content\":\"" + content.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
+                body.write(sep);
+                body.write(("Content-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"
+                    + payload + "\r\n").getBytes(StandardCharsets.UTF_8));
+
+                if (file != null) {
+                    body.write(sep);
+                    body.write(("Content-Disposition: form-data; name=\"files[0]\"; filename=\"" + file.getFileName()
+                        + "\"\r\nContent-Type: image/png\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+                    body.write(Files.readAllBytes(file));
+                    body.write("\r\n".getBytes(StandardCharsets.UTF_8));
+                }
+                body.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
+                    .build();
+                HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.discarding());
+            } catch (Exception e) {
+                THMAddon.LOG.warn("[THM] Failed to send webhook with attachment", e);
+            }
+        }, "thm-webhook-attachment");
+        thread.setDaemon(true);
+        thread.start();
     }
 }

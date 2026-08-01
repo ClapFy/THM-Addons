@@ -1333,6 +1333,13 @@ public class HighwayBuilderTHM extends Module {
         .visible(printStatistics::get)
         .build()
     );
+    private final Setting<WebhookContent> webhookContent = sgStatistics.add(new EnumSetting.Builder<WebhookContent>()
+        .name("webhook-content")
+        .description("What the statistics webhook sends: the text stats, the proof screenshot, or both in one request.")
+        .defaultValue(WebhookContent.Text)
+        .visible(() -> printStatistics.get() && sendStatisticsWebhhok.get())
+        .build()
+    );
     private final Setting<String> encryptedWebhook = sgStatistics.add(new StringSetting.Builder()
         .name("webhook")
         .description("Webhook URL used to receive statistics.")
@@ -1565,6 +1572,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean statsSessionTerminalOrFinalizing;
     private boolean memoryRetryMode;
     private final AtomicLong statsScreenshotSequence = new AtomicLong();
+    private volatile PendingWebhookStats pendingWebhookStats;
     private String lastPrintedStatsSessionId;
     private SpeedMineSettingsSnapshot speedMineSettingsSnapshot;
     private boolean paketLimiterActivatedByBuilder = false;
@@ -1832,6 +1840,15 @@ public class HighwayBuilderTHM extends Module {
             return distance > 0 ? blocksPlaced / distance : 0.0;
         }
     }
+
+    public enum WebhookContent {
+        Text,
+        Image,
+        Both
+    }
+
+    /** Webhook send parked until the proof screenshot exists, so both go out in one request. */
+    private record PendingWebhookStats(String url, String message) {}
 
     private enum StatsScreenshotSurface {
         CHAT("chat"),
@@ -9216,6 +9233,8 @@ public class HighwayBuilderTHM extends Module {
         working = commitAndSendFinalExternalStats(working, report, reason);
         if (working == null) return false;
 
+        if (!allowPrinting || working.printedToChat()) flushPendingWebhookStats(null);
+
         if (allowPrinting && !working.printedToChat()) {
             long captureToken = beginStatsProofScreenshotCaptureIfEnabled(working.sessionId());
             boolean printed = false;
@@ -9225,6 +9244,7 @@ public class HighwayBuilderTHM extends Module {
                 if (!printed) finishStatsScreenshotCapture(captureToken);
             }
             if (!printed) {
+                flushPendingWebhookStats(null);
                 logFinalStatsRecoverySnapshot(working, report, reason + "-print-failed");
                 return false;
             }
@@ -9233,8 +9253,11 @@ public class HighwayBuilderTHM extends Module {
                     scheduleStatsProofScreenshot(working.sessionId(), reason, captureToken);
                 } catch (RuntimeException | Error e) {
                     finishStatsScreenshotCapture(captureToken);
+                    flushPendingWebhookStats(null);
                     THMAddon.LOG.warn("Failed to schedule HighwayBuilder stats screenshot for session {}.", shortSessionId(working.sessionId()), e);
                 }
+            } else {
+                flushPendingWebhookStats(null);
             }
             working = updateFinalizationRecord(working, System.currentTimeMillis(), true, working.webhookSendCommitted(), working.apiSendCommitted(), reason + "-printed");
             if (working == null) return false;
@@ -9278,7 +9301,17 @@ public class HighwayBuilderTHM extends Module {
                             report.blocksBroken(),
                             report.blocksPlaced()
                         );
-                        APIUtils.sendToWebhook(webhookUrl, statsMessage);
+                        if (webhookContent.get() == WebhookContent.Text) {
+                            APIUtils.sendToWebhook(webhookUrl, statsMessage);
+                        } else {
+                            // Park it — the screenshot doesn't exist yet (it's taken after the chat
+                            // print). takeStatsProofScreenshot() flushes it with the file attached;
+                            // flushPendingWebhookStats() is the text-only fallback if none is taken.
+                            pendingWebhookStats = new PendingWebhookStats(
+                                webhookUrl,
+                                webhookContent.get() == WebhookContent.Image ? "" : statsMessage
+                            );
+                        }
                         working = committed;
                         logExternalStatsDecision(working, report, reason, "webhook", "queued", distance);
                     }
@@ -9380,6 +9413,7 @@ public class HighwayBuilderTHM extends Module {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     finishStatsScreenshotCapture(captureToken);
+                    flushPendingWebhookStats(null);
                     statsCacheDebug("screenshot scheduling interrupted reason={} session={} surface={} sequence={}",
                         reason,
                         shortSessionId(sessionId),
@@ -9395,6 +9429,7 @@ public class HighwayBuilderTHM extends Module {
                             takeStatsProofScreenshot(sessionId, reason, surface, sequence, captureToken);
                         } catch (RuntimeException | Error e) {
                             finishStatsScreenshotCapture(captureToken);
+                            flushPendingWebhookStats(null);
                             statsCacheDebug("screenshot capture failed reason={} session={} surface={} sequence={} error={}",
                                 reason,
                                 shortSessionId(sessionId),
@@ -9406,6 +9441,7 @@ public class HighwayBuilderTHM extends Module {
                     });
                 } catch (RuntimeException | Error e) {
                     finishStatsScreenshotCapture(captureToken);
+                    flushPendingWebhookStats(null);
                     statsCacheDebug("screenshot client scheduling failed reason={} session={} surface={} sequence={} error={}",
                         reason,
                         shortSessionId(sessionId),
@@ -9419,6 +9455,7 @@ public class HighwayBuilderTHM extends Module {
             thread.start();
         } catch (RuntimeException | Error e) {
             finishStatsScreenshotCapture(captureToken);
+            flushPendingWebhookStats(null);
             statsCacheDebug("screenshot thread start failed reason={} session={} surface={} sequence={} error={}",
                 reason,
                 shortSessionId(sessionId),
@@ -9432,6 +9469,7 @@ public class HighwayBuilderTHM extends Module {
     private void takeStatsProofScreenshot(String sessionId, String reason, StatsScreenshotSurface surface, long sequence, long captureToken) {
         if (mc == null || mc.getFramebuffer() == null) {
             finishStatsScreenshotCapture(captureToken);
+            flushPendingWebhookStats(null);
             return;
         }
 
@@ -9441,6 +9479,10 @@ public class HighwayBuilderTHM extends Module {
                 try {
                     mc.execute(() -> {
                         finishStatsScreenshotCapture(captureToken);
+                        // The file is fully written by the time the message callback runs.
+                        if (surface == StatsScreenshotSurface.CHAT) {
+                            flushPendingWebhookStats(mc.runDirectory.toPath().resolve("screenshots").resolve(fileName));
+                        }
                         info(message.getString());
                         statsCacheDebug("screenshot completed reason={} session={} surface={} sequence={} file={}",
                             reason,
@@ -9452,6 +9494,7 @@ public class HighwayBuilderTHM extends Module {
                     });
                 } catch (RuntimeException | Error e) {
                     finishStatsScreenshotCapture(captureToken);
+                    flushPendingWebhookStats(null);
                     statsCacheDebug("screenshot callback scheduling failed reason={} session={} surface={} sequence={} error={}",
                         reason,
                         shortSessionId(sessionId),
@@ -9463,6 +9506,7 @@ public class HighwayBuilderTHM extends Module {
             });
         } catch (RuntimeException | Error e) {
             finishStatsScreenshotCapture(captureToken);
+            flushPendingWebhookStats(null);
             throw e;
         }
         statsCacheDebug("screenshot requested reason={} session={} surface={} sequence={} file={}",
@@ -9472,6 +9516,24 @@ public class HighwayBuilderTHM extends Module {
             sequence,
             fileName
         );
+    }
+
+    /**
+     * Sends the parked webhook stats, with {@code file} attached when there is one.
+     * Idempotent — whoever gets there first (screenshot done, or any path where no screenshot
+     * happens) sends; the rest see null and do nothing.
+     */
+    private void flushPendingWebhookStats(Path file) {
+        PendingWebhookStats pending = pendingWebhookStats;
+        if (pending == null) return;
+        pendingWebhookStats = null;
+
+        if (file == null && pending.message().isEmpty()) {
+            // Image-only mode with no screenshot to send — nothing to post.
+            statsCacheDebug("webhook attachment flush skipped: image-only with no screenshot");
+            return;
+        }
+        THMUtils.sendToWebhookWithFile(pending.url(), pending.message(), file);
     }
 
     private void finishStatsScreenshotCapture(long captureToken) {
