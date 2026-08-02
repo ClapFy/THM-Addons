@@ -128,7 +128,6 @@ import static xyz.thm.addon.utils.THMUtils.*;
 
 @SuppressWarnings("ConstantConditions")
 public class HighwayBuilderTHM extends Module {
-    private static final String RESTART_DETECTED_MARKER = "server restart detected";
     private static final String STATS_ARTIFACT_MAGIC = "HB_STATS_ARTIFACT_V1";
     private static final int STATS_ARTIFACT_VERSION = 1;
     private static final long KITBOT_FRONTEND_WINDOW_BUFFER_MS = 1_000L;
@@ -1828,8 +1827,7 @@ public class HighwayBuilderTHM extends Module {
     private record StatsDisplaySnapshot(
         double distance,
         int blocksBroken,
-        int blocksPlaced,
-        boolean restartDistanceWarning
+        int blocksPlaced
     ) {
         // ponytail: whole-session average, not a windowed/rolling one
         private double brokenPerBlock() {
@@ -9641,7 +9639,7 @@ public class HighwayBuilderTHM extends Module {
 
     private StatsDisplaySnapshot createStatsDisplaySnapshot(Vec3d startPos, int broken, int placed) {
         double distance = mc.player != null && startPos != null ? PlayerUtils.distanceTo(startPos) : 0.0;
-        return new StatsDisplaySnapshot(distance, broken, placed, startPos != null && distance > 50000);
+        return new StatsDisplaySnapshot(distance, broken, placed);
     }
 
     private MutableText createStatsText(Vec3d statsStart, int statsBroken, int statsPlaced) {
@@ -9649,13 +9647,6 @@ public class HighwayBuilderTHM extends Module {
         MutableText text = Text.literal(String.format("%sDistance: %s%.0f\n", Formatting.GRAY, Formatting.WHITE, display.distance()));
         text.append(String.format("%sBlocks broken: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksBroken()));
         text.append(String.format("%sBlocks placed: %s%d\n", Formatting.GRAY, Formatting.WHITE, display.blocksPlaced()));
-        if (display.restartDistanceWarning()) {
-            text.append(String.format(
-                "%sRestart Detected. Please calculate the real distance using /calculate in proof-of-work\n",
-                Formatting.YELLOW
-            ));
-        }
-
         return text;
     }
 
@@ -9733,9 +9724,6 @@ public class HighwayBuilderTHM extends Module {
         info("Distance: (highlight)%.0f", display.distance());
         info("Blocks broken: (highlight)%d", display.blocksBroken());
         info("Blocks placed: (highlight)%d", display.blocksPlaced());
-        if (display.restartDistanceWarning()) {
-            warning("Restart Detected. Please calculate the real distance using /calculate in proof-of-work");
-        }
         lastPrintedStatsSessionId = report.sessionId();
         statsCacheDebug("printed reason={} session={} broken={} placed={}",
             reason,
