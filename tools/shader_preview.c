@@ -58,6 +58,7 @@ int main(int argc, char **argv) {
     const char *fshPath = argv[1];
     const char *shotPath = NULL;
     float shotTime = 6.0f;
+    int benchFrames = 0;
     int width = 1280, height = 720;
 
     for (int i = 2; i < argc; i++) {
@@ -65,6 +66,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--time") && i + 1 < argc) shotTime = atof(argv[++i]);
         else if (!strcmp(argv[i], "--width") && i + 1 < argc) width = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--height") && i + 1 < argc) height = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--bench") && i + 1 < argc) benchFrames = atoi(argv[++i]);
     }
 
     // Force X11: GLEW's extension-string probing needs GLX, which isn't
@@ -75,7 +77,7 @@ int main(int argc, char **argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-    glfwWindowHint(GLFW_VISIBLE, shotPath ? GLFW_FALSE : GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE, (shotPath || benchFrames) ? GLFW_FALSE : GLFW_TRUE);
 
     GLFWwindow *win = glfwCreateWindow(width, height, "THM shader preview", NULL, NULL);
     if (!win) { fprintf(stderr, "glfwCreateWindow failed\n"); glfwTerminate(); return 1; }
@@ -122,6 +124,38 @@ int main(int argc, char **argv) {
 
     glUseProgram(prog);
     glBindVertexArray(vao);
+
+    // --bench N: time N draws in one process and report ms/frame. Timing whole process
+    // invocations instead is useless for comparing shaders - context creation, compilation and
+    // the pixel readback swamp the draw, and that overhead is what you end up measuring.
+    if (benchFrames > 0) {
+        int fbw, fbh;
+        glfwGetFramebufferSize(win, &fbw, &fbh);
+        glViewport(0, 0, fbw, fbh);
+        glBindBuffer(GL_UNIFORM_BUFFER, ubo);
+
+        // The first draws pay for shader/pipeline setup the steady state doesn't, so warm up.
+        for (int i = 0; i < 3; i++) {
+            float buf[8] = { (float)i, 0.0f, 0.0f, 0.0f, (float)fbw, (float)fbh, 0.0f, 0.0f };
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(buf), buf);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+        glFinish();
+
+        double t0 = glfwGetTime();
+        for (int i = 0; i < benchFrames; i++) {
+            // Walk time forward so nothing can be cached across frames.
+            float buf[8] = { shotTime + i * 0.05f, 0.0f, 0.0f, 0.0f, (float)fbw, (float)fbh, 0.0f, 0.0f };
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(buf), buf);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+        glFinish();
+
+        printf("%.2f ms/frame  %dx%d  (%d frames)\n",
+               (glfwGetTime() - t0) * 1000.0 / benchFrames, fbw, fbh, benchFrames);
+        glfwTerminate();
+        return 0;
+    }
 
     do {
         int fbw, fbh;
