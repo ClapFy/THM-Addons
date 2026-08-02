@@ -24,11 +24,18 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 // BleachHack window chrome as the title screen (see MainMenuFx). Reads/writes THMSystem's
 // settings directly instead of going through Meteor's generic settings-widget factory.
 public class MainMenuSettingsScreen extends Screen {
-    private static final int WINDOW_WIDTH = 320;
+    private static final int MAX_WINDOW_WIDTH = 560;
+    private static final int MIN_COLUMN_WIDTH = 100;
     private static final int ROW_HEIGHT = 22;
 
     private final Screen parent;
     private int x1, y1, x2, y2;
+
+    // Both computed per-init from the actual screen size: the window stretches to the sides (up to
+    // MAX_WINDOW_WIDTH) and the shader grid grows columns until the whole thing fits vertically -
+    // 30 shaders at a fixed 3 columns overflowed the screen at larger GUI scales.
+    private int windowWidth;
+    private int columns;
 
     // Bounds of the shader-choice CyclingButtonWidget, so mouseClicked can detect a right-click
     // on it (vanilla CyclingButtonWidget only supports left-click-forward / shift+left-click-back,
@@ -47,15 +54,20 @@ public class MainMenuSettingsScreen extends Screen {
         boolean random = system.shaderRandom.get();
         shaderChoiceWidth = -1;
 
+        windowWidth = Math.min(this.width - 8, MAX_WINDOW_WIDTH);
+        columns = Math.max(1, (windowWidth - 20) / MIN_COLUMN_WIDTH);
+        int shaderCount = ShaderManager.availableShaders().size();
+        while (random && columns < shaderCount && computeContentHeight(true) > this.height - 8) columns++;
+
         int windowHeight = computeContentHeight(random);
 
-        x1 = Math.max(4, (this.width - WINDOW_WIDTH) / 2);
+        x1 = Math.max(4, (this.width - windowWidth) / 2);
         y1 = Math.max(4, (this.height - windowHeight) / 2);
-        x2 = x1 + WINDOW_WIDTH;
+        x2 = x1 + windowWidth;
         y2 = y1 + windowHeight;
 
         int contentX = x1 + 10;
-        int contentWidth = WINDOW_WIDTH - 20;
+        int contentWidth = windowWidth - 20;
         int y = y1 + 16;
 
         y = addCheckbox("Styled Window", system.mainMenuWindow.get(), contentX, y, contentWidth,
@@ -167,7 +179,7 @@ public class MainMenuSettingsScreen extends Screen {
 
     private int gridRows() {
         int count = ShaderManager.availableShaders().size();
-        return (count + 2) / 3;
+        return (count + columns - 1) / columns;
     }
 
     // Mirrors init()'s Y increments exactly (16 top pad, 3 checkboxes, shader row(s), blur
@@ -183,8 +195,8 @@ public class MainMenuSettingsScreen extends Screen {
         return y;
     }
 
-    // Simple 3-column checkbox grid instead of a scrollable two-column picker - 19 shaders fits
-    // comfortably without needing a real list widget.
+    // Simple checkbox grid instead of a scrollable two-column picker - column count comes from
+    // init() (widest that fits, then more columns until the window fits the screen height).
     private int addShaderPoolGrid(THMSystem system, int x, int y, int width) {
         this.addDrawableChild(new TextWidget(x, y, width, 12,
             Text.literal("Allowed shaders (none checked = allow all):"), this.textRenderer));
@@ -192,7 +204,6 @@ public class MainMenuSettingsScreen extends Screen {
 
         Set<String> selected = system.shaderPool.get().selected();
         List<String> shaders = ShaderManager.availableShaders();
-        int columns = 3;
         int columnWidth = width / columns;
 
         for (int i = 0; i < shaders.size(); i++) {
