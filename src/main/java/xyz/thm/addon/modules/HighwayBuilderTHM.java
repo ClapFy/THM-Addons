@@ -70,6 +70,7 @@ import net.minecraft.entity.decoration.EndCrystalEntity;
 import net.minecraft.entity.effect.StatusEffect;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.item.*;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
@@ -658,6 +659,22 @@ public class HighwayBuilderTHM extends Module {
         .range(1, 10)
         .sliderRange(1, 10)
         .visible(() -> kitbotRestock.get() && kitbotFoodRestock.get())
+        .build()
+    );
+
+    private final Setting<Boolean> kitbotWaitUntilGone = sgKitBotIntegration.add(new BoolSetting.Builder()
+        .name("kitbot-wait-until-gone")
+        .description("After the kits arrive, wait for KitBot1 to leave before breaking the enclosure.")
+        .defaultValue(true)
+        .visible(kitbotRestock::get)
+        .build()
+    );
+
+    private final Setting<Boolean> kitbotCollectDelay = sgKitBotIntegration.add(new BoolSetting.Builder()
+        .name("kitbot-collect-delay")
+        .description("Wait 2 more seconds before breaking the enclosure, so every dropped kit is picked up.")
+        .defaultValue(true)
+        .visible(kitbotRestock::get)
         .build()
     );
 
@@ -1471,6 +1488,9 @@ public class HighwayBuilderTHM extends Module {
     private boolean kitbotEnclosureActive;
     private boolean kitbotEnclosureRestorePending;
     private boolean kitbotReturnAnchorSaved;
+    private boolean kitbotSeenNearby;
+    private int kitbotDepartureWaitUntilAge;
+    private int kitbotCollectUntilAge;
     private double kitbotReturnX, kitbotReturnY, kitbotReturnZ;
     private float kitbotReturnYaw;
     private final BlockPos.Mutable kitbotAnchorPos = new BlockPos.Mutable();
@@ -1613,6 +1633,10 @@ public class HighwayBuilderTHM extends Module {
     private int nextAdvertisementIndex;
     private long nextAdvertisementAtTick;
     private static final String KITBOT_NAME = "KitBot1";
+    private static final double KITBOT_NEARBY_DISTANCE = 30.0;
+    private static final int KITBOT_COLLECT_DELAY_TICKS = 40; // 2s
+    // Cap on kitbot-wait-until-gone, so a bot that parks next to you can't stall the restock forever.
+    private static final int KITBOT_DEPARTURE_WAIT_TICKS = 600; // 30s
     private static final long KITBOT_PERIODIC_UPDATE_INTERVAL_TICKS = 72000L; // 1 hour at 20 tps
     private static final double CENTER_SPEED_OVERRIDE = 0.6;
     private static final int CENTER_SPEED_RESTORE_RETRY_WINDOW_TICKS = 60;
@@ -5483,6 +5507,18 @@ public class HighwayBuilderTHM extends Module {
         if (restockDebugLog.get()) restockDebug("KitbotOrder cleared in-flight order tracking (%s).", reason);
     }
 
+    private boolean isKitbotNearby() {
+        if (mc.player == null || mc.world == null) return false;
+
+        for (PlayerEntity player : mc.world.getPlayers()) {
+            if (player == null || player == mc.player) continue;
+            if (!KITBOT_NAME.equals(player.getName().getString())) continue;
+            if (player.squaredDistanceTo(mc.player) <= KITBOT_NEARBY_DISTANCE * KITBOT_NEARBY_DISTANCE) return true;
+        }
+
+        return false;
+    }
+
     private void clearKitbotEnclosureState(String reason) {
         boolean hadEnclosureState = kitbotEnclosureActive
             || kitbotEnclosureRestorePending
@@ -5494,6 +5530,9 @@ public class HighwayBuilderTHM extends Module {
         kitbotEnclosureActive = false;
         kitbotEnclosureRestorePending = false;
         kitbotReturnAnchorSaved = false;
+        kitbotSeenNearby = false;
+        kitbotDepartureWaitUntilAge = 0;
+        kitbotCollectUntilAge = 0;
         kitbotReturnX = kitbotReturnY = kitbotReturnZ = 0;
         kitbotReturnYaw = 0;
         kitbotAnchorPos.set(0, 0, 0);
@@ -13719,6 +13758,9 @@ public class HighwayBuilderTHM extends Module {
                 }
 
                 positionReady = false;
+                b.kitbotSeenNearby = false;
+                b.kitbotDepartureWaitUntilAge = 0;
+                b.kitbotCollectUntilAge = 0;
                 b.clearKitbotCenteringRuntime("kitbot-order-start");
                 b.resetKitbotOrderCenterVerificationRuntime("kitbot-order-start");
                 sourceBlockadeType = b.getEffectiveBlockadeType();
@@ -13769,7 +13811,10 @@ public class HighwayBuilderTHM extends Module {
 
                 if (b.kitbotOrderInFlight) return;
 
+                if (b.isKitbotNearby()) b.kitbotSeenNearby = true;
+
                 if (b.kitbotOrderFrontendSucceeded && hasExpectedKitDelivery(b)) {
+                    if (!isKitCollectionSettled(b)) return;
                     b.kitbotEnclosureRestorePending = true;
                     return;
                 }
@@ -14183,6 +14228,24 @@ public class HighwayBuilderTHM extends Module {
                         KITBOT_MAX_ACCEPTED_ATTEMPTS
                     );
                 }
+            }
+
+            // Kits are delivered before KitBot1 walks off, and the last few land on the floor after
+            // the inventory proof already passed - breaking the enclosure right then leaves them
+            // behind. Hold the enclosure until the bot is gone, then a beat longer to sweep pickups.
+            private boolean isKitCollectionSettled(HighwayBuilderTHM b) {
+                if (b.kitbotWaitUntilGone.get() && b.kitbotSeenNearby) {
+                    if (b.kitbotDepartureWaitUntilAge == 0) b.kitbotDepartureWaitUntilAge = b.mc.player.age + KITBOT_DEPARTURE_WAIT_TICKS;
+
+                    if (b.isKitbotNearby() && b.mc.player.age < b.kitbotDepartureWaitUntilAge) {
+                        b.kitbotCollectUntilAge = 0;
+                        return false;
+                    }
+                }
+
+                if (!b.kitbotCollectDelay.get()) return true;
+                if (b.kitbotCollectUntilAge == 0) b.kitbotCollectUntilAge = b.mc.player.age + KITBOT_COLLECT_DELAY_TICKS;
+                return b.mc.player.age >= b.kitbotCollectUntilAge;
             }
 
             private boolean hasExpectedKitDelivery(HighwayBuilderTHM b) {
