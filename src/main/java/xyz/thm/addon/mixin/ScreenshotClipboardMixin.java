@@ -54,7 +54,11 @@ public class ScreenshotClipboardMixin {
                 if (IS_MAC) {
                     copyToClipboardMac(file);
                 } else {
-                    copyToClipboardAWT(file);
+                    try {
+                        copyToClipboardAWT(file);
+                    } catch (HeadlessException | AWTError e) {
+                        copyToClipboardNative(file);
+                    }
                 }
                 ChatUtils.info("Successfully copied screenshot to clipboard");
             } catch (Exception e) {
@@ -72,6 +76,30 @@ public class ScreenshotClipboardMixin {
         if (exit != 0) {
             throw new IOException("osascript exited with code " + exit);
         }
+    }
+
+    // Linux fallback: the static block above only wins if it runs before anything else touches
+    // AWT — when it loses, the Toolkit is already a HeadlessToolkit and every AWT clipboard call
+    // throws for the rest of the session. wl-copy/xclip are the desktop-native equivalent of the
+    // macOS osascript path. ponytail: no session detection, just try both and take the first that
+    // exits 0.
+    private static void copyToClipboardNative(File file) throws IOException, InterruptedException {
+        IOException last = new IOException("no clipboard tool found (install wl-clipboard or xclip)");
+
+        for (String[] cmd : new String[][]{
+            {"wl-copy", "--type", "image/png"},
+            {"xclip", "-selection", "clipboard", "-t", "image/png"}
+        }) {
+            try {
+                Process proc = new ProcessBuilder(cmd).redirectInput(file).start();
+                if (proc.waitFor() == 0) return;
+                last = new IOException(cmd[0] + " exited with code " + proc.exitValue());
+            } catch (IOException e) {
+                last = e;
+            }
+        }
+
+        throw last;
     }
 
     private static void copyToClipboardAWT(File file) throws IOException {
