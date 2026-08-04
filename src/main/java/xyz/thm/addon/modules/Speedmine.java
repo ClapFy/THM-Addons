@@ -213,6 +213,12 @@ public class Speedmine extends Module {
         .visible(() -> !validateBreak.get())
         .build());
 
+    public final Setting<Boolean> instantClientRemove = sgMine.add(new BoolSetting.Builder()
+        .name("instant-client-remove")
+        .description("Remove above-threshold blocks client-side immediately, even when validate-break is on. Reduces perceived latency on high-ping servers.")
+        .defaultValue(false)
+        .build());
+
     public final Setting<Boolean> autoRebreak = sgMine.add(new BoolSetting.Builder()
         .name("auto-rebreak")
         .description("Rebreak the last position if a block reappears there.")
@@ -329,7 +335,7 @@ public class Speedmine extends Module {
                 && !mc.world.getBlockState(lastBrokenPos).isAir()) {
             MineContext rebreakCtx = new MineContext(lastBrokenPos, mc.world.getBlockState(lastBrokenPos), false);
             sendStopPacket(rebreakCtx, silentSwap.get());
-            return;
+            // Don't return — let pruning, finishing, and draining still run this tick
         }
 
         pruneCompletedOrInvalid();
@@ -377,11 +383,14 @@ public class Speedmine extends Module {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
             sendStart(primary);
+            // If the block resolves in a single tick, finish it now — no need to wait for the next tick
+            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
         } else if (canAddSecondary) {
             stopWithTool(primary, silentSwap.get());
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(pos, state, true);
             sendStart(primary);
+            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
         } else {
             if (queueEnabled.get() && !queue.contains(pos)) queue.addLast(pos);
         }
@@ -406,6 +415,7 @@ public class Speedmine extends Module {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
             sendStart(primary);
+            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
         } else if (doubleBreak.get() && secondary == null) {
             stopWithTool(primary, silentSwap.get());
             BlockPos   nextPos   = queue.pollFirst();
@@ -413,6 +423,7 @@ public class Speedmine extends Module {
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(nextPos, nextState, true);
             sendStart(primary);
+            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
         }
     }
 
@@ -426,6 +437,11 @@ public class Speedmine extends Module {
             sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
         }
         sendSequencedAction(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, ctx.pos);
+        // For true insta-break blocks (delta >= 1.0), the server accepts an immediate STOP
+        // in the same tick — send it now to avoid a 50ms round-trip through the tick handler.
+        if (ctx.instaBreak) {
+            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
+        }
     }
 
     private void sendStopPacket(MineContext ctx, boolean silent) {
@@ -452,7 +468,9 @@ public class Speedmine extends Module {
 
         sendStopPacket(ctx, silent);
 
-        if (!validateBreak.get() && (removeSlowBlocks.get() || ctx.instaBreak || ctx.aboveThreshold)) {
+        boolean clientRemove = (!validateBreak.get() && (removeSlowBlocks.get() || ctx.instaBreak || ctx.aboveThreshold))
+                            || (instantClientRemove.get() && (ctx.instaBreak || ctx.aboveThreshold));
+        if (clientRemove) {
             mc.world.syncWorldEvent(WorldEvents.BLOCK_BROKEN, ctx.pos, Block.getRawIdFromState(ctx.state));
             mc.world.setBlockState(ctx.pos, Blocks.AIR.getDefaultState(), 3);
         }
@@ -737,7 +755,7 @@ public class Speedmine extends Module {
 
         public final BlockPos   pos;
         public final BlockState state;
-        public final long       startMs;
+        public final long       startTick;
         public final float      hardness;
         public final boolean    isPrimary;
         public final boolean    instaBreak;
@@ -752,7 +770,7 @@ public class Speedmine extends Module {
             this.hardness       = mc.world != null ? state.getHardness(mc.world, pos) : 0;
             this.isPrimary      = isPrimary;
             this.startSlot      = findBestHotbarSlot(state);
-            this.startMs        = System.currentTimeMillis();
+            this.startTick      = mc.world != null ? mc.world.getTime() : 0;
             float delta         = calcDelta();
             this.instaBreak     = delta >= 1.0f;
             this.aboveThreshold = delta >= breakThreshold.get().floatValue();
@@ -762,7 +780,8 @@ public class Speedmine extends Module {
             if (mc.player == null || mc.world == null || hardness < 0) return 0;
             float perTick = calcDelta();
             if (perTick <= 0) return Double.MAX_VALUE;
-            float elapsed = Math.max((System.currentTimeMillis() - startMs) / 50f + 1f, 1f);
+            // Discrete tick count — tick 0 is the START tick, progress starts accumulating from tick 1
+            float elapsed = Math.max(mc.world.getTime() - startTick + 1, 1);
             float target  = isPrimary ? breakThreshold.get().floatValue() : 1.0f;
             return Math.min((perTick * elapsed) / target, 1.0);
         }
