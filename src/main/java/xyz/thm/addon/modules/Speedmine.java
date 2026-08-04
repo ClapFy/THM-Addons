@@ -334,7 +334,13 @@ public class Speedmine extends Module {
                 && primary == null && secondary == null
                 && !mc.world.getBlockState(lastBrokenPos).isAir()) {
             MineContext rebreakCtx = new MineContext(lastBrokenPos, mc.world.getBlockState(lastBrokenPos), false);
-            sendStopPacket(rebreakCtx, silentSwap.get());
+            // Insta-break blocks need a START (server auto-completes); sendStopPacket is a no-op for them.
+            // Non-insta blocks just need a bare STOP to trigger the server's pending completion.
+            if (rebreakCtx.instaBreak) {
+                sendStart(rebreakCtx);
+            } else {
+                sendStopPacket(rebreakCtx, silentSwap.get());
+            }
             // Don't return — let pruning, finishing, and draining still run this tick
         }
 
@@ -383,14 +389,15 @@ public class Speedmine extends Module {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
             sendStart(primary);
-            // If the block resolves in a single tick, finish it now — no need to wait for the next tick
-            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
+            // Only true insta-break blocks (delta >= 1.0) can be safely finished in the same tick.
+            // Non-insta above-threshold blocks still need the server to accumulate progress first.
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         } else if (canAddSecondary) {
             stopWithTool(primary, silentSwap.get());
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(pos, state, true);
             sendStart(primary);
-            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         } else {
             if (queueEnabled.get() && !queue.contains(pos)) queue.addLast(pos);
         }
@@ -415,7 +422,7 @@ public class Speedmine extends Module {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
             sendStart(primary);
-            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         } else if (doubleBreak.get() && secondary == null) {
             stopWithTool(primary, silentSwap.get());
             BlockPos   nextPos   = queue.pollFirst();
@@ -423,7 +430,7 @@ public class Speedmine extends Module {
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(nextPos, nextState, true);
             sendStart(primary);
-            if (primary != null && primary.aboveThreshold) finishBreak(primary, silentSwap.get());
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         }
     }
 
@@ -755,7 +762,7 @@ public class Speedmine extends Module {
 
         public final BlockPos   pos;
         public final BlockState state;
-        public final long       startTick;
+        public final long       startMs;
         public final float      hardness;
         public final boolean    isPrimary;
         public final boolean    instaBreak;
@@ -770,7 +777,7 @@ public class Speedmine extends Module {
             this.hardness       = mc.world != null ? state.getHardness(mc.world, pos) : 0;
             this.isPrimary      = isPrimary;
             this.startSlot      = findBestHotbarSlot(state);
-            this.startTick      = mc.world != null ? mc.world.getTime() : 0;
+            this.startMs        = System.currentTimeMillis();
             float delta         = calcDelta();
             this.instaBreak     = delta >= 1.0f;
             this.aboveThreshold = delta >= breakThreshold.get().floatValue();
@@ -780,8 +787,7 @@ public class Speedmine extends Module {
             if (mc.player == null || mc.world == null || hardness < 0) return 0;
             float perTick = calcDelta();
             if (perTick <= 0) return Double.MAX_VALUE;
-            // Discrete tick count — tick 0 is the START tick, progress starts accumulating from tick 1
-            float elapsed = Math.max(mc.world.getTime() - startTick + 1, 1);
+            float elapsed = Math.max((System.currentTimeMillis() - startMs) / 50f + 1f, 1f);
             float target  = isPrimary ? breakThreshold.get().floatValue() : 1.0f;
             return Math.min((perTick * elapsed) / target, 1.0);
         }
