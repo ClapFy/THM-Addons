@@ -106,6 +106,20 @@ public class Speedmine extends Module {
         .visible(autoMine::get)
         .build());
 
+    public final Setting<Boolean> autoMineOnly = sgAuto.add(new BoolSetting.Builder()
+        .name("auto-mine-only")
+        .description("Ignore blocks you click yourself — only auto-mine targets get broken.")
+        .defaultValue(false)
+        .visible(autoMine::get)
+        .build());
+
+    public final Setting<Boolean> feetFirst = sgAuto.add(new BoolSetting.Builder()
+        .name("feet-first")
+        .description("Break the lowest targets first, so an enemy's feet go before their head. Applies to bedrock too.")
+        .defaultValue(false)
+        .visible(autoMine::get)
+        .build());
+
     public final Setting<Double> enemyRange = sgAuto.add(new DoubleSetting.Builder()
         .name("enemy-range")
         .description("How far away an enemy can be to be considered.")
@@ -284,6 +298,8 @@ public class Speedmine extends Module {
     @EventHandler
     private void onStartBreaking(StartBreakingBlockEvent event) {
         if (mc.world == null || mc.player == null) return;
+        // Hands manual clicks straight back to vanilla — auto-mine owns the module
+        if (autoMine.get() && autoMineOnly.get()) return;
         BlockState state = mc.world.getBlockState(event.blockPos);
         if (!BlockUtils.canBreak(event.blockPos, state)) return;
         if (outOfRange(event.blockPos)) return;
@@ -532,7 +548,10 @@ public class Speedmine extends Module {
                 if (pos != null && !outOfRange(pos) && !out.contains(pos)) out.add(pos);
             }
         }
-        out.sort(Comparator.comparingDouble(pos -> mc.player.getEyePos().squaredDistanceTo(pos.toCenterPos())));
+        Comparator<BlockPos> byDistance =
+            Comparator.comparingDouble(pos -> mc.player.getEyePos().squaredDistanceTo(pos.toCenterPos()));
+        // ponytail: absolute Y, not per-enemy feet level — right for one enemy, good enough for a pile of them
+        out.sort(feetFirst.get() ? Comparator.comparingInt(BlockPos::getY).thenComparing(byDistance) : byDistance);
         return out;
     }
 
