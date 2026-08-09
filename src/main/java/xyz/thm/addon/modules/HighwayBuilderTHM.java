@@ -1339,6 +1339,7 @@ public class HighwayBuilderTHM extends Module {
         .name("Send-Status")
         .description("Sends the status every 5 min (Digging/Paving,Axis,Name,hash)")
         .defaultValue(true)
+        .onChanged(v -> enforceCreativeStatisticsGuard())
         .build()
     );
 
@@ -2081,18 +2082,19 @@ public class HighwayBuilderTHM extends Module {
     }
 
     /**
-     * Creative blocks are free, so creative stats are fake — the API toggle can never be on in creative.
-     * Runs whenever the setting is switched on and again on activate / after a THM profile load (the
-     * setting can be on from a saved config long before a player exists to check).
+     * Creative blocks are free, so creative stats are fake — neither the API toggle nor the status log
+     * can be on in creative. Runs whenever either setting is switched on and again on activate / after
+     * a THM profile load (either can be on from a saved config long before a player exists to check).
      * <p>
      * Deliberately silent: never tell the player that creative is what blocked the submission, otherwise
      * they know exactly which check to work around. Only the local debug log records the reason.
      */
     private void enforceCreativeStatisticsGuard() {
-        if (!sendStatisticsapi.get() || mc.player == null || !mc.player.isCreative()) return;
-
+        if (mc.player == null || !mc.player.isCreative()) return;
+        if (!sendStatisticsapi.get() && !statuslog.get()) return;
         sendStatisticsapi.set(false);
-        highwayDebug("HB statistics(API) force-disabled: player is in creative.");
+        statuslog.set(false);
+        highwayDebug("HB statistics(API) + status log force-disabled: player is in creative.");
     }
 
     public void normalizeAfterThmProfileLoad() {
@@ -2141,7 +2143,9 @@ public class HighwayBuilderTHM extends Module {
 
         // Creative may build freely — it just never reports anything (enforceCreativeStatisticsGuard plus
         // the silent creative skips in sendStatusLog / commitAndSendFinalExternalStats).
-        if (sendStatisticsapi.get() && THMUtils.isNot6B6T()) {
+        if ((sendStatisticsapi.get() || statuslog.get()) && THMUtils.isNot6B6T()) {
+            sendStatisticsapi.set(false);
+            statuslog.set(false);
             errorEarly("You can only build on 6b6t");
             return;
         }
