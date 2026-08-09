@@ -15,6 +15,8 @@ import meteordevelopment.meteorclient.utils.misc.HorizontalDirection;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
+import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
+import meteordevelopment.meteorclient.mixininterface.IVec3d;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.EndPortalBlock;
 import net.minecraft.block.FluidBlock;
@@ -35,7 +37,23 @@ import xyz.thm.addon.utils.THMUtils;
 
 import java.util.*;
 
+/**
+ * WARNING: The Wasp travel method utilizes rigid flight vectors to override standard Minecraft physics.
+ * This poses a high risk of rubberbanding, desyncs, or triggering standard anarchy anti-cheats (like NCP or Grim)
+ * when compared to the existing, more natural Elytra Bounce logic. Use Wasp mode with caution on strict servers.
+ */
 public class HighwayTraveler extends Module {
+
+    public enum TravelMethod {
+        WALK("Walk"),
+        WASP("Wasp");
+
+        public final String label;
+        TravelMethod(String l) { label = l; }
+
+        @Override
+        public String toString() { return label; }
+    }
 
     public enum TravelDirection {
         AUTO("Auto"),
@@ -68,6 +86,36 @@ public class HighwayTraveler extends Module {
             .name("direction")
             .description("Highway direction. AUTO snaps to your current facing when the module is enabled.")
             .defaultValue(TravelDirection.AUTO)
+            .build()
+    );
+
+    private final Setting<TravelMethod> methodSetting = sgGeneral.add(
+        new EnumSetting.Builder<TravelMethod>()
+            .name("method")
+            .description("The travel method to use.")
+            .defaultValue(TravelMethod.WALK)
+            .build()
+    );
+
+    private final Setting<Double> waspHorizontalSpeed = sgGeneral.add(
+        new DoubleSetting.Builder()
+            .name("horizontal-speed")
+            .description("Horizontal speed for Wasp mode.")
+            .defaultValue(1.8)
+            .min(0.1)
+            .sliderMax(5.0)
+            .visible(() -> methodSetting.get() == TravelMethod.WASP)
+            .build()
+    );
+
+    private final Setting<Double> waspFallSpeed = sgGeneral.add(
+        new DoubleSetting.Builder()
+            .name("fall-speed")
+            .description("Vertical fall speed for Wasp mode.")
+            .defaultValue(0.01)
+            .min(0.0)
+            .sliderMax(0.5)
+            .visible(() -> methodSetting.get() == TravelMethod.WASP)
             .build()
     );
 
@@ -417,6 +465,29 @@ public class HighwayTraveler extends Module {
         }
     }
 
+    /**
+     * Handles PlayerMoveEvent to apply strict Wasp vector calculations.
+     *
+     * @param event The player move event.
+     */
+    @EventHandler
+    private void onPlayerMove(PlayerMoveEvent event) {
+        if (mc.player == null || methodSetting.get() != TravelMethod.WASP || !mc.player.isGliding()) return;
+        if (travelState == TravelState.STOPPED || travelState == TravelState.BACKUP || handoffTicks >= 0) return;
+
+        float yaw = travelState == TravelState.PATH_FOLLOW ? mc.player.getYaw() : hwYaw;
+
+        double cos = Math.cos(Math.toRadians(yaw + 90));
+        double sin = Math.sin(Math.toRadians(yaw + 90));
+
+        double speed = waspHorizontalSpeed.get();
+        double x = cos * speed;
+        double z = sin * speed;
+        double y = -waspFallSpeed.get();
+
+        ((IVec3d) event.movement).meteor$set(x, y, z);
+    }
+
     private boolean bounceConditionsMet(ClientPlayerEntity p) {
         BlockState blockState = p.getBlockStateAtPos();
         boolean isClimbing = blockState.isIn(BlockTags.CLIMBABLE) && !blockState.isIn(BlockTags.CAN_GLIDE_THROUGH);
@@ -527,7 +598,7 @@ public class HighwayTraveler extends Module {
         }
     }
 
-    private static final int STEER_LOOKAHEAD = 3; 
+    private static final int STEER_LOOKAHEAD = 3;
 
     private void tickPathFollow(ClientPlayerEntity p) {
         Vec3d pos = new Vec3d(p.getX(), p.getY(), p.getZ());
