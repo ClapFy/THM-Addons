@@ -963,7 +963,7 @@ public class HighwayBuilderTHM extends Module {
     private final Setting<AirPlaceMode> packetBuildAirPlace = sgPaving.add(new EnumSetting.Builder<AirPlaceMode>()
         .name("air-place-mode")
         .description("When to air-place in Packet Build mode: never, only when needed, or always.")
-        .defaultValue(AirPlaceMode.Never)
+        .defaultValue(AirPlaceMode.Smart)
         .visible(packetBuild::get)
         .build()
     );
@@ -1130,7 +1130,7 @@ public class HighwayBuilderTHM extends Module {
     public final Setting<Boolean> doublechest = sgInventory.add(new BoolSetting.Builder()
         .name("double-chest")
         .description("Places a second ender chest to the right for a 54-slot double.")
-        .defaultValue(false)
+        .defaultValue(true)
         .visible(searchEnderChest::get)
         .build()
     );
@@ -1347,7 +1347,6 @@ public class HighwayBuilderTHM extends Module {
         .name("Send-Status")
         .description("Sends the status every 5 min (Digging/Paving,Axis,Name,hash)")
         .defaultValue(true)
-        .onChanged(v -> enforceCreativeStatisticsGuard())
         .build()
     );
 
@@ -1377,7 +1376,6 @@ public class HighwayBuilderTHM extends Module {
         .description("Sends statistics to a Api when disabling Highway Builder.")
         .defaultValue(false)
         .visible(printStatistics::get)
-        .onChanged(v -> enforceCreativeStatisticsGuard())
         .build()
     );
 
@@ -4775,11 +4773,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean isKitbotProofShulker(ItemStack itemStack) {
         if (!Utils.isShulker(itemStack.getItem())) return false;
 
-        ItemStack[] items = new ItemStack[27];
-        Utils.getItemsInContainerItem(itemStack, items);
-
-        for (ItemStack stack : items) {
-            if (stack == null || stack.isEmpty()) continue;
+        for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
             if (restockTask.food && isConfiguredFoodStack(stack)) return true;
             if (restockTask.pickaxes && isActivePickaxeRestockMatch(stack)) return true;
             if (restockTask.enderChests && stack.getItem() == Items.ENDER_CHEST) return true;
@@ -5659,7 +5653,27 @@ public class HighwayBuilderTHM extends Module {
         if (!isDoubleChestBlockadeActive() || placementState != State.PlaceShulkerBlockade) return false;
         if (countLooseInventoryEnderChests() < 2) return false;
         RestockTask.RestockSession session = restockTask.getSession();
-        return session == null || !session.isEnderChestExhausted();
+        if (session != null && session.isEnderChestExhausted()) return false;
+        // The restock searches inventory shulkers first and only opens the ender chest when none matches,
+        // so a matching inventory shulker means this is a shulker pull, not an ender-chest search - no
+        // double. Mirrors Restock's own shulkerContainsRestockItems check, at the outer level.
+        return !hasMatchingInventoryShulkerForRestock();
+    }
+
+    private boolean hasMatchingInventoryShulkerForRestock() {
+        if (mc.player == null) return false;
+        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
+            ItemStack itemStack = mc.player.getInventory().getStack(i);
+            if (!Utils.isShulker(itemStack.getItem())) continue;
+            for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
+                if (stack.getItem() instanceof BlockItem bi
+                    && (blocksToPlace.get().contains(bi.getBlock())
+                        || (blocksToPlace.get().contains(Blocks.OBSIDIAN) && bi == Items.ENDER_CHEST))) return true;
+                if (restockTask.pickaxes && isActivePickaxeRestockMatch(stack)) return true;
+                if (restockTask.food && isConfiguredFoodStack(stack)) return true;
+            }
+        }
+        return false;
     }
 
     private BlockPos doubleChestBlockadePos(State placementState) {
@@ -11056,14 +11070,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean isContainerItemEmpty(ItemStack containerItem) {
         if (containerItem == null || containerItem.isEmpty() || !Utils.isShulker(containerItem.getItem())) return true;
 
-        ItemStack[] items = new ItemStack[27];
-        Utils.getItemsInContainerItem(containerItem, items);
-
-        for (ItemStack stack : items) {
-            if (!stack.isEmpty()) return false;
-        }
-
-        return true;
+        return THMUtils.getContainerContents(containerItem).isEmpty();
     }
 
     private boolean isContainerInventoryEmpty(Inventory inventory) {
@@ -11330,10 +11337,7 @@ public class HighwayBuilderTHM extends Module {
     private boolean isUsefulShulkerStack(ItemStack itemStack) {
         if (isProtectedItemStack(itemStack)) return true;
 
-        ItemStack[] items = new ItemStack[27];
-        Utils.getItemsInContainerItem(itemStack, items);
-
-        for (ItemStack stack : items) {
+        for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
             if (isProtectedItemStack(stack)) return true;
             if (stack.getItem() instanceof BlockItem bi
                 && (blocksToPlace.get().contains(bi.getBlock())
@@ -13096,7 +13100,6 @@ public class HighwayBuilderTHM extends Module {
             private int failedRotationRetries;
             private float cachedPreRotateYaw;
             private float cachedPreRotatePitch;
-            private static final ItemStack[] ITEMS = new ItemStack[27];
 
             @Override
             protected void start(HighwayBuilderTHM b) {
@@ -13444,10 +13447,7 @@ public class HighwayBuilderTHM extends Module {
                 if (!Utils.isShulker(itemStack.getItem())) return false;
                 if (b.isProtectedItemStack(itemStack)) return true;
 
-                ItemStack[] items = new ItemStack[27];
-                Utils.getItemsInContainerItem(itemStack, items);
-
-                for (ItemStack stack : items) {
+                for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
                     if (b.isProtectedItemStack(stack)) return true;
                 }
 
@@ -13764,7 +13764,6 @@ public class HighwayBuilderTHM extends Module {
         },
 
         KitbotOrder {
-            private static final ItemStack[] ITEMS = new ItemStack[27];
             private static final int KITBOT_FAILSAFE_DELAY_TICKS = 200;
             private static final int KITBOT_PARTIAL_DELIVERY_GRACE_TICKS = 40;
             private enum FailureMode {
@@ -14360,9 +14359,8 @@ public class HighwayBuilderTHM extends Module {
 
             private boolean shulkerContainsRestockItems(HighwayBuilderTHM b, ItemStack itemStack) {
                 if (!Utils.isShulker(itemStack.getItem())) return false;
-                Utils.getItemsInContainerItem(itemStack, ITEMS);
 
-                for (ItemStack stack : ITEMS) {
+                for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
                     if (stack.getItem() instanceof BlockItem bi && (b.blocksToPlace.get().contains(bi.getBlock()) || (b.blocksToPlace.get().contains(Blocks.OBSIDIAN) && bi == Items.ENDER_CHEST))) {
                         return true;
                     }
@@ -14616,7 +14614,6 @@ public class HighwayBuilderTHM extends Module {
         // this one was rough to do
         Restock {
             private static final MBlockPos pos = new MBlockPos();
-            private static final ItemStack[] ITEMS = new ItemStack[27];
             private static final int INVALID_RESTOCK_RECOVERY_MAX_RETRIES = 1;
             private static final int SOURCE_READY_MAX_RETRIES = 3;
             private static final int ENDER_CHEST_LIVE_RECHECK_COOLDOWN_TICKS = 40;
@@ -15762,12 +15759,9 @@ public class HighwayBuilderTHM extends Module {
 
             private int countRestockUnitsInShulker(HighwayBuilderTHM b, ItemStack itemStack, String kind) {
                 if (!Utils.isShulker(itemStack.getItem())) return 0;
-                Utils.getItemsInContainerItem(itemStack, ITEMS);
 
                 int usefulUnits = 0;
-                for (ItemStack stack : ITEMS) {
-                    if (stack == null || stack.isEmpty()) continue;
-
+                for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
                     switch (kind) {
                         case ECHEST_RESERVE_MATCHING -> {
                             if (b.restockTask.materials && stack.getItem() instanceof BlockItem bi && !b.restockTask.isObsidianRestockSession()) {

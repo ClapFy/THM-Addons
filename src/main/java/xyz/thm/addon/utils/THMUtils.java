@@ -13,6 +13,8 @@ import meteordevelopment.meteorclient.pathing.BaritoneUtils;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.network.ServerInfo;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket;
@@ -39,6 +41,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Locale;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -47,6 +50,26 @@ import static meteordevelopment.meteorclient.utils.world.BlockUtils.canPlace;
 
 public class THMUtils {
     private THMUtils() {}
+
+    // Container reads (size-agnostic)
+    // The CONTAINER component holds whatever the container actually stores, so reading it back is
+    // inherently dynamic - a vanilla shulker gives 27, a plugin-resized container gives whatever it
+    // has. Prefer these over `new ItemStack[27]` + `Utils.getItemsInContainerItem(...)`, which caps the
+    // read at 27 and silently drops anything past it. For a *live opened* container use inv.size().
+
+    /** Non-empty contents of a container item (shulker, etc.), whatever its real slot count. Empty for a non-container. */
+    public static List<ItemStack> getContainerContents(ItemStack containerItem) {
+        if (containerItem == null || containerItem.isEmpty()) return List.of();
+        ContainerComponent container = containerItem.get(DataComponentTypes.CONTAINER);
+        return container == null ? List.of() : container.streamNonEmpty().toList();
+    }
+
+    /** Real slot count of a container item (capacity, including empty slots). 0 for a non-container. */
+    public static int getContainerSlotCount(ItemStack containerItem) {
+        if (containerItem == null || containerItem.isEmpty()) return 0;
+        ContainerComponent container = containerItem.get(DataComponentTypes.CONTAINER);
+        return container == null ? 0 : (int) container.stream().count();
+    }
     private static TrayIcon trayIcon;
     private static boolean trayInitialized;
     private static Image notificationImage;
