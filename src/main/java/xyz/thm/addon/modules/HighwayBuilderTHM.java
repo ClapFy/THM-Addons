@@ -1127,6 +1127,14 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
+    public final Setting<Boolean> doublechest = sgInventory.add(new BoolSetting.Builder()
+        .name("double-chest")
+        .description("Places a second ender chest to the right for a 54-slot double.")
+        .defaultValue(false)
+        .visible(searchEnderChest::get)
+        .build()
+    );
+
     private final Setting<Boolean> searchShulkers = sgInventory.add(new BoolSetting.Builder()
         .name("search-shulkers")
         .description("Searches through shulkers to find items to use.")
@@ -5629,6 +5637,36 @@ public class HighwayBuilderTHM extends Module {
 
     private HorizontalDirection getKitbotExpansionDirection(HorizontalDirection containerDirection) {
         return containerDirection.rotateLeftSkipOne().opposite();
+    }
+
+    // Double-chest: on servers whose plugin merges two adjacent ender chests into a 54-slot double, the
+    // blockade column next to the source chest (basis column 1, == container + expansionDirection) is
+    // built as an ender chest instead of an obsidian pillar. Opening the front chest then yields the
+    // double, at zero extra cost - it's placed during the normal encasing build and reclaimed by the
+    // normal teardown mine, so nothing is placed-then-broken.
+    private boolean isDoubleChestBlockadeActive() {
+        return doublechest.get() && searchEnderChest.get();
+    }
+
+    // Only the ender-chest *search* restock benefits from a double, so the extra chest is built only for
+    // the container-search blockade (PlaceShulkerBlockade -> Restock), never the mine-echests-for-obsidian
+    // one (PlaceEChestBlockade -> MineEnderChests) - so breaking ender chests only ever breaks the one
+    // being broken, never an extra to the side - and never for a shulker/trash restock that won't open the
+    // ender chest. The remaining gate is "is the ender chest actually a live source right now": we need two
+    // spare ender chests (one for this wall column, one for the front chest the Restock state places) and
+    // the session's ender-chest source can't already be exhausted.
+    private boolean shouldBuildDoubleChestForRestock(State placementState) {
+        if (!isDoubleChestBlockadeActive() || placementState != State.PlaceShulkerBlockade) return false;
+        if (countLooseInventoryEnderChests() < 2) return false;
+        RestockTask.RestockSession session = restockTask.getSession();
+        return session == null || !session.isEnderChestExhausted();
+    }
+
+    private BlockPos doubleChestBlockadePos(State placementState) {
+        if (!shouldBuildDoubleChestForRestock(placementState) || dir == null || mc.player == null) return null;
+        HorizontalDirection containerDir = getRestockContainerDirection(dir);
+        BlockPos container = offsetBlockPos(mc.player.getBlockPos(), containerDir);
+        return offsetBlockPos(container, getKitbotExpansionDirection(containerDir));
     }
 
     private BlockPos offsetBlockPos(BlockPos origin, HorizontalDirection direction) {
@@ -16671,6 +16709,8 @@ public class HighwayBuilderTHM extends Module {
             int scannedTargets = 0;
             boolean throttleEnclosurePlacement = this == PlaceShulkerBlockade || this == PlaceEChestBlockade;
             boolean retryEnclosurePlacement = false;
+            // Double-chest: this one blockade column is built as an ender chest instead of obsidian.
+            BlockPos doubleChestPos = throttleEnclosurePlacement ? b.doubleChestBlockadePos(this) : null;
 
             if (b.restockDebugLog.get() && throttleEnclosurePlacement) {
                 b.restockDebug("%s tick using hotbar slot %d and blockade=%s.",
@@ -16689,6 +16729,12 @@ public class HighwayBuilderTHM extends Module {
                 scannedTargets++;
                 BlockPos targetPos = pos.getBlockPos();
                 boolean lastTarget = !it.hasNext();
+                // Double-chest: the column at doubleChestPos wants an ender chest, not obsidian.
+                boolean doubleChestTarget = doubleChestPos != null && targetPos.equals(doubleChestPos);
+                if (doubleChestTarget && b.mc.world.getBlockState(targetPos).getBlock() == Blocks.ENDER_CHEST) {
+                    if (lastTarget) finishedPlacing = true;
+                    continue; // double chest already down
+                }
 
                 if (b.count >= it.placementsPerTick(b)) {
                     if (b.restockDebugLog.get() && throttleEnclosurePlacement) {
@@ -16749,7 +16795,14 @@ public class HighwayBuilderTHM extends Module {
 
                 // CheckEntities & SwapBack are disabled for waiting for better accuracy and speed of the builder
                 BlockState stateBefore = b.mc.world.getBlockState(targetPos);
-                boolean placedThisTick = b.tryPlaceBlock(targetPos, slot, b.rotation.get().place);
+                // Double-chest column: place an ender chest from a spare slot instead of obsidian; if we
+                // have none, fall through to the normal obsidian block (plain single chest).
+                int placeSlot = slot;
+                if (doubleChestTarget) {
+                    int echestSlot = findAndMoveToHotbar(b, itemStack -> itemStack.getItem() == Items.ENDER_CHEST, false);
+                    if (echestSlot >= 0) placeSlot = echestSlot;
+                }
+                boolean placedThisTick = b.tryPlaceBlock(targetPos, placeSlot, b.rotation.get().place);
 
                 if (b.restockDebugLog.get() && throttleEnclosurePlacement) {
                     BlockState stateAfterAttempt = b.mc.world.getBlockState(targetPos);
