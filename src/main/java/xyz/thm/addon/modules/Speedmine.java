@@ -213,6 +213,12 @@ public class Speedmine extends Module {
         .visible(() -> !validateBreak.get())
         .build());
 
+    public final Setting<Boolean> instantClientRemove = sgMine.add(new BoolSetting.Builder()
+        .name("instant-client-remove")
+        .description("Remove above-threshold blocks client-side immediately, even when validate-break is on. Reduces perceived latency on high-ping servers.")
+        .defaultValue(false)
+        .build());
+
     public final Setting<Boolean> autoRebreak = sgMine.add(new BoolSetting.Builder()
         .name("auto-rebreak")
         .description("Rebreak the last position if a block reappears there.")
@@ -328,8 +334,14 @@ public class Speedmine extends Module {
                 && primary == null && secondary == null
                 && !mc.world.getBlockState(lastBrokenPos).isAir()) {
             MineContext rebreakCtx = new MineContext(lastBrokenPos, mc.world.getBlockState(lastBrokenPos), false);
-            sendStopPacket(rebreakCtx, silentSwap.get());
-            return;
+            // Insta-break blocks need a START (server auto-completes); sendStopPacket is a no-op for them.
+            // Non-insta blocks just need a bare STOP to trigger the server's pending completion.
+            if (rebreakCtx.instaBreak) {
+                sendStart(rebreakCtx);
+            } else {
+                sendStopPacket(rebreakCtx, silentSwap.get());
+            }
+            // Don't return — let pruning, finishing, and draining still run this tick
         }
 
         pruneCompletedOrInvalid();
@@ -377,11 +389,15 @@ public class Speedmine extends Module {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
             sendStart(primary);
+            // Only true insta-break blocks (delta >= 1.0) can be safely finished in the same tick.
+            // Non-insta above-threshold blocks still need the server to accumulate progress first.
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         } else if (canAddSecondary) {
             stopWithTool(primary, silentSwap.get());
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(pos, state, true);
             sendStart(primary);
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         } else {
             if (queueEnabled.get() && !queue.contains(pos)) queue.addLast(pos);
         }
@@ -406,6 +422,7 @@ public class Speedmine extends Module {
             equipBestTool(state);
             primary = new MineContext(pos, state, true);
             sendStart(primary);
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         } else if (doubleBreak.get() && secondary == null) {
             stopWithTool(primary, silentSwap.get());
             BlockPos   nextPos   = queue.pollFirst();
@@ -413,6 +430,7 @@ public class Speedmine extends Module {
             secondary = new MineContext(primary.pos, primary.state, false);
             primary   = new MineContext(nextPos, nextState, true);
             sendStart(primary);
+            if (primary != null && primary.instaBreak) finishBreak(primary, silentSwap.get());
         }
     }
 
@@ -426,6 +444,11 @@ public class Speedmine extends Module {
             sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
         }
         sendSequencedAction(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, ctx.pos);
+        // For true insta-break blocks (delta >= 1.0), the server accepts an immediate STOP
+        // in the same tick — send it now to avoid a 50ms round-trip through the tick handler.
+        if (ctx.instaBreak) {
+            sendSequencedAction(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, ctx.pos);
+        }
     }
 
     private void sendStopPacket(MineContext ctx, boolean silent) {
@@ -452,7 +475,9 @@ public class Speedmine extends Module {
 
         sendStopPacket(ctx, silent);
 
-        if (!validateBreak.get() && (removeSlowBlocks.get() || ctx.instaBreak || ctx.aboveThreshold)) {
+        boolean clientRemove = (!validateBreak.get() && (removeSlowBlocks.get() || ctx.instaBreak || ctx.aboveThreshold))
+                            || (instantClientRemove.get() && (ctx.instaBreak || ctx.aboveThreshold));
+        if (clientRemove) {
             mc.world.syncWorldEvent(WorldEvents.BLOCK_BROKEN, ctx.pos, Block.getRawIdFromState(ctx.state));
             mc.world.setBlockState(ctx.pos, Blocks.AIR.getDefaultState(), 3);
         }
