@@ -60,7 +60,7 @@ public final class FriendClients {
 
     public static final List<Source> ALL =
         List.of(rusherHack(), liquidBounce(), anarchyClient(), autismClient(), lambda(),
-            wurst(), bleachHack(), mio(), future());
+            boze(), wurst(), bleachHack(), mio(), future());
 
     // Lambda (the Fabric/Kotlin one) is the odd source out: FriendHandler stores a Set<UUID>, not
     // names, so both directions go through its own resolvers, which look the player up in the
@@ -91,6 +91,18 @@ public final class FriendClients {
                 return (Boolean) call(instance(handler), "befriend",
                     new Class[]{com.mojang.authlib.GameProfile.class}, profile);
             });
+    }
+
+    // Boze (addon-api 3.3, docs.boze.dev): dev.boze.api.client.FriendManager is entirely static,
+    // and its addFriend already returns whether the name was really taken — the record's contract
+    // exactly. The client owns persistence, same as every other in-JVM source here.
+    private static Source boze() {
+        String fm = "dev.boze.api.client.FriendManager";
+
+        return new Source("Boze",
+            () -> cls(fm) != null,
+            () -> asNames(staticCall(fm, "getFriends")),
+            name -> (Boolean) staticCall(fm, "addFriend", new Class[]{String.class}, name));
     }
 
     // Autism Client keeps friends on TeamsModule as plain names behind static helpers, and its own

@@ -20,6 +20,7 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.network.PlayerListEntry;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.settings.StringMultiSelect;
 import xyz.thm.addon.utils.FriendClients;
 import xyz.thm.addon.utils.ThmMembers;
 
@@ -67,6 +68,28 @@ public class FriendsSyncModule extends Module {
         .name("sync-thm-members")
         .description("Include THM members, not just Meteor friends — online ones in Command mode, the whole member list in File mode.")
         .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<StringMultiSelect> syncRanks = sgGeneral.add(new GenericSetting.Builder<StringMultiSelect>()
+        .name("sync-ranks")
+        .description("THM ranks to add as friends.")
+        .defaultValue(defaultSyncRanks())
+        .visible(syncThmMembers::get)
+        .build()
+    );
+
+    private static StringMultiSelect defaultSyncRanks() {
+        StringMultiSelect select = new StringMultiSelect("Sync Ranks", () -> ThmMembers.RANK_HIERARCHY);
+        select.selected().addAll(ThmMembers.RANK_HIERARCHY);
+        return select;
+    }
+
+    private final Setting<Boolean> higherRanks = sgGeneral.add(new BoolSetting.Builder()
+        .name("include-higher-ranks")
+        .description("Also add everyone ranked above the picked ranks.")
+        .defaultValue(true)
+        .visible(syncThmMembers::get)
         .build()
     );
 
@@ -266,6 +289,7 @@ public class FriendsSyncModule extends Module {
         if (syncThmMembers.get()) {
             for (ThmMembers.Member member : ThmMembers.getCachedMembers()) {
                 if (ThmMembers.isKillOnSight(member) || ThmMembers.isIgnore(member)) continue;
+                if (!rankSelected(member)) continue;
                 Collections.addAll(names, member.mcNames);
             }
         }
@@ -275,7 +299,33 @@ public class FriendsSyncModule extends Module {
 
     private boolean isThmMember(String playerName) {
         ThmMembers.Member member = ThmMembers.getMemberByMcName(playerName);
-        return member != null && !ThmMembers.isKillOnSight(member) && !ThmMembers.isIgnore(member);
+        return member != null && !ThmMembers.isKillOnSight(member) && !ThmMembers.isIgnore(member)
+            && rankSelected(member);
+    }
+
+    /**
+     * Whether this member's rank is one of the picked ones — plus, with include-higher-ranks on,
+     * anything ranked strictly above the highest picked rank.
+     *
+     * <p>ponytail: a rank missing from {@link ThmMembers#RANK_HIERARCHY} is never synced; add it
+     * there if it should be pickable.
+     */
+    private boolean rankSelected(ThmMembers.Member member) {
+        int index = ThmMembers.rankIndex(member == null ? null : member.rank);
+        if (index == -1) return false;
+
+        int highestPicked = ThmMembers.RANK_HIERARCHY.size();
+        for (String rank : syncRanks.get().selected()) {
+            int picked = ThmMembers.rankIndex(rank);
+            if (picked == index) return true;
+            if (picked != -1) highestPicked = Math.min(highestPicked, picked);
+        }
+
+        // Nothing (valid) picked means nothing syncs — otherwise include-higher-ranks would read
+        // an empty selection as "everyone is above it".
+        if (highestPicked == ThmMembers.RANK_HIERARCHY.size()) return false;
+
+        return higherRanks.get() && index < highestPicked;
     }
 
     private void submitThroughChatPipeline(String cmd) {

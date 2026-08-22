@@ -35,6 +35,37 @@ public final class ThmMembers {
         }
     }
 
+    /** THM ranks, highest first — the ordering rank filters compare against. */
+    public static final List<String> RANK_HIERARCHY = List.of(
+        "King/Owner",
+        "Prince/Co-Owner",
+        "Prince",
+        "The Chosen One",
+        "Major",
+        "Mayor",
+        "Elite Highway Man",
+        "Journeyman",
+        "Highway Man",
+        "PvP Manager",
+        "PvP Lead",
+        "PvP Branch",
+        "Apprentice",
+        "Retired",
+        "Novice",
+        "PVP Novice",
+        "Bot"
+    );
+
+    /** Position in {@link #RANK_HIERARCHY} (0 = highest), or -1 for an absent or unlisted rank. */
+    public static int rankIndex(String rank) {
+        if (rank == null) return -1;
+        String trimmed = rank.trim();
+        for (int i = 0; i < RANK_HIERARCHY.size(); i++) {
+            if (RANK_HIERARCHY.get(i).equalsIgnoreCase(trimmed)) return i;
+        }
+        return -1;
+    }
+
     private static List<Member> cachedMembers = null;
     private static Map<String, Member> cachedByMcName = null;
     private static boolean fetchInProgress = false;

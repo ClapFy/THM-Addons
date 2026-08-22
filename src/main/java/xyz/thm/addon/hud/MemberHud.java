@@ -24,25 +24,7 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class MemberHud extends HudElement {
     public static final HudElementInfo<MemberHud> INFO = new HudElementInfo<>(THMAddon.HUD_GROUP, "THM Member Hud", "Shows all online THM members and ranks", MemberHud::new);
-    private static final List<String> RANK_HIERARCHY = Arrays.asList(
-        "King/Owner",
-        "Prince/Co-Owner",
-        "Prince",
-        "The Chosen One",
-        "Major",
-        "Mayor",
-        "Elite Highway Man",
-        "Journeyman",
-        "Highway Man",
-        "PvP Manager",
-        "PvP Lead",
-        "PvP Branch",
-        "Apprentice",
-        "Retired",
-        "Novice",
-        "PVP Novice",
-        "Bot"
-    );
+    private static final List<String> RANK_HIERARCHY = ThmMembers.RANK_HIERARCHY;
 
     public MemberHud() {
         super(INFO);
