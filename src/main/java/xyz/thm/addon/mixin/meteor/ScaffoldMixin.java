@@ -31,7 +31,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import xyz.thm.addon.utils.PacketPlaceUtils;
+import xyz.thm.addon.utils.PlacementUtils;
 import xyz.thm.addon.utils.RenderUtilsTHM;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -295,7 +295,7 @@ public abstract class ScaffoldMixin {
         if (thm$packetPlace != null && thm$packetPlace.get()) {
             int rotateTicks = thm$packetRotateTicks != null ? thm$packetRotateTicks.get() : rotationPriority;
             boolean airPlace = thm$packetAirPlace == null || thm$packetAirPlace.get();
-            boolean placed = PacketPlaceUtils.placeBlockPacket(placePos, item, rotate, rotateTicks, airPlace);
+            boolean placed = PlacementUtils.placeBlockPacket(placePos, item, rotate, rotateTicks, airPlace);
             if (placed && swingHand && mc.player != null) {
                 Hand hand = item.isOffhand() ? Hand.OFF_HAND : Hand.MAIN_HAND;
                 mc.player.swingHand(hand, true);

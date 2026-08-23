@@ -41,8 +41,8 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.utils.ServerStatusHandler;
-import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+import xyz.thm.addon.utils.server.ServerStatusHandler;
+import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
 import xyz.thm.addon.utils.THMUtils;
 
 import java.io.IOException;

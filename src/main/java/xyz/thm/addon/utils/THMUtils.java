@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.mixininterface.IPlayerMoveC2SPacket;
 import meteordevelopment.meteorclient.pathing.BaritoneUtils;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ServerInfo;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ContainerComponent;
@@ -19,6 +20,10 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
+import net.minecraft.text.ClickEvent;
+import net.minecraft.text.Style;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
@@ -31,6 +36,7 @@ import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URL;
@@ -45,6 +51,8 @@ import java.util.List;
 import java.util.Locale;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
+import static meteordevelopment.meteorclient.utils.player.ChatUtils.error;
+import static meteordevelopment.meteorclient.utils.player.ChatUtils.sendMsg;
 import static meteordevelopment.meteorclient.utils.world.BlockUtils.canPlace;
 
 
@@ -601,5 +609,32 @@ public class THMUtils {
         }, "thm-webhook-attachment");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    public static void sendClientMsg(String msg, Style style) {
+        if (mc.player == null) return;
+        try {
+            String message = Formatting.GRAY + msg;
+            mc.player.sendMessage(Text.literal(message).setStyle(style), false);
+        } catch (Exception ignored) {}
+    }
+
+    public static boolean checkOrCreateFile(MinecraftClient mc, String fileName) {
+        File file = FabricLoader.getInstance().getGameDir().resolve(fileName).toFile();
+        if (!file.exists()) {
+            try {
+                if (file.createNewFile()) {
+                    if (mc.player != null) {
+                        sendMsg(Text.of("Created " + file.getName() + " in your meteor-client folder."));
+                        Style style = Style.EMPTY.withClickEvent(new ClickEvent.OpenFile(file.getAbsolutePath()));
+                        sendClientMsg("Click \u00a72\u00a7lhere \u00a7r\u00a77to open the file.", style);
+                    }
+                    return true;
+                }
+            } catch (Exception err) {
+                error("Error creating " + file.getAbsolutePath() + "! - Why:\n" + err, "THMUtils#checkOrCreateFile");
+            }
+        } else return true;
+        return false;
     }
 }

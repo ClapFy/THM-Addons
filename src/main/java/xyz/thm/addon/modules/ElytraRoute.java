@@ -48,9 +48,9 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.ChunkStatus;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.utils.InventoryManager;
-import xyz.thm.addon.utils.ServerReconnectService;
-import xyz.thm.addon.utils.ServerStatusHandler;
-import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+import xyz.thm.addon.utils.server.ServerReconnectService;
+import xyz.thm.addon.utils.server.ServerStatusHandler;
+import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
 import xyz.thm.addon.utils.THMUtils;
 
 import java.util.*;
@@ -3310,41 +3310,11 @@ public class ElytraRoute extends Module {
     }
 
     private void clearCursorAfterSwap() {
-        ItemStack cursor = mc.player.currentScreenHandler.getCursorStack();
-        if (cursor.isEmpty()) return;
-
-        int emptySlot = InvUtils.findEmpty().slot();
-        if (emptySlot != -1) {
-            mc.interactionManager.clickSlot(
-                mc.player.currentScreenHandler.syncId,
-                SlotUtils.indexToId(emptySlot),
-                0,
-                SlotActionType.PICKUP,
-                mc.player
-            );
-            if (mc.player.currentScreenHandler.getCursorStack().isEmpty()) return;
-        }
-
-        InvUtils.dropHand();
+        if (!InventoryManager.parkCursor()) InvUtils.dropHand();
     }
 
     private boolean clearCursorStackToEmptySlot() {
-        if (mc.player == null || mc.player.currentScreenHandler == null) return false;
-        ItemStack cursor = mc.player.currentScreenHandler.getCursorStack();
-        if (cursor.isEmpty()) return true;
-
-        int emptySlot = InvUtils.findEmpty().slot();
-        if (emptySlot == -1) return false;
-
-        mc.interactionManager.clickSlot(
-            mc.player.currentScreenHandler.syncId,
-            SlotUtils.indexToId(emptySlot),
-            0,
-            SlotActionType.PICKUP,
-            mc.player
-        );
-
-        return mc.player.currentScreenHandler.getCursorStack().isEmpty();
+        return InventoryManager.parkCursor();
     }
 
     private boolean hasUnusableWornElytra() {

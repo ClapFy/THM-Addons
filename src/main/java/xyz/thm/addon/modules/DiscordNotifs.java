@@ -82,14 +82,6 @@ public class DiscordNotifs extends Module
         .build()
     );
 
-    private final Setting<Boolean> queue = sgGeneral.add(new BoolSetting.Builder()
-        .name("2b2t-queue")
-        .description("If your position in queue should be logged.")
-        .defaultValue(false)
-        .visible(() -> !logAll.get())
-        .build()
-    );
-
     private final Setting<Boolean> whisper = sgGeneral.add(new BoolSetting.Builder()
         .name("whisper")
         .description("If whispers should be logged.")
@@ -233,10 +225,6 @@ public class DiscordNotifs extends Module
             sendWebhookMessage(message);
         }
         else if (playerRange.get() && messageType.equals(MessageType.PLAYER_RANGE))
-        {
-            sendWebhookMessage(message);
-        }
-        else if (queue.get() && messageType.equals(MessageType.QUEUE))
         {
             sendWebhookMessage(message);
         }

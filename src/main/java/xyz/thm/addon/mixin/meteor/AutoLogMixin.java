@@ -21,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import xyz.thm.addon.modules.HighwayBuilderTHM;
 import xyz.thm.addon.modules.THMHwyMonitor;
-import xyz.thm.addon.utils.ServerReconnectService;
+import xyz.thm.addon.utils.server.ServerReconnectService;
 
 @Mixin(value = AutoLog.class, remap = false)
 public class AutoLogMixin {

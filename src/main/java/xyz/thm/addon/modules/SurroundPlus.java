@@ -41,7 +41,6 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.math.*;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.mixin.accessor.ExplosionS2CPacketAccessor;
-import xyz.thm.addon.utils.PacketPlaceUtils;
 import xyz.thm.addon.utils.PlacementUtils;
 
 import java.util.*;
@@ -399,7 +398,7 @@ public class SurroundPlus extends Module {
 
     private boolean placeBlock(BlockPos pos, FindItemResult item) {
         if (packet.get()) {
-            if (!PacketPlaceUtils.placeBlockPacket(pos, item, rotate.get(), 50, airplace.get())) return false;
+            if (!PlacementUtils.placeBlockPacket(pos, item, rotate.get(), 50, airplace.get())) return false;
             renderMap.put(pos, System.currentTimeMillis());
             packetPlacedAt.put(pos, System.currentTimeMillis());
             return true;
@@ -414,7 +413,7 @@ public class SurroundPlus extends Module {
 
         // Airplace fallback for normal mode: no adjacent face found, send packet directly
         if (airplace.get() && PlacementUtils.getPlaceSide(pos) == null && BlockUtils.canPlace(pos)) {
-            if (PacketPlaceUtils.placeBlockPacket(pos, item, rotate.get(), 50, true)) {
+            if (PlacementUtils.placeBlockPacket(pos, item, rotate.get(), 50, true)) {
                 renderMap.put(pos, System.currentTimeMillis());
                 packetPlacedAt.put(pos, System.currentTimeMillis());
                 return true;

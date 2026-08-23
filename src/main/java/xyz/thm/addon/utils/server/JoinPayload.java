@@ -4,7 +4,7 @@
  * By using this code you agree to the license terms and to keep your repo public.
  */
 
-package xyz.thm.addon.utils;
+package xyz.thm.addon.utils.server;
 
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.codec.PacketCodec;

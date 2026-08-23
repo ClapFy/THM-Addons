@@ -24,6 +24,7 @@ import xyz.thm.addon.mixin.accessor.ChatHudAccessor;
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 public final class StatsScreenshotChatGuard {
@@ -66,7 +67,7 @@ public final class StatsScreenshotChatGuard {
     @EventHandler(priority = EventPriority.LOWEST)
     private void onReceiveMessage(ReceiveMessageEvent event) {
         if (captureDeadlines.isEmpty() || event.isCancelled()) return;
-        if (ChatMessageFilters.isLocalAddonOutput(event)) return;
+        if (isLocalAddonOutput(event.getMessage())) return;
 
         Text message = event.getMessage();
         if (message != null && bufferedMessages.size() < MAX_BUFFERED_MESSAGES) {
@@ -126,6 +127,23 @@ public final class StatsScreenshotChatGuard {
         if (dropped > 0) {
             ChatUtils.warningPrefix("THM", "Stats screenshot chat guard dropped %d excess server messages.", dropped);
         }
+    }
+
+    /** True for chat lines this addon printed itself — those aren't server output, so they don't need buffering. */
+    private static boolean isLocalAddonOutput(Text message) {
+        if (message == null) return false;
+
+        String trimmed = message.getString().stripLeading();
+        if (trimmed.isEmpty()) return false;
+
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        return lower.startsWith("[meteor]")
+            || lower.startsWith("[thm]")
+            || lower.startsWith("[kitbot frontend]")
+            || lower.startsWith("[thm highwaybuilder]")
+            || lower.startsWith("[thm hwy monitor]")
+            || lower.startsWith("[obsidian farmer thm]")
+            || lower.startsWith("[elytra route]");
     }
 
     private record BufferedMessage(Text message, MessageIndicator indicator) {

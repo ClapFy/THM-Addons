@@ -4,7 +4,7 @@
  * By using this code you agree to the license terms and to keep your repo public.
  */
 
-package xyz.thm.addon.utils;
+package xyz.thm.addon.utils.kitbot;
 
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;

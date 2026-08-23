@@ -4,7 +4,7 @@
  * By using this code you agree to the license terms and to keep your repo public.
  */
 
-package xyz.thm.addon.utils;
+package xyz.thm.addon.utils.kitbot;
 
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
@@ -12,7 +12,8 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
 import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+import xyz.thm.addon.utils.server.ServerStatusHandler;
+import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
 
 import java.util.Collection;
 import java.util.concurrent.CopyOnWriteArraySet;

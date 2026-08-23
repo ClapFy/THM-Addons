@@ -17,8 +17,8 @@ import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.player.PlayerEntity;
 import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.utils.KitbotAvailabilityTracker;
-import xyz.thm.addon.utils.KitbotChatCommandParser;
+import xyz.thm.addon.utils.kitbot.KitbotAvailabilityTracker;
+import xyz.thm.addon.utils.kitbot.KitbotChatCommandParser;
 
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArraySet;

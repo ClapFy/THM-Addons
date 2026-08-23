@@ -20,6 +20,9 @@ import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.network.packet.s2c.common.CommonPingS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.network.packet.s2c.play.UpdateSelectedSlotS2CPacket;
+import net.minecraft.screen.PlayerScreenHandler;
+import net.minecraft.screen.ScreenHandler;
+import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import xyz.thm.addon.accessor.InputAccessor;
 import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
@@ -215,6 +218,43 @@ public class InventoryManager {
     public int getCurrentPriority() {
         return currentPriority;
     }
+    /**
+     * Parks a stuck cursor stack in a free slot of whatever handler is open, so the next PICKUP picks up
+     * instead of placing. Prefers the main inventory and hotbar, falls back to free container slots;
+     * armor, offhand and the crafting grid are never used, and nothing is ever dropped.
+     *
+     * @return true if the cursor ended up empty
+     */
+    public static boolean parkCursor() {
+        if (mc.player == null || mc.interactionManager == null) return false;
+        ScreenHandler handler = mc.player.currentScreenHandler;
+        if (handler == null) return false;
+        ItemStack cursor = handler.getCursorStack();
+        if (cursor.isEmpty()) return true;
+
+        boolean playerScreen = handler instanceof PlayerScreenHandler;
+        // main inventory + hotbar: in a container handler those are always the last 36 slots,
+        // in the player handler they are 9..44 (the offhand sits behind them at 45).
+        int invStart = playerScreen ? 9 : handler.slots.size() - 36;
+        int invEnd = playerScreen ? 45 : handler.slots.size();
+
+        if (!parkCursorIn(handler, cursor, invStart, invEnd) && !playerScreen) {
+            parkCursorIn(handler, cursor, 0, Math.max(0, handler.slots.size() - 36));
+        }
+
+        return handler.getCursorStack().isEmpty();
+    }
+
+    private static boolean parkCursorIn(ScreenHandler handler, ItemStack cursor, int start, int end) {
+        for (int i = start; i < end; i++) {
+            Slot slot = handler.getSlot(i);
+            if (!slot.getStack().isEmpty() || !slot.canInsert(cursor)) continue;
+            mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.PICKUP, mc.player);
+            return true;
+        }
+        return false;
+    }
+
     public static int getBestWeaponSlot() {
         float bestDamage = 0.0f;
         int bestSlot = -1;

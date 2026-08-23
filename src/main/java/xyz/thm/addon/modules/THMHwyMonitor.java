@@ -38,9 +38,9 @@ import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.chunk.ChunkStatus;
 import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.utils.ServerReconnectService;
-import xyz.thm.addon.utils.ServerStatusHandler;
-import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+import xyz.thm.addon.utils.server.ServerReconnectService;
+import xyz.thm.addon.utils.server.ServerStatusHandler;
+import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
 import xyz.thm.addon.utils.ThmMembers;
 
 import java.lang.reflect.Field;

@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import xyz.thm.addon.utils.WebpUtil;
+import xyz.thm.addon.utils.webp.Vp8LDecoder;
 
 import java.nio.ByteBuffer;
 
@@ -21,7 +21,7 @@ public abstract class NativeImageWebpMixin {
 
     @Inject(method = "read(Lnet/minecraft/client/texture/NativeImage$Format;Ljava/nio/ByteBuffer;)Lnet/minecraft/client/texture/NativeImage;", at = @At("HEAD"), cancellable = true)
     private static void thm$readWebp(NativeImage.Format format, ByteBuffer buffer, CallbackInfoReturnable<NativeImage> cir) {
-        NativeImage decoded = WebpUtil.tryDecode(format, buffer);
+        NativeImage decoded = Vp8LDecoder.tryDecode(format, buffer);
         if (decoded != null) cir.setReturnValue(decoded);
     }
 }

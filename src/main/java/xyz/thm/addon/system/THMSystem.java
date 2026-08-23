@@ -19,7 +19,7 @@ import xyz.thm.addon.settings.StringMultiSelect;
 import xyz.thm.addon.shaders.ShaderManager;
 import xyz.thm.addon.utils.APIUtils;
 import xyz.thm.addon.utils.CapeManager;
-import xyz.thm.addon.utils.KitbotChatRouter;
+import xyz.thm.addon.utils.kitbot.KitbotChatRouter;
 import xyz.thm.addon.utils.ThmMembers;
 import xyz.thm.addon.waveycapes.CapeStyle;
 import xyz.thm.addon.waveycapes.WaveyCapesConfig;

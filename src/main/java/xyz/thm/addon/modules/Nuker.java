@@ -49,7 +49,6 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 import org.joml.Vector3d;
 import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
-import xyz.thm.addon.utils.Enums;
 import xyz.thm.addon.utils.InventoryManager;
 import xyz.thm.addon.utils.RangeUtils;
 
@@ -107,7 +106,7 @@ public class Nuker extends Module {
     private final Setting<Boolean> interact = sgGeneral.add(new BoolSetting.Builder().name("interact").description("Interacts with the block instead of mining.").defaultValue(false).build());
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder().name("rotate").description("Rotates server-side to the block being mined.").defaultValue(true).build());
 
-    private final Setting<Enums.NukerSwapModes> swapMode = sgGeneral.add(new EnumSetting.Builder<Enums.NukerSwapModes>().name("swap-mode").description("How Nuker swaps to the best tool.").defaultValue(Enums.NukerSwapModes.None).build());
+    private final Setting<NukerSwapModes> swapMode = sgGeneral.add(new EnumSetting.Builder<NukerSwapModes>().name("swap-mode").description("How Nuker swaps to the best tool.").defaultValue(NukerSwapModes.None).build());
     private final Setting<Boolean> avoidLiquidContact = sgGeneral.add(new BoolSetting.Builder().name("avoid-liquid-contact").description("Skips mining blocks that are touching water or lava.").defaultValue(false).build());
     private final Setting<Boolean> mineBedrock = sgGeneral.add(new BoolSetting.Builder().name("mine-bedrock").description("Allows Nuker to mine bedrock.").defaultValue(false).build());
     private final Setting<Double> bedrockRange = sgGeneral.add(new DoubleSetting.Builder().name("bedrock-range").description("Range for bedrock mining.").defaultValue(10.0).min(0.0).sliderRange(0.0, 20.0).visible(mineBedrock::get).build());
@@ -174,7 +173,7 @@ public class Nuker extends Module {
         normalMining = null;
         packetMining = null;
         activeBedrockPos = null;
-        if (swapMode.get() == Enums.NukerSwapModes.Silent) {
+        if (swapMode.get() == NukerSwapModes.Silent) {
             inventoryManager.syncToClient();
         }
     }
@@ -371,22 +370,22 @@ public class Nuker extends Module {
             return;
         }
 
-        boolean doInvSwap = swapMode.get() == Enums.NukerSwapModes.InventoryNormal
-            || swapMode.get() == Enums.NukerSwapModes.InventorySilent;
-        boolean invSwapSilent = swapMode.get() == Enums.NukerSwapModes.InventorySilent;
+        boolean doInvSwap = swapMode.get() == NukerSwapModes.InventoryNormal
+            || swapMode.get() == NukerSwapModes.InventorySilent;
+        boolean invSwapSilent = swapMode.get() == NukerSwapModes.InventorySilent;
 
-        if (swapMode.get() != Enums.NukerSwapModes.None) {
+        if (swapMode.get() != NukerSwapModes.None) {
             int bestSlot = doInvSwap
                 ? getBestToolSlotFull(mc.world.getBlockState(blockPos))
                 : getBestToolSlot(mc.world.getBlockState(blockPos));
 
-            if (swapMode.get() == Enums.NukerSwapModes.Normal) {
+            if (swapMode.get() == NukerSwapModes.Normal) {
                 int selected = ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot();
                 if (selected != bestSlot) {
                     ((PlayerInventoryAccessor) mc.player.getInventory()).setSelectedSlot(bestSlot);
                     mc.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(bestSlot));
                 }
-            } else if (swapMode.get() == Enums.NukerSwapModes.Silent) {
+            } else if (swapMode.get() == NukerSwapModes.Silent) {
                 int serverSlot = inventoryManager.getServerSlot();
                 if (serverSlot != bestSlot) {
                     inventoryManager.setSlotForced(bestSlot);
@@ -421,7 +420,7 @@ public class Nuker extends Module {
     private void tickSilentSwap() {
         if (silentSyncTicks > 0) {
             silentSyncTicks--;
-            if (silentSyncTicks == 0 && swapMode.get() == Enums.NukerSwapModes.Silent && !interact.get() && isActive() && inventoryManager.isDesynced()) {
+            if (silentSyncTicks == 0 && swapMode.get() == NukerSwapModes.Silent && !interact.get() && isActive() && inventoryManager.isDesynced()) {
                 inventoryManager.syncToClient();
             }
         }
@@ -750,5 +749,13 @@ public class Nuker extends Module {
         int dY = Math.abs(y2 - y1);
         int dZ = Math.abs(z2 - z1);
         return Math.max(Math.max(dX, dY), dZ);
+    }
+
+    public enum NukerSwapModes {
+        None,
+        Normal,
+        Silent,
+        InventoryNormal,
+        InventorySilent
     }
 }

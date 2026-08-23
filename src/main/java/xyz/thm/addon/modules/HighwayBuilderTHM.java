@@ -101,7 +101,9 @@ import xyz.thm.addon.accessor.StuckEatingRetryBridge;
 import xyz.thm.addon.accessor.StuckEatingRetryResult;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.*;
-import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+import xyz.thm.addon.utils.kitbot.*;
+import xyz.thm.addon.utils.server.*;
+import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -6320,7 +6322,7 @@ public class HighwayBuilderTHM extends Module {
         if (!BlockUtils.canPlaceBlock(target, true, blockItem.getBlock())) return false;
 
         FindItemResult item = new FindItemResult(slot, stack.getCount());
-        boolean placed = PacketPlaceUtils.placeBlockPacket(target, item, false, 0, true, silentForwardPlaceSwap.get());
+        boolean placed = PlacementUtils.placeBlockPacket(target, item, false, 0, true, silentForwardPlaceSwap.get());
         if (!placed) return false;
 
         safetyPlacedThisTick = true;
@@ -6760,14 +6762,14 @@ public class HighwayBuilderTHM extends Module {
         switch (mode) {
             case Never -> {
                 if (side == null) return false;
-                placed = PacketPlaceUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, false, swapBack);
+                placed = PlacementUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, false, swapBack);
             }
-            case Always -> placed = PacketPlaceUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, true, swapBack);
+            case Always -> placed = PlacementUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, true, swapBack);
             case Smart -> {
                 if (side != null) {
-                    placed = PacketPlaceUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, false, swapBack);
+                    placed = PlacementUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, false, swapBack);
                 } else {
-                    placed = PacketPlaceUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, true, swapBack);
+                    placed = PlacementUtils.placeBlockPacket(pos, item, getRotateForMine(), 0, true, swapBack);
                 }
             }
             default -> placed = false;

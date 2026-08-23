@@ -4,7 +4,7 @@
  * By using this code you agree to the license terms and to keep your repo public.
  */
 
-package xyz.thm.addon.utils;
+package xyz.thm.addon.utils.server;
 
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
@@ -21,7 +21,7 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.text.Text;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.system.THMSystem;
-import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
 
 import java.util.HashMap;
 import java.util.Locale;

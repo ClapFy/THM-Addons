@@ -4,7 +4,7 @@
  * By using this code you agree to the license terms and to keep your repo public.
  */
 
-package xyz.thm.addon.utils;
+package xyz.thm.addon.utils.server;
 
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
@@ -57,8 +57,8 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  *
  * <p><b>API usage</b>
  * <pre>{@code
- * import xyz.thm.addon.utils.ServerStatusHandler;
- * import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+ * import xyz.thm.addon.utils.server.ServerStatusHandler;
+ * import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
  *
  * private final ServerStatusHandler status = ServerStatusHandler.getInstance();
  * }</pre>

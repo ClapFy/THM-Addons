@@ -19,8 +19,8 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import xyz.thm.addon.utils.KitbotChatCommandParser;
-import xyz.thm.addon.utils.KitbotChatRouter;
+import xyz.thm.addon.utils.kitbot.KitbotChatCommandParser;
+import xyz.thm.addon.utils.kitbot.KitbotChatRouter;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;

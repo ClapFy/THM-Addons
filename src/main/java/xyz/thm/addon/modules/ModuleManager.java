@@ -15,8 +15,8 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.combat.KillAura;
 import meteordevelopment.orbit.EventHandler;
 import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.utils.ServerStatusHandler;
-import xyz.thm.addon.utils.ServerStatusHandler.ServerState;
+import xyz.thm.addon.utils.server.ServerStatusHandler;
+import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

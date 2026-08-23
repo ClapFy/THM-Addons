@@ -44,7 +44,7 @@ import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.interfaces.LogoutSpotsPoseData;
 import xyz.thm.addon.mixin.accessor.LogoutSpotsAccessor;
 import xyz.thm.addon.mixin.accessor.LogoutSpotsEntryAccessor;
-import xyz.thm.addon.utils.PacketPlaceUtils;
+import xyz.thm.addon.utils.PlacementUtils;
 
 import java.util.*;
 
@@ -585,7 +585,7 @@ public class AutoTrapPlus extends Module {
 
     private boolean placeBlock(BlockPos pos, FindItemResult block) {
         if (packet.get()) {
-            return PacketPlaceUtils.placeBlockPacket(pos, block, rotate.get(), 50);
+            return PlacementUtils.placeBlockPacket(pos, block, rotate.get(), 50);
         }
         return BlockUtils.place(pos, block, rotate.get(), 50, true);
     }

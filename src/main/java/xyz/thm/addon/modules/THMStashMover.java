@@ -67,7 +67,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.chunk.ChunkStatus;
 import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.utils.ServerStatusHandler;
+import xyz.thm.addon.utils.server.ServerStatusHandler;
 import xyz.thm.addon.utils.THMStashMoverErrorLog;
 import xyz.thm.addon.utils.ThmMembers;
 
