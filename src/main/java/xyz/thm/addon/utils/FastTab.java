@@ -7,8 +7,6 @@
 package xyz.thm.addon.utils;
 
 import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.systems.modules.Modules;
-import meteordevelopment.meteorclient.systems.modules.render.BetterTab;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.text.Text;
 
@@ -27,8 +25,9 @@ public final class FastTab {
     // would only ever be moved by someone who wants it slower, which is what the toggle is for.
     private static final long TTL_MS = 200;
 
-    /** The {@code fast-tab} toggle, created by {@code BetterTabMixin} so it lives on Meteor's own module. */
+    /** The toggles, created by {@code BetterTabMixin} so they live on Meteor's own module. */
     public static Setting<Boolean> enabled;
+    public static Setting<Boolean> heads;
 
     private static final Map<UUID, Text> names = new HashMap<>();
     private static long namesAt;
@@ -37,10 +36,15 @@ public final class FastTab {
 
     private FastTab() {}
 
+    // deliberately not gated on Better Tab being active: the settings live on that module for lack of a
+    // better home, but the cost they cut is vanilla's, and it is there whether or not Better Tab is on
     public static boolean on() {
-        if (enabled == null || !enabled.get()) return false;
-        BetterTab tab = Modules.get().get(BetterTab.class);
-        return tab != null && tab.isActive();
+        return enabled != null && enabled.get();
+    }
+
+    /** True while the tab list should skip drawing player heads. */
+    public static boolean hideHeads() {
+        return heads != null && !heads.get();
     }
 
     /** The cached entry list, or null when it is stale or the optimization is off. */

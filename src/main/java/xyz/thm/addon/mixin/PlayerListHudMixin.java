@@ -6,9 +6,14 @@
 
 package xyz.thm.addon.mixin;
 
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.PlayerSkinDrawer;
 import net.minecraft.client.gui.hud.PlayerListHud;
 import net.minecraft.client.network.PlayerListEntry;
+import net.minecraft.client.world.ClientWorld;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -17,6 +22,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import xyz.thm.addon.utils.FastTab;
 
 import java.util.List;
+import java.util.UUID;
 
 @Mixin(PlayerListHud.class)
 public class PlayerListHudMixin {
@@ -38,5 +44,20 @@ public class PlayerListHudMixin {
     private Text thmAddon$cachedName(PlayerListHud hud, PlayerListEntry entry) {
         Text cached = FastTab.name(entry);
         return cached != null ? cached : FastTab.store(entry, hud.getPlayerName(entry));
+    }
+
+    // Every head is two textured quads with a texture nothing else in the frame uses, so the GUI renderer
+    // has to break its batch per player - a thousand-entry tab list is a thousand extra draw calls, which
+    // is what actually costs the framerate. Caching cannot help with that; not drawing them can.
+    @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/PlayerSkinDrawer;draw(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/util/Identifier;IIIZZI)V"))
+    private void thmAddon$skipHead(DrawContext context, Identifier texture, int x, int y, int size, boolean hat, boolean upsideDown, int color) {
+        if (!FastTab.hideHeads()) PlayerSkinDrawer.draw(context, texture, x, y, size, hat, upsideDown, color);
+    }
+
+    // this lookup is a linear scan of the loaded players, per tab entry, and its only use is deciding
+    // whether the head is drawn upside down - dead work once the head isn't drawn at all
+    @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/world/ClientWorld;getPlayerByUuid(Ljava/util/UUID;)Lnet/minecraft/entity/player/PlayerEntity;"))
+    private PlayerEntity thmAddon$skipUpsideDownLookup(ClientWorld world, UUID uuid) {
+        return FastTab.hideHeads() ? null : world.getPlayerByUuid(uuid);
     }
 }

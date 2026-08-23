@@ -44,6 +44,13 @@ public class BetterTabMixin extends Module {
             .defaultValue(true)
             .build()
         );
+
+        FastTab.heads = settings.getDefaultGroup().add(new BoolSetting.Builder()
+            .name("tab-heads")
+            .description("Draw player heads in the tab list (off = big FPS win).")
+            .defaultValue(false)
+            .build()
+        );
     }
 
     @Inject(method = "getPlayerName", at = @At("RETURN"), cancellable = true)
