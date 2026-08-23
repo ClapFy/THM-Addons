@@ -68,6 +68,7 @@
     "meteor.TimerMixin"
   ],
   "client": [
-    "InventoryScreenMixin"
+    "InventoryScreenMixin",
+    "PlayerListHudMixin"
   ]
 }

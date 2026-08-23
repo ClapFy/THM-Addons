@@ -6,6 +6,7 @@
 
 package xyz.thm.addon.mixin.meteor;
 
+import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.modules.Category;
@@ -20,8 +21,10 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import xyz.thm.addon.system.THMSystem;
+import xyz.thm.addon.utils.FastTab;
 import xyz.thm.addon.utils.ThmMembers;
 
 @Mixin(value = BetterTab.class, priority = 1001)
@@ -32,6 +35,16 @@ public class BetterTabMixin extends Module {
 
     @Shadow @Final private Setting<Boolean> self;
     @Shadow @Final private Setting<Boolean> friends;
+
+    @Inject(method = "<init>", at = @At("TAIL"))
+    private void thmAddon$addFastTabSetting(CallbackInfo ci) {
+        FastTab.enabled = settings.getDefaultGroup().add(new BoolSetting.Builder()
+            .name("fast-tab")
+            .description("Caches the tab list to stop FPS drops with many players.")
+            .defaultValue(true)
+            .build()
+        );
+    }
 
     @Inject(method = "getPlayerName", at = @At("RETURN"), cancellable = true)
     private void thmAddon$highlightThmMembers(PlayerListEntry entry, CallbackInfoReturnable<Text> cir) {
