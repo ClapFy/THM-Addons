@@ -19,6 +19,7 @@ import xyz.thm.addon.settings.StringMultiSelect;
 import xyz.thm.addon.shaders.ShaderManager;
 import xyz.thm.addon.utils.APIUtils;
 import xyz.thm.addon.utils.CapeManager;
+import xyz.thm.addon.utils.Homes;
 import xyz.thm.addon.utils.kitbot.KitbotChatRouter;
 import xyz.thm.addon.utils.ThmMembers;
 import xyz.thm.addon.waveycapes.CapeStyle;
@@ -38,11 +39,14 @@ public class THMSystem extends System<THMSystem> {
 
     // Group creation order = display order in the THM tab. Appearance first (brand colors), API
     // Token last (rarely touched).
-    private final SettingGroup sgAppearance = settings.createGroup("Appearance");
+    // Display order in the THM tab is the createGroup call order: the things you touch most first,
+    // the one-time setup (token) last.
     private final SettingGroup sgGeneral = settings.createGroup("General");
-    private final SettingGroup sgProfiles = settings.createGroup("Highway Profiles");
-    private final SettingGroup sgPvp = settings.createGroup("PVP");
+    private final SettingGroup sgAppearance = settings.createGroup("Appearance");
     private final SettingGroup sgRender = settings.createGroup("THM Rendering");
+    private final SettingGroup sgPvp = settings.createGroup("PVP");
+    private final SettingGroup sgProfiles = settings.createGroup("Highway Profiles");
+    private final SettingGroup sgHomes = settings.createGroup("Homes");
     private final SettingGroup sgKitbot = settings.createGroup("KitBot");
     private final SettingGroup sgPrefix = settings.createGroup("API Token");
 
@@ -80,21 +84,6 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    // API Token Settings
-    private final Setting<String> apiToken = sgPrefix.add(new StringSetting.Builder()
-        .name("api-token")
-        .description("Your personal API token (UUID) - sent with every status/statistics/cape request.")
-        .defaultValue("")
-        .build()
-    );
-
-    private final Setting<String> crackedPassword = sgPrefix.add(new StringSetting.Builder()
-        .name("cracked-password")
-        .description("Password used for cracked-account reconnect /login.")
-        .defaultValue("")
-        .build()
-    );
-
     // Highway Profiles Settings
     public final Setting<Mode> mode = sgProfiles.add(new EnumSetting.Builder<Mode>()
         .name("profile")
@@ -129,32 +118,11 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    public final Setting<Boolean> highlightInTab = sgRender.add(new BoolSetting.Builder()
-        .name("highlight-in-tab")
-        .description("Highlights THM members in the player tab list.")
-        .defaultValue(false)
-        .build()
-    );
-
+    // THM Rendering Settings - nametags first, then the tab list, then what colors both of them use
     public final Setting<Boolean> highlightNametags = sgRender.add(new BoolSetting.Builder()
         .name("highlight-nametags")
         .description("Highlights THM members in nametags.")
         .defaultValue(false)
-        .build()
-    );
-
-    public final Setting<Boolean> useRankColor = sgRender.add(new BoolSetting.Builder()
-        .name("use-rank-color")
-        .description("Use the member's rank color instead of a single highlight color.")
-        .defaultValue(true)
-        .build()
-    );
-
-    public final Setting<meteordevelopment.meteorclient.utils.render.color.SettingColor> highlightColor = sgRender.add(new ColorSetting.Builder()
-        .name("highlight-color")
-        .description("Highlight color for THM members.")
-        .defaultValue(new meteordevelopment.meteorclient.utils.render.color.SettingColor(255, 217, 94, 255))
-        .visible(() -> !useRankColor.get())
         .build()
     );
 
@@ -165,18 +133,34 @@ public class THMSystem extends System<THMSystem> {
         .build()
     );
 
-    public final Setting<Boolean> kitbotChatRouterEnabled = sgKitbot.add(new BoolSetting.Builder()
-        .name("kitbot-chat-router")
-        .description("Routes recognized $kitbot chat commands through Kitbot Frontend.")
-        .defaultValue(true)
-        .onChanged(KitbotChatRouter::setEnabled)
-        .build()
-    );
     public final Setting<Type> nametagType = sgRender.add(new EnumSetting.Builder<Type>()
-        .name("Icon Type")
-        .description("Select the nametag rendering style")
+        .name("nametag-icon-type")
+        .description("Which nametag icon style to use.")
         .defaultValue(Type.TransparentWhite)
         .visible(showNametagIcon::get)
+        .build()
+    );
+
+    public final Setting<Boolean> highlightInTab = sgRender.add(new BoolSetting.Builder()
+        .name("highlight-in-tab")
+        .description("Highlights THM members in the player tab list.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Boolean> useRankColor = sgRender.add(new BoolSetting.Builder()
+        .name("use-rank-color")
+        .description("Use the member's rank color instead of a single highlight color.")
+        .defaultValue(true)
+        .visible(() -> highlightNametags.get() || highlightInTab.get())
+        .build()
+    );
+
+    public final Setting<meteordevelopment.meteorclient.utils.render.color.SettingColor> highlightColor = sgRender.add(new ColorSetting.Builder()
+        .name("highlight-color")
+        .description("Highlight color for THM members.")
+        .defaultValue(new meteordevelopment.meteorclient.utils.render.color.SettingColor(255, 217, 94, 255))
+        .visible(() -> !useRankColor.get() && (highlightNametags.get() || highlightInTab.get()))
         .build()
     );
 
@@ -194,6 +178,52 @@ public class THMSystem extends System<THMSystem> {
             if (!hasApiToken()) return;
             APIUtils.postCapeSelection(username, id, getApiToken());
         })
+        .build()
+    );
+
+    // Homes Settings - see xyz.thm.addon.utils.Homes
+    public final Setting<Boolean> homesGui = sgHomes.add(new BoolSetting.Builder()
+        .name("homes-gui")
+        .description("Turns the /homes chat list into a clickable screen.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Homes.GuiStyle> homesGuiStyle = sgHomes.add(new EnumSetting.Builder<Homes.GuiStyle>()
+        .name("homes-gui-style")
+        .description("Which look the homes screen uses.")
+        .defaultValue(Homes.GuiStyle.Minecraft)
+        .visible(homesGui::get)
+        .build()
+    );
+
+    public final Setting<Boolean> homesAutoOpen = sgHomes.add(new BoolSetting.Builder()
+        .name("homes-auto-open")
+        .description("Opens the screen when /homes is answered.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> kitbotChatRouterEnabled = sgKitbot.add(new BoolSetting.Builder()
+        .name("kitbot-chat-router")
+        .description("Routes recognized $kitbot chat commands through Kitbot Frontend.")
+        .defaultValue(true)
+        .onChanged(KitbotChatRouter::setEnabled)
+        .build()
+    );
+
+    // API Token Settings
+    private final Setting<String> apiToken = sgPrefix.add(new StringSetting.Builder()
+        .name("api-token")
+        .description("Your personal API token (UUID) - sent with every status/statistics/cape request.")
+        .defaultValue("")
+        .build()
+    );
+
+    private final Setting<String> crackedPassword = sgPrefix.add(new StringSetting.Builder()
+        .name("cracked-password")
+        .description("Password used for cracked-account reconnect /login.")
+        .defaultValue("")
         .build()
     );
 
