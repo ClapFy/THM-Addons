@@ -66,5 +66,8 @@
     "meteor.ThmMeteorWidgetMixin",
     "meteor.ThmMeteorWindowMixin",
     "meteor.TimerMixin"
+  ],
+  "client": [
+    "InventoryScreenMixin"
   ]
 }

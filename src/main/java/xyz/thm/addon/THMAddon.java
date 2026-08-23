@@ -35,6 +35,8 @@ import xyz.thm.addon.hud.*;
 import xyz.thm.addon.modules.*;
 import xyz.thm.addon.system.THMTab;
 import xyz.thm.addon.utils.*;
+import xyz.thm.addon.utils.kitbot.*;
+import xyz.thm.addon.utils.server.*;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -210,6 +212,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Modules.get().add(new FlightBypass());
         Modules.get().add(new KitbotFrontend());
         Modules.get().add(new THMStashMover());
+        Modules.get().add(new Loadouts());
         if (BaritoneUtils.IS_AVAILABLE) {
             LOG.info("Baritone detected. Enabling Baritone-dependent THM modules.");
             Modules.get().add(new THMHwyMonitor());
@@ -226,6 +229,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Commands.add(new DesyncCommand());
         Commands.add(new UUIDCommand());
         Commands.add(new THMStashMoverCommand());
+        Commands.add(new Loadout());
 
 
         //Hud
