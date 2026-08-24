@@ -14,6 +14,7 @@ import net.minecraft.command.CommandSource;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 public class UUIDCommand extends Command {
@@ -123,6 +124,40 @@ public class UUIDCommand extends Command {
                         info("Only matches if server runs in offline/cracked mode. Calculates it based on the servers algorithm");
                         return SINGLE_SUCCESS;
                     })
+            )
+        );
+        builder.then(
+            literal("info").then(
+                argument("name", StringArgumentType.string())
+                    .suggests((context, suggestionsBuilder) -> {
+                        String remaining = suggestionsBuilder.getRemaining().toLowerCase();
+                        getTabPlayerNames().stream()
+                            .filter(name -> name.toLowerCase().startsWith(remaining))
+                            .forEach(suggestionsBuilder::suggest);
+                        return suggestionsBuilder.buildFuture();
+                    })
+                    .executes(context -> {
+                        String name = StringArgumentType.getString(context, "name");
+                        if (mc.getNetworkHandler() == null) return SINGLE_SUCCESS;
+
+                        PlayerListEntry entry = mc.getNetworkHandler().getPlayerList()
+                            .stream()
+                            .filter(e -> e.getProfile().name().equalsIgnoreCase(name))
+                            .findFirst()
+                            .orElse(null);
+
+                        if (entry == null) {
+                            warning("Player '" + name + "' not found in player list.");
+                        } else {
+                            if (Objects.equals(entry.getProfile().id().toString(), offlineUuid(name).toString())) {
+                                info(name + "is a Cracked account and has the UUID: " + entry.getProfile().id() + "assigned by the server");
+                            } else {
+                                info(name + "is a Premium account and has the UUID: " + entry.getProfile().id());
+                            }
+                        }
+                        return SINGLE_SUCCESS;
+                    })
+
             )
         );
     }
