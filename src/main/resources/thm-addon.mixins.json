@@ -68,6 +68,7 @@
     "meteor.TimerMixin"
   ],
   "client": [
+    "BoatEatMixin",
     "InventoryScreenMixin",
     "PlayerListHudMixin"
   ]

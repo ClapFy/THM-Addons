@@ -96,10 +96,12 @@ public class UUIDCommand extends Command {
                     return SINGLE_SUCCESS;
                 }
 
-                info("Players: " + total);
-                info("Cracked: " + cracked + " (" + (cracked * 100 / total) + "%)");
-                info("Premium: " + premium + " (" + (premium * 100 / total) + "%)");
-                if (cracked > 0) info("Cracked accounts: " + crackedNames);
+                // Meteor runs info()'s first arg through String.format and treats (...) as a
+                // formatting tag, so build the line and pass it as an argument instead.
+                info("%s", "Players: " + total);
+                info("%s", "Cracked: " + cracked + " - " + (cracked * 100 / total) + "%");
+                info("%s", "Premium: " + premium + " - " + (premium * 100 / total) + "%");
+                if (cracked > 0) info("%s", "Cracked accounts: " + crackedNames);
                 return SINGLE_SUCCESS;
             })
         );
