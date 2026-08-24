@@ -21,6 +21,10 @@ public class UUIDCommand extends Command {
         super("uuid", "Returns a players uuid.");
     }
 
+    private static UUID offlineUuid(String name) {
+        return UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
+    }
+
     private List<String> getTabPlayerNames() {
         if (mc.getNetworkHandler() == null) return List.of();
         return mc.getNetworkHandler().getPlayerList()
@@ -69,6 +73,37 @@ public class UUIDCommand extends Command {
             )
         );
 
+        // .uuid stats -> zaehlt cracked vs premium anhand der offline-UUID
+        builder.then(
+            literal("stats").executes(context -> {
+                if (mc.getNetworkHandler() == null) return SINGLE_SUCCESS;
+
+                int cracked = 0, premium = 0;
+                StringBuilder crackedNames = new StringBuilder();
+
+                for (PlayerListEntry entry : mc.getNetworkHandler().getPlayerList()) {
+                    String name = entry.getProfile().name();
+                    if (offlineUuid(name).equals(entry.getProfile().id())) {
+                        cracked++;
+                        if (crackedNames.length() > 0) crackedNames.append(", ");
+                        crackedNames.append(name);
+                    } else premium++;
+                }
+
+                int total = cracked + premium;
+                if (total == 0) {
+                    warning("Player list is empty.");
+                    return SINGLE_SUCCESS;
+                }
+
+                info("Players: " + total);
+                info("Cracked: " + cracked + " (" + (cracked * 100 / total) + "%)");
+                info("Premium: " + premium + " (" + (premium * 100 / total) + "%)");
+                if (cracked > 0) info("Cracked accounts: " + crackedNames);
+                return SINGLE_SUCCESS;
+            })
+        );
+
         // .uuid calculate <name> -> berechnet Offline/Cracked UUID
         builder.then(
             literal("calculate").then(
@@ -82,10 +117,7 @@ public class UUIDCommand extends Command {
                     })
                     .executes(context -> {
                         String name = StringArgumentType.getString(context, "name");
-                        UUID offlineUuid = UUID.nameUUIDFromBytes(
-                            ("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8)
-                        );
-                        info("Offline UUID for '" + name + "': " + offlineUuid);
+                        info("Offline UUID for '" + name + "': " + offlineUuid(name));
                         info("Only matches if server runs in offline/cracked mode. Calculates it based on the servers algorithm");
                         return SINGLE_SUCCESS;
                     })
