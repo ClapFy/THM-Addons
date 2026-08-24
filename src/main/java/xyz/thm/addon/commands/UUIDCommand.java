@@ -102,7 +102,7 @@ public class UUIDCommand extends Command {
                 info("%s", "Players: " + total);
                 info("%s", "Cracked: " + cracked + " - " + (cracked * 100 / total) + "%");
                 info("%s", "Premium: " + premium + " - " + (premium * 100 / total) + "%");
-                info("%s", premium + "Premium, " + cracked + "Cracked");
+                info("%s", premium + " Premium, " + cracked + " Cracked");
                 return SINGLE_SUCCESS;
             })
         );
