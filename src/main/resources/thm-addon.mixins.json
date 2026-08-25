@@ -60,6 +60,7 @@
     "meteor.NametagsMixin",
     "meteor.NoSlowMixin",
     "meteor.NotifierMixin",
+    "meteor.OffhandMixin",
     "meteor.ScaffoldMixin",
     "meteor.SpeedMixin",
     "meteor.ThmHeaderClickMixin",
