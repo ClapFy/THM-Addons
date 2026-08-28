@@ -349,7 +349,7 @@ public final class ThmMembers {
         if (rank.contains("king") || rank.contains("prince")
             || rank.contains("major") || rank.contains("chosen")) return Double.MAX_VALUE;
         return switch (rank) {
-            case "elite highway man" -> 500000;
+            case "mayor", "elite highway man" -> 500000;
             case "journeyman"        -> 300000;
             case "highway man"       -> 100000;
             case "apprentice"        -> 75000;
