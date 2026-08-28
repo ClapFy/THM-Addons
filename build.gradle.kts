@@ -368,6 +368,10 @@ tasks {
         from("LICENSE") {
             rename { "${it}_${inputs.properties["archivesName"]}" }
         }
+
+        manifest {
+            attributes("Main-Class" to "xyz.thm.addon.Main")
+        }
     }
 
     java {

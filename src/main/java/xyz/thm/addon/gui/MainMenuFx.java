@@ -100,8 +100,9 @@ public class MainMenuFx {
         if (!THMSystem.get().mainMenuParticles.get()) return;
 
         for (Particle p : particles) {
-            for (int[] pos : p.points) {
-                context.fill(pos[0], pos[1], pos[0] + 1, pos[1] + 1, thmColor());
+            for (double[] pos : p.points) {
+                int px = (int) pos[0], py = (int) pos[1];
+                context.fill(px, py, px + 1, py + 1, thmColor());
             }
         }
     }
@@ -188,7 +189,7 @@ public class MainMenuFx {
     private static class Particle {
         final int x, y;
         final int lifespan;
-        final List<int[]> points = new ArrayList<>();
+        final List<double[]> points = new ArrayList<>();
         int tick;
         long lastTick;
 
@@ -198,7 +199,9 @@ public class MainMenuFx {
             this.lifespan = RAND.nextInt(20);
             this.lastTick = System.currentTimeMillis();
             for (int j = 0; j < RAND.nextInt(10); j++) {
-                points.add(new int[] { x + RAND.nextInt(5) - 2, y + RAND.nextInt(5) - 2 });
+                double angle = RAND.nextDouble() * Math.PI * 2;
+                double radius = RAND.nextDouble() * 3;
+                points.add(new double[] { x + Math.cos(angle) * radius, y + Math.sin(angle) * radius });
             }
         }
 
@@ -214,8 +217,8 @@ public class MainMenuFx {
             }
 
             for (int i = 0; i < points.size(); i++) {
-                int[] pos = points.get(i);
-                points.set(i, new int[] { pos[0] + (pos[0] - x) / tick, pos[1] + (pos[1] - y) / tick });
+                double[] pos = points.get(i);
+                points.set(i, new double[] { pos[0] + (pos[0] - x) / tick, pos[1] + (pos[1] - y) / tick });
             }
             return false;
         }

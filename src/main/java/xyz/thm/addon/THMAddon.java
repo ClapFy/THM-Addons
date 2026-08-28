@@ -132,12 +132,17 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
 
             boolean hasDownload = !downloadUrls.isEmpty();
             msg.append(hasDownload
-                ? "Click OK to open the download page, or Cancel to just close."
+                ? "Click \"Download\" to open the download page, or \"No thanks\" to just close."
                 : "The game will now close.");
 
             String depList = missing.stream().map(RequiredMod::groupName).collect(Collectors.joining(", "));
             LOG.error("[THM Addon] Missing dependencies: {}", depList);
 
+            // ponytail: TinyFileDialogs (native GLFW popup), not javax.swing - Minecraft's client
+            // process runs with -Djava.awt.headless=true, so JOptionPane throws HeadlessException
+            // here (confirmed by crash log). Swing only works in Main.java's standalone double-click
+            // launch, which is a separate JVM without that flag. TinyFileDialogs can't set custom
+            // button captions, so "Download"/"No thanks" live in the message text instead.
             boolean openDownload = TinyFileDialogs.tinyfd_messageBox(
                 "THM Addon - Missing Dependencies",
                 msg.toString(),
