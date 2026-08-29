@@ -29,6 +29,7 @@ import java.util.function.Predicate;
 public class ItemPriorityListScreen extends WindowScreen {
     private final GenericSetting<ItemPriorityList> setting;
     private final List<Item> selected;
+    private final Predicate<Item> itemFilter;
 
     private WTable table;
     private String filterText = "";
@@ -38,6 +39,7 @@ public class ItemPriorityListScreen extends WindowScreen {
 
         this.setting = setting;
         this.selected = value.selected();
+        this.itemFilter = value.filter();
     }
 
     @Override
@@ -56,7 +58,8 @@ public class ItemPriorityListScreen extends WindowScreen {
     }
 
     private void initTable() {
-        Predicate<Item> notSelected = item -> item != Items.AIR && !selected.contains(item);
+        Predicate<Item> notSelected = item -> item != Items.AIR && !selected.contains(item)
+            && (itemFilter == null || itemFilter.test(item));
         Iterable<Item> left = SortingHelper.sort(Registries.ITEM, notSelected, this::names, filterText);
 
         Cell<WTable> leftCell = table.add(theme.table()).top();

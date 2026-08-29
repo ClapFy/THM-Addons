@@ -1083,7 +1083,7 @@ public class HighwayBuilderTHM extends Module {
     private final Setting<ItemPriorityList> foodTypes = sgInventory.add(new GenericSetting.Builder<ItemPriorityList>()
         .name("food-types")
         .description("Which food items count as restock food. Selection order sets priority — the item on top is preferred.")
-        .defaultValue(new ItemPriorityList())
+        .defaultValue(new ItemPriorityList(item -> item.getDefaultStack().contains(DataComponentTypes.FOOD)))
         .visible(() -> foodRestock.get() || foodManagement.get() != FoodManagement.None)
         .onChanged(this::handleFoodTypesChanged)
         .build()

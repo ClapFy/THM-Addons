@@ -20,16 +20,32 @@ import net.minecraft.util.Identifier;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 
 // Like StringMultiSelect, but the selection order IS the value — index 0 is highest priority.
 // Its screen shows the selected column in list order with Up/Down buttons instead of sorting it
 // alphabetically, so the user can rank items instead of just picking them.
 public class ItemPriorityList implements IGeneric<ItemPriorityList> {
     private final List<Item> selected = new ArrayList<>();
+    private final Predicate<Item> filter;
+
+    public ItemPriorityList() {
+        this(null);
+    }
+
+    /** filter, if non-null, limits which items the picker's left (candidate) column offers. */
+    public ItemPriorityList(Predicate<Item> filter) {
+        this.filter = filter;
+    }
 
     /** Live, mutable backing list — index 0 is highest priority. The settings screen edits this directly. */
     public List<Item> selected() {
         return selected;
+    }
+
+    /** Null means no restriction — every item is offered. */
+    public Predicate<Item> filter() {
+        return filter;
     }
 
     @Override
@@ -46,7 +62,7 @@ public class ItemPriorityList implements IGeneric<ItemPriorityList> {
 
     @Override
     public ItemPriorityList copy() {
-        ItemPriorityList copy = new ItemPriorityList();
+        ItemPriorityList copy = new ItemPriorityList(filter);
         copy.selected.addAll(selected);
         return copy;
     }
