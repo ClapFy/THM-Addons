@@ -41,6 +41,7 @@ import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.tag.FluidTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.world.WorldEvents;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
@@ -399,9 +400,16 @@ public class Nuker extends Module {
         Direction dir = clickFace(blockPos);
 
         if (packetMine.get()) {
+            BlockState state = mc.world.getBlockState(blockPos);
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, blockPos, dir));
             if (swing.get()) mc.player.swingHand(Hand.MAIN_HAND);
             mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, blockPos, dir));
+            // Insta-mineable blocks are guaranteed to break — remove client-side now instead of
+            // waiting a full ping round-trip for the server's block update packet.
+            if (BlockUtils.canInstaBreak(blockPos)) {
+                mc.world.syncWorldEvent(WorldEvents.BLOCK_BROKEN, blockPos, Block.getRawIdFromState(state));
+                mc.world.setBlockState(blockPos, Blocks.AIR.getDefaultState(), 3);
+            }
         } else if (BlockUtils.canBreak(blockPos, mc.world.getBlockState(blockPos))) {
             // ponytail: Meteor's BlockUtils.breakBlock picks its own face via getDirection (prefers
             // UP/DOWN, then a block-position delta that can point away from you), so the mining
