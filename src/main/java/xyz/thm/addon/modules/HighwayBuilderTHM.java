@@ -99,6 +99,7 @@ import org.joml.Vector3d;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.accessor.StuckEatingRetryBridge;
 import xyz.thm.addon.accessor.StuckEatingRetryResult;
+import xyz.thm.addon.settings.ItemPriorityList;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.*;
 import xyz.thm.addon.utils.kitbot.*;
@@ -1079,10 +1080,10 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
-    private final Setting<List<Item>> foodTypes = sgInventory.add(new ItemListSetting.Builder()
+    private final Setting<ItemPriorityList> foodTypes = sgInventory.add(new GenericSetting.Builder<ItemPriorityList>()
         .name("food-types")
-        .description("Which food item counts as restock food. Maximum 1 food type.")
-        .defaultValue()
+        .description("Which food items count as restock food. Selection order sets priority — the item on top is preferred.")
+        .defaultValue(new ItemPriorityList())
         .visible(() -> foodRestock.get() || foodManagement.get() != FoodManagement.None)
         .onChanged(this::handleFoodTypesChanged)
         .build()
@@ -10933,44 +10934,34 @@ public class HighwayBuilderTHM extends Module {
         return -1;
     }
 
-    private void handleFoodTypesChanged(List<Item> selected) {
+    private void handleFoodTypesChanged(ItemPriorityList selected) {
         if (kitbotFoodRestock != null && kitbotFoodRestock.get()) {
             enforceKitbotFoodRestockFoodType();
-            return;
         }
-
-        if (clampingFoodTypes || selected == null || selected.size() <= 1) return;
-
-        clampingFoodTypes = true;
-        try {
-            foodTypes.set(new ArrayList<>(selected.subList(0, 1)));
-        } finally {
-            clampingFoodTypes = false;
-        }
-
-        warning("Maximum 1 food type.");
     }
 
     private void enforceKitbotFoodRestockFoodType() {
         if (kitbotFoodRestock == null || !kitbotFoodRestock.get()) return;
         if (foodTypes == null || clampingFoodTypes) return;
-        List<Item> selected = foodTypes.get();
-        if (selected != null && selected.size() == 1 && selected.get(0) == Items.ENCHANTED_GOLDEN_APPLE) return;
+        List<Item> selected = foodTypes.get().selected();
+        if (selected.size() == 1 && selected.get(0) == Items.ENCHANTED_GOLDEN_APPLE) return;
 
         clampingFoodTypes = true;
         try {
-            foodTypes.set(new ArrayList<>(List.of(Items.ENCHANTED_GOLDEN_APPLE)));
+            selected.clear();
+            selected.add(Items.ENCHANTED_GOLDEN_APPLE);
+            foodTypes.onChanged();
         } finally {
             clampingFoodTypes = false;
         }
     }
 
     private boolean hasConfiguredFoodTypes() {
-        return !foodTypes.get().isEmpty();
+        return !foodTypes.get().selected().isEmpty();
     }
 
     private boolean isConfiguredFoodItem(Item item) {
-        return item != null && foodTypes.get().contains(item);
+        return item != null && foodTypes.get().selected().contains(item);
     }
 
     private boolean isConfiguredFoodStack(ItemStack itemStack) {
@@ -11003,7 +10994,7 @@ public class HighwayBuilderTHM extends Module {
 
     private int getConfiguredFoodMaxStackSize() {
         if (!hasConfiguredFoodTypes()) return 0;
-        Item foodItem = foodTypes.get().get(0);
+        Item foodItem = foodTypes.get().selected().get(0);
         return foodItem != null ? foodItem.getMaxCount() : 0;
     }
 

@@ -57,6 +57,8 @@ This document lists the modules, HUD widgets, and utilities shipped with THM Add
 - `KOS Hud` — Shows all online Kill-on-Sight (KOS) players.
 - `tunnel-miner-hud` — Displays Tunnel Miner stats.
 - `afk-logout-hud` — Displays AFK Logout remaining time.
+- `totem-pop-hud` — Shows how many totems of undying you've popped, like an item count.
+- `player-list-hud` — Lists players in render distance, with configurable ping/distance/hp/armor/totem columns.
 
 ## Commands
 - `center`

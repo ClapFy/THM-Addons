@@ -30,6 +30,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.ThmMembers;
+import xyz.thm.addon.utils.TotemTracker;
 
 import java.io.InputStream;
 import java.util.Optional;
@@ -47,6 +48,8 @@ public abstract class NametagsMixin extends Module {
     @Unique private static final Identifier THM_ICON_OBBY = Identifier.of("icon", "obby.webp");
     @Unique private static final Identifier THM_ICON_TRANSPARENT_WHITE = Identifier.of("icon", "whitetransparent.webp");
     @Unique private static final Identifier THM_ICON_TRANSPARENT_BLACK = Identifier.of("icon", "blacktransparent.webp");
+
+    @Unique private static final Color THM_TOTEM_COLOR = new Color(255, 205, 60);
 
     @Unique private static final int THM_ICON_PAD = 2;
     @Unique private static int thm$iconWidth = 64;
@@ -127,6 +130,27 @@ public abstract class NametagsMixin extends Module {
         }
 
         return text.render(string, x + iconWidth + THM_ICON_PAD, y, color, shadow);
+    }
+
+    @Inject(method = "renderNametagPlayer", at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/render/NametagUtils;end(Lnet/minecraft/client/gui/DrawContext;)V"))
+    private void thmAddon$renderTotemCounter(Render2DEvent event, PlayerEntity player, boolean shadow, CallbackInfo ci) {
+        THMSystem system = THMSystem.get();
+        if (system == null || !system.showTotemCounter.get()) return;
+
+        int pops = TotemTracker.get(player);
+        if (pops <= 0) return;
+
+        TextRenderer text = TextRenderer.get();
+        String totemText = "Totem x" + pops;
+
+        double width = text.getWidth(totemText, shadow);
+        double heightDown = text.getHeight(shadow);
+        double drawX = -width / 2;
+        double drawY = heightDown + 2;
+
+        text.beginBig();
+        text.render(totemText, drawX, drawY, THM_TOTEM_COLOR, shadow);
+        text.end();
     }
 
     @Unique

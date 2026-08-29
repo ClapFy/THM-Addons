@@ -181,6 +181,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         StatsScreenshotChatGuard.getInstance();
         ThmMembers.initialize();
         CapeManager.initialize();
+        TotemTracker.initialize();
 
         // Modules
         Modules.get().add(new HighwayTraveler());
@@ -252,6 +253,8 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         Hud.get().register(AfkLogoutHud.INFO);
         Hud.get().register(ItemCounterHud.INFO);
         Hud.get().register(THMStashMoverPairHud.INFO);
+        Hud.get().register(TotemPopHud.INFO);
+        Hud.get().register(PlayerListHud.INFO);
 
         //Themes
         GuiThemes.add(DarkTheme.INSTANCE);

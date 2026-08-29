@@ -95,7 +95,7 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `protected-items` | Ender chest, obsidian, netherite tools, elytra, totem, egaps, XP bottles | Items trash cleanup must never throw out. |
 | `food-restock` | `false` | Restocks one configured food stack when food reaches the saved amount. |
 | `food-management` | `None`; options `None`, `Auto Eat`, `Auto Gap` | Keeps the selected Meteor food module enabled while building. |
-| `food-types` | Empty list; shown when food restock or food management is active | The single food item counted for restock/food management. |
+| `food-types` | Empty list; shown when food restock or food management is active | Food items counted for restock/food management. Multiple allowed — selection order is priority, top item preferred (its max stack size is used for restock math). Its own picker has Up/Down buttons to reorder. |
 | `save-food` | `16`, range `1-32`; shown when `food-restock` is on | Food count threshold that queues restock. |
 | `minimum-empty-slots` | `1`, minimum `0`, slider `0-9` | Empty inventory slots to preserve after mining obsidian. |
 | `mine-ender-chests` | `true` | Mines ender chests to convert them into obsidian. |
@@ -197,7 +197,7 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `protected-items` | Ender chest, obsidian, netherite pickaxe/sword/shovel/axe, elytra, totem, enchanted golden apple, XP bottle | Always | Items trash cleanup must never throw out; everything else can be treated as trash. |
 | `food-restock` | `false` | Always | Restocks one configured food stack when valid food count drops to the saved amount. |
 | `food-management` | `None`; options `None`, `Auto Eat`, `Auto Gap` | Always | Keeps the selected Meteor food module enabled while HighwayBuilder is running. |
-| `food-types` | Empty list; maximum 1 food type | `food-restock` is on or `food-management` is not `None` | Food item counted for restock and food module setup. |
+| `food-types` | Empty list, any number of items | `food-restock` is on or `food-management` is not `None` | Food items counted for restock and food module setup. Multiple can be selected; list order is priority (top = highest), used for the restock max-stack-size math. Picker screen has Up/Down/remove buttons per row instead of a plain checklist. |
 | `save-food` | `16`, range `1-32` | `food-restock` is on | Restock threshold for the configured food count. |
 | `keep-trash-block-stacks` | `1`, range `1-10` | Always | Number of trash block stacks to keep before dropping the rest. |
 | `inventory-delay` | `3`, minimum `0` | Always | Delay in ticks between inventory interactions. |
