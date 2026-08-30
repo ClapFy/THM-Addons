@@ -275,36 +275,15 @@ public class DiscordNotifs extends Module
 
         final String finalMessage = message;
 
-        // use threads so the game doesnt lag when sending a ton of webhooks
         new Thread(() -> {
-            try {
-                @SuppressWarnings("deprecation") java.net.URL url = new java.net.URL(webhookURL.get());
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setDoOutput(true);
-
-                // Create JSON payload for Discord webhook using embeds to prevent mentions
-                String escapedMessage = finalMessage.replace("\"", "\\\"").replace("\\", "\\\\");
-                String json = "{\"embeds\": [{\"description\": \"" + escapedMessage + "\"}]}";
-
-                try (java.io.OutputStream os = conn.getOutputStream()) {
-                    byte[] input = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                    os.write(input, 0, input.length);
-                }
-
-                int responseCode = conn.getResponseCode();
-                if (responseCode == 204 || responseCode == 200) {
-                    THMAddon.LOG.info("Successfully sent message to webhook!");
-                } else {
-                    THMAddon.LOG.warn("Webhook response code: " + responseCode);
-                    THMAddon.LOG.warn("Failed to send to Webhook");
-                }
-
-                conn.disconnect();
-            } catch (Exception e) {
-                THMAddon.LOG.warn("Failed to send to webhook: " + e.getMessage());
-            }
+            boolean ok = xyz.thm.addon.utils.TrustedHttp.postJson(
+                webhookURL.get(),
+                xyz.thm.addon.utils.TrustedHttp.jsonEmbed(finalMessage),
+                xyz.thm.addon.utils.TrustedHttp.Kind.USER_WEBHOOK,
+                null
+            );
+            if (ok) THMAddon.LOG.info("Successfully sent message to webhook!");
+            else THMAddon.LOG.warn("Failed to send to webhook");
         }).start();
     }
 

@@ -39,8 +39,6 @@ import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.utils.THMUtils;
 
 import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -1245,33 +1243,11 @@ public class HighwayTools extends Module {
         if (!webhookEnabled.get()) return;
         String url = webhookUrl.get().trim();
         if (url.isEmpty()) return;
-        String payload = "{\"content\":\"" + escapeJson(message) + "\"}";
-
         new Thread(() -> {
-            try {
-                @SuppressWarnings("deprecation")
-                HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-                connection.setRequestMethod("POST");
-                connection.setRequestProperty("Content-Type", "application/json");
-                connection.setDoOutput(true);
-                byte[] data = payload.getBytes(StandardCharsets.UTF_8);
-                connection.setFixedLengthStreamingMode(data.length);
-                connection.getOutputStream().write(data);
-                connection.getOutputStream().flush();
-                connection.getOutputStream().close();
-                connection.getInputStream().close();
-            } catch (Exception e) {
-                debug("webhook", "send-failed kind=%s msg=%s", kind, e.getMessage());
-            }
+            boolean ok = xyz.thm.addon.utils.TrustedHttp.postJson(
+                url, xyz.thm.addon.utils.TrustedHttp.jsonContent(message), xyz.thm.addon.utils.TrustedHttp.Kind.USER_WEBHOOK, null);
+            if (!ok) debug("webhook", "send-failed kind=%s", kind);
         }, "HighwayCheckerWebhook").start();
-    }
-
-    private static String escapeJson(String input) {
-        return input
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r");
     }
 
     private void fail(String format, Object... args) {

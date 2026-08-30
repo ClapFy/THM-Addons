@@ -78,6 +78,8 @@ public final class Vp8LDecoder {
         br.readBits(1); // alpha_is_used hint, irrelevant to decoding
         int version = br.readBits(3);
         if (version != 0) return null;
+        // Remote cape payloads must not be allowed to allocate a 14-bit (16k²) bitmap.
+        if (width > 1024 || height > 1024 || (long) width * height > 1024L * 1024L) return null;
 
         int[] result = decodeImageStream(br, width, height, true);
         return new DecodedImage(width, height, result);

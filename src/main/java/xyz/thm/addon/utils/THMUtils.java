@@ -38,11 +38,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
-import java.net.URI;
 import java.net.URL;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -401,11 +397,13 @@ public class THMUtils {
 
         Thread thread = new Thread(() -> {
             try {
-                HttpRequest request = HttpRequest.newBuilder(URI.create("https://www.6b6t.org/api/anarchy-mod.json"))
-                    .GET()
-                    .build();
-                HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
-                JsonObject root = new Gson().fromJson(response.body(), JsonObject.class);
+                String body = TrustedHttp.getString(
+                    "https://www.6b6t.org/api/anarchy-mod.json",
+                    TrustedHttp.Kind.PUBLIC_HTTPS,
+                    256 * 1024
+                );
+                if (body == null) return;
+                JsonObject root = new Gson().fromJson(body, JsonObject.class);
                 JsonArray domainsJson = root == null ? null : root.getAsJsonArray("domains");
                 if (domainsJson == null) return;
 
@@ -413,7 +411,9 @@ public class THMUtils {
                 for (var element : domainsJson) {
                     String domain = element.getAsString().trim().toLowerCase(Locale.ROOT);
                     if (domain.startsWith("*.")) domain = domain.substring(2);
-                    if (!domain.isEmpty()) domains.add(domain);
+                    if (domain.isEmpty() || domain.length() > 253) continue;
+                    if (domain.contains("/") || domain.contains(" ") || domain.contains("\\")) continue;
+                    domains.add(domain);
                 }
                 if (!domains.isEmpty()) anarchyModDomains = Set.copyOf(domains);
             } catch (Exception e) {
@@ -623,30 +623,39 @@ public class THMUtils {
     public static void sendToWebhookWithFile(String url, String message, Path file) {
         Thread thread = new Thread(() -> {
             try {
+                if (TrustedHttp.parseAllowedUri(url, TrustedHttp.Kind.USER_WEBHOOK) == null) {
+                    THMAddon.LOG.warn("[THM] Rejected webhook URL for attachment send");
+                    return;
+                }
+                if (file != null && Files.size(file) > TrustedHttp.MAX_IMAGE_BYTES) {
+                    THMAddon.LOG.warn("[THM] Refusing webhook attachment larger than {} bytes", TrustedHttp.MAX_IMAGE_BYTES);
+                    return;
+                }
                 String boundary = "thm" + System.nanoTime();
                 byte[] sep = ("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8);
                 ByteArrayOutputStream body = new ByteArrayOutputStream();
 
-                String content = message == null ? "" : message;
-                String payload = "{\"content\":\"" + content.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
+                String payload = TrustedHttp.jsonContent(message);
                 body.write(sep);
                 body.write(("Content-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"
                     + payload + "\r\n").getBytes(StandardCharsets.UTF_8));
 
                 if (file != null) {
+                    String filename = file.getFileName().toString().replace("\"", "");
                     body.write(sep);
-                    body.write(("Content-Disposition: form-data; name=\"files[0]\"; filename=\"" + file.getFileName()
+                    body.write(("Content-Disposition: form-data; name=\"files[0]\"; filename=\"" + filename
                         + "\"\r\nContent-Type: image/png\r\n\r\n").getBytes(StandardCharsets.UTF_8));
                     body.write(Files.readAllBytes(file));
                     body.write("\r\n".getBytes(StandardCharsets.UTF_8));
                 }
                 body.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
 
-                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
-                    .build();
-                HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.discarding());
+                TrustedHttp.postMultipart(
+                    url,
+                    body.toByteArray(),
+                    "multipart/form-data; boundary=" + boundary,
+                    TrustedHttp.Kind.USER_WEBHOOK
+                );
             } catch (Exception e) {
                 THMAddon.LOG.warn("[THM] Failed to send webhook with attachment", e);
             }

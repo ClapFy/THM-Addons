@@ -14,8 +14,6 @@ import net.minecraft.util.Identifier;
 import xyz.thm.addon.THMAddon;
 
 import java.io.File;
-import java.net.HttpURLConnection;
-import java.net.URI;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,6 +27,8 @@ public final class CapeManager {
     private static volatile String[] availableIds = {"None"};
     private static final Map<String, Identifier> textureCache = new HashMap<>();
     private static final Identifier MISSING = Identifier.of("thm-addon", "cape/missing");
+    private static final int MAX_CAPE_WIDTH = 512;
+    private static final int MAX_CAPE_HEIGHT = 512;
 
     private CapeManager() {
     }
@@ -46,6 +46,7 @@ public final class CapeManager {
         List<String> ids = new ArrayList<>();
         ids.add("None");
         for (CapeEntry entry : entries) {
+            if (!TrustedHttp.isSafeCapeId(entry.id()) || entry.id().equalsIgnoreCase("None")) continue;
             ids.add(entry.id());
             downloadIfMissing(entry);
         }
@@ -54,21 +55,20 @@ public final class CapeManager {
 
     private static void downloadIfMissing(CapeEntry entry) {
         File file = capeFile(entry.id());
-        if (file.exists()) return;
+        if (file == null || file.exists()) return;
 
         try {
-            HttpURLConnection cn = (HttpURLConnection) new URI(entry.url()).toURL().openConnection();
-            cn.setRequestMethod("GET");
-            cn.setConnectTimeout(10000);
-            cn.setReadTimeout(10000);
-            if (cn.getResponseCode() != 200) {
-                cn.disconnect();
+            if (TrustedHttp.parseAllowedUri(entry.url(), TrustedHttp.Kind.IMAGE) == null) return;
+            byte[] bytes = TrustedHttp.getBytes(entry.url(), TrustedHttp.Kind.IMAGE, TrustedHttp.MAX_IMAGE_BYTES);
+            if (bytes == null || bytes.length == 0) return;
+            if (!looksLikeImage(bytes)) {
+                THMAddon.LOG.warn("Rejected cape '{}': not a PNG or WebP payload", entry.id());
                 return;
             }
-            byte[] bytes = cn.getInputStream().readAllBytes();
-            cn.disconnect();
 
-            file.getParentFile().mkdirs();
+            File parent = file.getParentFile();
+            if (parent == null) return;
+            parent.mkdirs();
             Files.write(file.toPath(), bytes);
             THMAddon.LOG.info("Downloaded cape '{}'", entry.id());
         } catch (Exception e) {
@@ -83,7 +83,7 @@ public final class CapeManager {
 
     /** Resolves (loading + registering the texture on first use) the render Identifier for a cape id, or null if unavailable. */
     public static synchronized Identifier getCapeTexture(String id) {
-        if (id == null || id.isBlank() || id.equalsIgnoreCase("None")) return null;
+        if (id == null || id.isBlank() || id.equalsIgnoreCase("None") || !TrustedHttp.isSafeCapeId(id)) return null;
 
         Identifier cached = textureCache.get(id);
         if (cached != null) return cached == MISSING ? null : cached;
@@ -95,12 +95,18 @@ public final class CapeManager {
 
     private static Identifier loadTexture(String id) {
         File file = capeFile(id);
-        if (!file.isFile()) return null;
+        if (file == null || !file.isFile()) return null;
 
         try {
             byte[] bytes = Files.readAllBytes(file.toPath());
+            if (bytes.length > TrustedHttp.MAX_IMAGE_BYTES) return null;
             NativeImage image = NativeImage.read(bytes);
-            Identifier textureId = Identifier.of("thm-addon", "cape/" + id);
+            if (image.getWidth() > MAX_CAPE_WIDTH || image.getHeight() > MAX_CAPE_HEIGHT) {
+                image.close();
+                THMAddon.LOG.warn("Rejected cape texture '{}': dimensions too large", id);
+                return null;
+            }
+            Identifier textureId = Identifier.of("thm-addon", "cape/" + id.toLowerCase());
             MinecraftClient.getInstance().getTextureManager().registerTexture(
                 textureId, new NativeImageBackedTexture(() -> "thm-cape/" + id, image)
             );
@@ -112,6 +118,27 @@ public final class CapeManager {
     }
 
     private static File capeFile(String id) {
-        return new File(new File(MeteorClient.FOLDER, "thm/capes"), id + ".webp");
+        if (!TrustedHttp.isSafeCapeId(id) || id.equalsIgnoreCase("None")) return null;
+        File dir = new File(MeteorClient.FOLDER, "thm/capes");
+        File file = new File(dir, id + ".webp");
+        try {
+            if (!file.getCanonicalFile().getParentFile().equals(dir.getCanonicalFile())) return null;
+        } catch (Exception e) {
+            return null;
+        }
+        return file;
+    }
+
+    private static boolean looksLikeImage(byte[] bytes) {
+        if (bytes.length >= 8
+            && bytes[0] == (byte) 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+            return true;
+        }
+        if (bytes.length >= 12
+            && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+            && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+            return true;
+        }
+        return false;
     }
 }

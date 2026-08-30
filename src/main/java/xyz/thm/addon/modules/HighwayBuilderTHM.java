@@ -1920,9 +1920,11 @@ public class HighwayBuilderTHM extends Module {
         if (configuredWebhook == null) return null;
         String raw = configuredWebhook.trim();
         if (raw.isEmpty()) return null;
-        if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
-        THMAddon.LOG.warn("Invalid webhook URL format (must start with http/https).");
-        return null;
+        if (TrustedHttp.parseAllowedUri(raw, TrustedHttp.Kind.USER_WEBHOOK) == null) {
+            THMAddon.LOG.warn("Invalid webhook URL format (must be http/https to a public host).");
+            return null;
+        }
+        return raw;
     }
 
     private void sendStatusLog() {
