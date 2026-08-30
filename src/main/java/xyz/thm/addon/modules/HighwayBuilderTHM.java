@@ -1943,7 +1943,7 @@ public class HighwayBuilderTHM extends Module {
             return;
         }
         if (THMSystem.get() == null || !THMSystem.get().hasApiToken()) {
-            warning("Status not sent. No valid API token set.");
+            warning("Status not sent. No valid API token set - get one from the Discord bot's player panel.");
             return;
         }
 
@@ -9149,7 +9149,7 @@ public class HighwayBuilderTHM extends Module {
 
     private SecretKeySpec deriveStatsArtifactKey() throws GeneralSecurityException {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] keyBytes = digest.digest(getPassword().getBytes(StandardCharsets.UTF_8));
+        byte[] keyBytes = digest.digest(StatsCacheKey.getPassword().getBytes(StandardCharsets.UTF_8));
         return new SecretKeySpec(keyBytes, "AES");
     }
 
@@ -9450,7 +9450,7 @@ public class HighwayBuilderTHM extends Module {
                         warning("API not sent. You are not on 6B6T");
                         logExternalStatsDecision(working, report, reason, "api", "skipped-not-6b6t", distance);
                     } else if (!THMSystem.get().hasApiToken()) {
-                        warning("API not sent. No valid API token set.");
+                        warning("API not sent. No valid API token set - get one from the Discord bot's player panel.");
                         logExternalStatsDecision(working, report, reason, "api", "skipped-missing-token", distance);
                     } else {
                         StatsArtifactSnapshot committed = updateFinalizationRecord(
