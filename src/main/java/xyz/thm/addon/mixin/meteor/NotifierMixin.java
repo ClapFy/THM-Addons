@@ -38,7 +38,7 @@ public abstract class NotifierMixin {
         );
     }
 
-    @Redirect(method = {"onEntityAdded", "onEntityRemoved", "onReceivePacket", "onTick"}, at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/player/ChatUtils;sendMsg(ILnet/minecraft/util/Formatting;Ljava/lang/String;[Ljava/lang/Object;)V"))
+    @Redirect(method = {"onEntityAdded", "onEntityRemoved", "onReceivePacket", "onTick"}, at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/player/ChatUtils;sendMsg(ILnet/minecraft/ChatFormatting;Ljava/lang/String;[Ljava/lang/Object;)V"))
     private void thm$redirectChatSend(int id, ChatFormatting color, String message, Object... args) {
         ChatUtils.sendMsg(id, color, message, args);
         thm$notifyDesktop(String.format(message, args));
