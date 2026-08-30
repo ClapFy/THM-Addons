@@ -65,6 +65,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Predicate;
+import xyz.thm.addon.compat.ClientGui;
 
 /**
  * TunnelMiner — digs a straight tunnel block by block from current position
@@ -5102,7 +5103,7 @@ public class TunnelMinerModule extends Module {
                     new BlockHitResult(Vec3.atCenterOf(bp), Direction.UP, bp, false)));
             return;
         }
-        if (mc.screen != null) {
+        if (ClientGui.screen(mc) != null) {
             waitTicks = 0;
             invTimer = optInvDelay();
             if (optDebugMessages()) info("Container open, looting pickaxes.");
@@ -5116,7 +5117,7 @@ public class TunnelMinerModule extends Module {
     }
 
     private void restockLoot() {
-        if (mc.screen == null) {
+        if (ClientGui.screen(mc) == null) {
             watchdogCalc("restock-loot", "action=close-screen-null");
             setPhase(Phase.RESTOCK_CLOSE);
             return;
@@ -5301,8 +5302,8 @@ public class TunnelMinerModule extends Module {
     }
 
     private void restockClose() {
-        if (mc.screen != null) {
-            mc.screen.onClose();
+        if (ClientGui.screen(mc) != null) {
+            ClientGui.screen(mc).onClose();
             invTimer = optInvDelay();
             return;
         }
@@ -7291,7 +7292,7 @@ public class TunnelMinerModule extends Module {
         ItemContainerContents container = shulker.get(DataComponents.CONTAINER);
         if (container == null) return 0;
         int picks = 0;
-        for (ItemStack stack : container.nonEmptyItems()) {
+        for (ItemStack stack : container.nonEmptyItemCopyStream().toList()) {
             if (isPickaxe(stack)) picks += Math.max(1, stack.getCount());
         }
         return picks;

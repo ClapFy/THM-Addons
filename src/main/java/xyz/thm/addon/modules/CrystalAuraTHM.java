@@ -26,7 +26,7 @@ import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.network.protocol.game.ServerboundInteractPacket;
+import net.minecraft.network.protocol.game.ServerboundAttackPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.LivingEntity;
@@ -40,7 +40,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
-import xyz.thm.addon.mixin.accessor.PlayerInteractEntityC2SPacketAccessor;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.PlacementUtils;
 import xyz.thm.addon.utils.RenderUtilsTHM;
@@ -71,8 +70,7 @@ import java.util.Map;
  * the crystal is placed instead of waiting a tick for the spawn packet to round-trip - a real
  * client-vs-client fight is usually decided by whoever's aura reacts faster. It works by
  * guessing the new crystal's entity id (ids are assigned sequentially by the server) and firing
- * a raw attack packet at that guessed id after a short delay, via a mixin-exposed setter on
- * PlayerInteractEntityC2SPacket's normally-final entityId field (PlayerInteractEntityC2SPacketAccessor).
+ * a {@code ServerboundAttackPacket} at that guessed id after a short delay.
  * If the guess is wrong the packet is just a harmless no-op server-side.
  *
  * Deliberately NOT ported from BlackOut: movement extrapolation (multi-tick position prediction -
@@ -760,9 +758,7 @@ public class CrystalAuraTHM extends Module {
     private void sendPredictedAttack(int entityId) {
         if (mc.player == null) return;
 
-        ServerboundInteractPacket packet = ServerboundInteractPacket.createAttackPacket(mc.player, mc.player.isShiftKeyDown());
-        ((PlayerInteractEntityC2SPacketAccessor) packet).setEntityId(entityId);
-        mc.getConnection().send(packet);
+        mc.getConnection().send(new ServerboundAttackPacket(entityId));
         mc.player.swing(InteractionHand.MAIN_HAND);
     }
 

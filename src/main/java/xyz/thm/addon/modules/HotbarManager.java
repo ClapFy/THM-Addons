@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import xyz.thm.addon.compat.ClientGui;
 
 public class HotbarManager extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -153,7 +154,7 @@ public class HotbarManager extends Module {
         select.action = () -> {
             ItemSettingScreen screen = new ItemSettingScreen(theme, setting);
             screen.onClosed(() -> item.set(setting.get().getDefaultInstance()));
-            MeteorClient.mc.setScreen(screen);
+            ClientGui.setScreen(MeteorClient.mc, screen);
         };
 
         WButton clear = list.add(theme.button("Clear")).widget();

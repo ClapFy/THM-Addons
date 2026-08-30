@@ -8,7 +8,7 @@ package xyz.thm.addon.mixin;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.LogoRenderer;
@@ -36,6 +36,7 @@ import xyz.thm.addon.system.THMSystem;
 
 import java.util.ArrayList;
 import java.util.List;
+import xyz.thm.addon.compat.ClientGui;
 
 // Reuses vanilla's own buttons (so their click handlers stay untouched) but moves them into
 // a BleachHack-styled window frame (see MainMenuFx) instead of vanilla's default layout, and
@@ -80,7 +81,7 @@ public abstract class TitleScreenMenuMixin extends Screen {
         // shader preview toggle), so it lives in the bottom-left corner - always reachable
         // regardless of window on/off.
         AbstractWidget menuButton = this.addRenderableWidget(Button.builder(Component.literal("THM Menu"), b ->
-                this.minecraft.setScreen(new MainMenuSettingsScreen(this)))
+                ClientGui.setScreen(this.minecraft, new MainMenuSettingsScreen(this)))
             .bounds(6, this.height - 22, 90, 16)
             .build());
         ThmStyledButtons.mark(menuButton);
@@ -90,7 +91,7 @@ public abstract class TitleScreenMenuMixin extends Screen {
         if (MainMenuFx.previewMode) {
             AbstractWidget showUi = this.addRenderableWidget(Button.builder(Component.literal("Show UI"), b -> {
                     MainMenuFx.previewMode = false;
-                    this.minecraft.setScreen(new MainMenuSettingsScreen(this));
+                    ClientGui.setScreen(this.minecraft, new MainMenuSettingsScreen(this));
                 })
                 .bounds(6, this.height - 22, 90, 16)
                 .build());
@@ -118,8 +119,8 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // Chrome is drawn before super.render() (which draws the buttons) so the buttons sit on
     // top of the window frame, not under it. The particle trail is handled globally by
     // MenuParticlesMixin (every world-not-loaded screen, not just this one).
-    @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/screens/Screen;render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V"))
-    private void thm$renderWindowChrome(GuiGraphics context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
+    @Inject(method = "extractRenderState", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/screens/Screen;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V"))
+    private void thm$renderWindowChrome(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
         if (MainMenuFx.previewMode) return;
 
         if (THMSystem.get().mainMenuWindow.get()) {
@@ -160,22 +161,22 @@ public abstract class TitleScreenMenuMixin extends Screen {
     // fully root-caused. Redrawing it ourselves - guaranteed to run, since our own version text
     // inside the window is confirmed visible - is a lot more reliable than continuing to guess
     // at whichever of our render calls is responsible.
-    @Inject(method = "render", at = @At("TAIL"))
-    private void thm$restoreVersionText(GuiGraphics context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
+    @Inject(method = "extractRenderState", at = @At("TAIL"))
+    private void thm$restoreVersionText(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
         if (!THMSystem.get().mainMenuWindow.get() || MainMenuFx.previewMode) return;
         String text = "Minecraft " + SharedConstants.getCurrentVersion().name();
-        context.drawString(this.font, text, 2, this.height - 10, -1);
+        context.text(this.font, text, 2, this.height - 10, -1);
     }
 
-    @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/LogoRenderer;renderLogo(Lnet/minecraft/client/gui/GuiGraphics;IF)V"))
-    private void thm$suppressLogo(LogoRenderer logoDrawer, GuiGraphics context, int screenWidth, float alpha) {
+    @Redirect(method = "extractRenderState", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/LogoRenderer;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IF)V"))
+    private void thm$suppressLogo(LogoRenderer logoDrawer, GuiGraphicsExtractor context, int screenWidth, float alpha) {
         if (THMSystem.get().mainMenuWindow.get() || MainMenuFx.previewMode) return;
-        logoDrawer.renderLogo(context, screenWidth, alpha);
+        logoDrawer.extractRenderState(context, screenWidth, alpha);
     }
 
-    @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/SplashRenderer;render(Lnet/minecraft/client/gui/GuiGraphics;ILnet/minecraft/client/gui/Font;F)V"))
-    private void thm$suppressSplash(SplashRenderer splashText, GuiGraphics context, int screenWidth, Font textRenderer, float alpha) {
+    @Redirect(method = "extractRenderState", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/SplashRenderer;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;ILnet/minecraft/client/gui/Font;F)V"))
+    private void thm$suppressSplash(SplashRenderer splashText, GuiGraphicsExtractor context, int screenWidth, Font textRenderer, float alpha) {
         if (THMSystem.get().mainMenuWindow.get() || MainMenuFx.previewMode) return;
-        splashText.render(context, screenWidth, textRenderer, alpha);
+        splashText.extractRenderState(context, screenWidth, textRenderer, alpha);
     }
 }

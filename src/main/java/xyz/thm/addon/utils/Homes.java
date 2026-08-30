@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import xyz.thm.addon.compat.ClientGui;
 
 /**
  * Turns the chat output of the server's own {@code /homes} command into a clickable screen. Nothing about
@@ -139,8 +140,8 @@ public class Homes {
 
     public void open() {
         if (homes.isEmpty()) return;
-        if (THMSystem.get().homesGuiStyle.get() == GuiStyle.Meteor) mc.setScreen(new HomesMeteorScreen(GuiThemes.get(), this));
-        else mc.setScreen(new HomesScreen(this));
+        if (THMSystem.get().homesGuiStyle.get() == GuiStyle.Meteor) ClientGui.setScreen(mc, new HomesMeteorScreen(GuiThemes.get(), this));
+        else ClientGui.setScreen(mc, new HomesScreen(this));
     }
 
     public List<String> homes() {
@@ -162,7 +163,7 @@ public class Homes {
 
     public void teleport(String home) {
         sendCommand("home " + home);
-        if (mc.screen != null) mc.screen.onClose();
+        if (ClientGui.screen(mc) != null) ClientGui.screen(mc).onClose();
     }
 
     public void delete(String home) {

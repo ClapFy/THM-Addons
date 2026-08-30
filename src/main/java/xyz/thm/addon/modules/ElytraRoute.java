@@ -36,7 +36,7 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -55,6 +55,7 @@ import xyz.thm.addon.utils.THMUtils;
 
 import java.util.*;
 import java.util.function.Predicate;
+import xyz.thm.addon.compat.ClientGui;
 
 public class ElytraRoute extends Module {
     public static ElytraRoute INSTANCE;
@@ -754,7 +755,7 @@ public class ElytraRoute extends Module {
 
     private void closeHandledRestockScreenIfOpen() {
         if (!isRestockState(state)) return;
-        if (mc.screen instanceof AbstractContainerScreen<?>) mc.screen.onClose();
+        if (ClientGui.screen(mc) instanceof AbstractContainerScreen<?>) ClientGui.screen(mc).onClose();
     }
 
     private void handleAutoReconnectToggleTransitions() {
@@ -787,9 +788,9 @@ public class ElytraRoute extends Module {
 
     private void clearStaleDisconnectedScreenIfLiveConnected() {
         if (!hasLiveServerConnection()) return;
-        if (!(mc.screen instanceof DisconnectedScreen)) return;
+        if (!(ClientGui.screen(mc) instanceof DisconnectedScreen)) return;
         info("Clearing stale DisconnectedScreen while Elytra Route is live in-world.");
-        mc.setScreen(null);
+        ClientGui.setScreen(mc, null);
     }
 
     private ServerReconnectService reconnectService() {
@@ -1377,7 +1378,7 @@ public class ElytraRoute extends Module {
         stateTicks = 0;
         releaseMovement();
         pauseBounceElytraFlyForGroundControl();
-        if (reason == LandingReason.RESTOCK && mc.screen != null) mc.screen.onClose();
+        if (reason == LandingReason.RESTOCK && ClientGui.screen(mc) != null) ClientGui.screen(mc).onClose();
     }
 
     private void tickLanding() {
@@ -1702,7 +1703,7 @@ public class ElytraRoute extends Module {
             return;
         }
 
-        if (mc.screen != null && mc.player.containerMenu != null && mc.player.containerMenu.slots.size() > PLAYER_INVENTORY_SLOTS) {
+        if (ClientGui.screen(mc) != null && mc.player.containerMenu != null && mc.player.containerMenu.slots.size() > PLAYER_INVENTORY_SLOTS) {
             currentSourceFailureTicks = 0;
             actionDelayTicks = inventoryDelay.get();
             state = State.RESTOCK_LOOT;
@@ -1715,7 +1716,7 @@ public class ElytraRoute extends Module {
     }
 
     private void tickRestockLoot() {
-        if (mc.screen == null || mc.player.containerMenu == null) {
+        if (ClientGui.screen(mc) == null || mc.player.containerMenu == null) {
             state = State.RESTOCK_CLOSE;
             return;
         }
@@ -1779,8 +1780,8 @@ public class ElytraRoute extends Module {
             return;
         }
 
-        if (mc.screen != null) {
-            mc.screen.onClose();
+        if (ClientGui.screen(mc) != null) {
+            ClientGui.screen(mc).onClose();
             actionDelayTicks = inventoryDelay.get();
             return;
         }
@@ -1797,7 +1798,7 @@ public class ElytraRoute extends Module {
         }
 
         if (openedInvalidRestockSource
-            && ((mc.player.containerMenu != null && !mc.player.containerMenu.getCarried().isEmpty()) || mc.screen != null)) {
+            && ((mc.player.containerMenu != null && !mc.player.containerMenu.getCarried().isEmpty()) || ClientGui.screen(mc) != null)) {
             state = State.RESTOCK_CLOSE;
             return;
         }
@@ -2290,7 +2291,7 @@ public class ElytraRoute extends Module {
     private void handleRestockFailure(RestockFailureReason reason, String message) {
         releaseMovement();
         restoreRotationSnapshot();
-        if (mc.screen != null) mc.screen.onClose();
+        if (ClientGui.screen(mc) != null) ClientGui.screen(mc).onClose();
 
         if (reason != RestockFailureReason.PICKUP_FAILED && placedShulkerPos != null) {
             deferredRestockFailureReason = reason;
@@ -2359,7 +2360,7 @@ public class ElytraRoute extends Module {
     }
 
     private boolean sendHomeSave() {
-        if (!periodicHomeSave.get() || homeName.get().isBlank() || mc.player == null || mc.screen != null || shouldPauseForEating()) return false;
+        if (!periodicHomeSave.get() || homeName.get().isBlank() || mc.player == null || ClientGui.screen(mc) != null || shouldPauseForEating()) return false;
         ChatUtils.sendPlayerMsg("/sethome " + homeName.get());
         homeSaveNextAtMs = System.currentTimeMillis() + (homeSaveIntervalMinutes.get() * 60_000L);
         return true;
@@ -2761,7 +2762,7 @@ public class ElytraRoute extends Module {
         if (container == null) return 0;
 
         int count = 0;
-        for (ItemStack stack : container.nonEmptyItems()) {
+        for (ItemStack stack : container.nonEmptyItemCopyStream().toList()) {
             if (isConfiguredFoodStack(stack)) count += stack.getCount();
         }
         return count;
@@ -2773,7 +2774,7 @@ public class ElytraRoute extends Module {
         if (container == null) return 0;
 
         int count = 0;
-        for (ItemStack stack : container.nonEmptyItems()) {
+        for (ItemStack stack : container.nonEmptyItemCopyStream().toList()) {
             if (isFlightReadyElytra(stack)) count += Math.max(1, stack.getCount());
         }
         return count;
@@ -2867,7 +2868,7 @@ public class ElytraRoute extends Module {
         List<String> entries = new ArrayList<>();
         ItemContainerContents container = shulker.get(DataComponents.CONTAINER);
         if (container != null) {
-            for (ItemStack stack : container.nonEmptyItems()) {
+            for (ItemStack stack : container.nonEmptyItemCopyStream().toList()) {
                 entries.add(fingerprintContainedStack(stack));
             }
         }
@@ -3262,9 +3263,9 @@ public class ElytraRoute extends Module {
         int inventorySlotId = SlotUtils.indexToId(inventorySlotIndex);
         int syncId = mc.player.containerMenu.containerId;
 
-        mc.gameMode.handleInventoryMouseClick(syncId, containerSlotId, 0, ClickType.PICKUP, mc.player);
-        mc.gameMode.handleInventoryMouseClick(syncId, inventorySlotId, 0, ClickType.PICKUP, mc.player);
-        mc.gameMode.handleInventoryMouseClick(syncId, containerSlotId, 0, ClickType.PICKUP, mc.player);
+        mc.gameMode.handleContainerInput(syncId, containerSlotId, 0, ContainerInput.PICKUP, mc.player);
+        mc.gameMode.handleContainerInput(syncId, inventorySlotId, 0, ContainerInput.PICKUP, mc.player);
+        mc.gameMode.handleContainerInput(syncId, containerSlotId, 0, ContainerInput.PICKUP, mc.player);
     }
 
     private boolean repairWornElytraIfNeeded() {
@@ -3292,9 +3293,9 @@ public class ElytraRoute extends Module {
             int spareId = SlotUtils.indexToId(bestSlot);
             int chestId = SlotUtils.indexToId(CHEST_SLOT_INDEX);
 
-            mc.gameMode.handleInventoryMouseClick(syncId, spareId, 0, ClickType.PICKUP, mc.player);
-            mc.gameMode.handleInventoryMouseClick(syncId, chestId, 0, ClickType.PICKUP, mc.player);
-            mc.gameMode.handleInventoryMouseClick(syncId, spareId, 0, ClickType.PICKUP, mc.player);
+            mc.gameMode.handleContainerInput(syncId, spareId, 0, ContainerInput.PICKUP, mc.player);
+            mc.gameMode.handleContainerInput(syncId, chestId, 0, ContainerInput.PICKUP, mc.player);
+            mc.gameMode.handleContainerInput(syncId, spareId, 0, ContainerInput.PICKUP, mc.player);
 
             ItemStack cursor = mc.player.containerMenu.getCarried();
             if (!cursor.isEmpty()) {

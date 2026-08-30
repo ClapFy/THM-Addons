@@ -28,6 +28,16 @@
     "thm-addon.sodium.mixins.json",
     "thm-addon.xaero.mixins.json"
   ],
+  "depends": {
+    "java": ">=${jdk_version}",
+    "minecraft": "${minecraft_version}",
+    "meteor-client": "*",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "baritone": "*",
+    "baritone-meteor": "*"
+  },
   "custom": {
     "meteor-client:color": "0,255,255",
     "github:sha": "${gh_hash}",
@@ -39,16 +49,6 @@
       "links": {
         "modmenu.discord": "https://discord.gg/thm"
       }
-    },
-    "depends": {
-      "java": ">=21",
-      "minecraft": "1.21.11",
-      "meteor-client": "*",
-      "fabric-api": "*"
-    },
-    "suggests": {
-      "baritone": "*",
-      "baritone-meteor": "*"
     }
   }
 }

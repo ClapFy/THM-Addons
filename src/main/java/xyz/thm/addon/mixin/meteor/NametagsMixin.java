@@ -16,7 +16,7 @@ import meteordevelopment.meteorclient.systems.modules.player.NameProtect;
 import meteordevelopment.meteorclient.systems.modules.render.Nametags;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.Resource;
@@ -57,12 +57,12 @@ public abstract class NametagsMixin extends Module {
     @Unique private static int thm$iconHeight = 64;
     @Unique private static boolean thm$iconSizeResolved;
 
-    @Unique private GuiGraphics thm$drawContext;
+    @Unique private GuiGraphicsExtractor thm$drawContext;
     @Unique private Player thm$player;
 
     @Inject(method = "renderNametagPlayer", at = @At("HEAD"))
     private void thmAddon$captureContext(Render2DEvent event, Player player, boolean shadow, CallbackInfo ci) {
-        thm$drawContext = event.drawContext;
+        thm$drawContext = event.graphics;
         thm$player = player;
     }
 
@@ -133,7 +133,7 @@ public abstract class NametagsMixin extends Module {
         return text.render(string, x + iconWidth + THM_ICON_PAD, y, color, shadow);
     }
 
-    @Inject(method = "renderNametagPlayer", at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/render/NametagUtils;end(Lnet/minecraft/client/gui/DrawContext;)V"))
+    @Inject(method = "renderNametagPlayer", at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/render/NametagUtils;end(Lnet/minecraft/client/gui/GuiGraphicsExtractor;)V"))
     private void thmAddon$renderTotemCounter(Render2DEvent event, Player player, boolean shadow, CallbackInfo ci) {
         THMSystem system = THMSystem.get();
         if (system == null || !system.showTotemCounter.get()) return;

@@ -14,6 +14,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import xyz.thm.addon.utils.InventoryManager;
+import xyz.thm.addon.compat.ClientGui;
 
 /**
  * Offhand's swap is a two-click {@code PICKUP} pair, which only behaves if the cursor is empty when
@@ -35,7 +36,7 @@ public class OffhandMixin {
 
         // With a screen open the player is dragging that stack — theirs, don't touch it, just sit out.
         // Otherwise it is a leftover from a desynced swap: park it so the module isn't stuck forever.
-        if (MeteorClient.mc.screen != null || !InventoryManager.parkCursor()) ci.cancel();
+        if (ClientGui.screen(MeteorClient.mc) != null || !InventoryManager.parkCursor()) ci.cancel();
     }
 
     @Inject(method = "onTick", at = @At("RETURN"))

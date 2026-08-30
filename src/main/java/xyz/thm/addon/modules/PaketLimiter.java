@@ -18,6 +18,9 @@ import meteordevelopment.meteorclient.utils.network.PacketUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.PacketType;
+import net.minecraft.network.protocol.common.CommonPacketTypes;
+import net.minecraft.network.protocol.game.GamePacketTypes;
 import xyz.thm.addon.THMAddon;
 
 import java.util.Set;
@@ -51,16 +54,16 @@ public class PaketLimiter extends Module {
         .build()
     );
 
-    public final Setting<Set<Class<? extends Packet<?>>>> bypass = sgGeneral.add(new PacketListSetting.Builder()
+    public final Setting<Set<PacketType<? extends Packet<?>>>> bypass = sgGeneral.add(new PacketListSetting.Builder()
         .name("bypass")
         .description("C2S packets that bypass the limiter.")
-        .filter(aClass -> PacketUtils.getC2SPackets().contains(aClass))
+        .filter(type -> PacketUtils.getServerboundPackets().contains(type))
         .build()
     );
-    public final Setting<Set<Class<? extends Packet<?>>>> alwaysBlock = sgGeneral.add(new PacketListSetting.Builder()
+    public final Setting<Set<PacketType<? extends Packet<?>>>> alwaysBlock = sgGeneral.add(new PacketListSetting.Builder()
         .name("always-block")
         .description("C2S packets that are always cancelled, even if in bypass.")
-        .filter(aClass -> PacketUtils.getC2SPackets().contains(aClass))
+        .filter(type -> PacketUtils.getServerboundPackets().contains(type))
         .build()
     );
 
@@ -81,17 +84,17 @@ public class PaketLimiter extends Module {
 
     public void applyPresets() {
         bypass.get().clear();
-        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.class);
-        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Pos.class);
-        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Rot.class);
-        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.PosRot.class);
-        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket.class);
-        bypass.get().add(net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket.class);
-        bypass.get().add(net.minecraft.network.protocol.common.ServerboundKeepAlivePacket.class);
-        bypass.get().add(net.minecraft.network.protocol.common.ServerboundPongPacket.class);
-        bypass.get().add(net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket.class);
+        bypass.get().add(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_POS);
+        bypass.get().add(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_POS_ROT);
+        bypass.get().add(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_ROT);
+        bypass.get().add(GamePacketTypes.SERVERBOUND_MOVE_PLAYER_STATUS_ONLY);
+        bypass.get().add(GamePacketTypes.SERVERBOUND_MOVE_VEHICLE);
+        bypass.get().add(GamePacketTypes.SERVERBOUND_ACCEPT_TELEPORTATION);
+        bypass.get().add(CommonPacketTypes.SERVERBOUND_KEEP_ALIVE);
+        bypass.get().add(CommonPacketTypes.SERVERBOUND_PONG);
+        bypass.get().add(GamePacketTypes.SERVERBOUND_PLAYER_COMMAND);
         alwaysBlock.get().clear();
-        alwaysBlock.get().add(net.minecraft.network.protocol.game.ServerboundSwingPacket.class);
+        alwaysBlock.get().add(GamePacketTypes.SERVERBOUND_SWING);
         if (!isActive()) toggle();
     }
 
@@ -105,11 +108,12 @@ public class PaketLimiter extends Module {
     private void onSendPacket(PacketEvent.Send event) {
         int max = limit.get();
         if (max == 0) return;
-        if (alwaysBlock.get().contains(event.packet.getClass())) {
+        PacketType<?> type = event.packet.type();
+        if (alwaysBlock.get().contains(type)) {
             event.cancel();
             return;
         }
-        if (bypass.get().contains(event.packet.getClass())) return;
+        if (bypass.get().contains(type)) return;
 
         if (sentThisTick >= max) {
             // ponytail: fixed 20-tick burst cooldown, make it a setting if someone asks

@@ -9,7 +9,7 @@ package xyz.thm.addon.gui;
 import xyz.thm.addon.utils.Homes;
 
 import java.util.List;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -169,8 +169,8 @@ public class HomesScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics context, int mouseX, int mouseY, float deltaTicks) {
-        super.render(context, mouseX, mouseY, deltaTicks);
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks) {
+        super.extractRenderState(context, mouseX, mouseY, deltaTicks);
 
         int body = HEADER + ROWS * SLOT;
         context.blit(RenderPipelines.GUI_TEXTURED, TEXTURE, x, y, 0f, 0f,
@@ -179,10 +179,10 @@ public class HomesScreen extends Screen {
             PANEL_WIDTH, TRIM, PANEL_WIDTH, TRIM, TEX_SIZE, TEX_SIZE);
 
         String heading = pageCount() > 1 ? "Homes (" + (page + 1) + "/" + pageCount() + ")" : "Homes";
-        context.drawString(font, heading, x + 8, y + 6, TEXT, false);
+        context.text(font, heading, x + 8, y + 6, TEXT, false);
         // a grid of identical dirt blocks is unreadable otherwise - the tooltip only covers hover
         if (selected != null) {
-            context.drawString(font, selected,
+            context.text(font, selected,
                 x + PANEL_WIDTH - 8 - font.width(selected), y + 6, TEXT, false);
         }
 
@@ -192,7 +192,7 @@ public class HomesScreen extends Screen {
             String home = homeAt(slot);
             if (home == null) continue;
             int sx = slotX(slot), sy = slotY(slot);
-            context.renderItem(module.icon(home), sx, sy);
+            context.item(module.icon(home), sx, sy);
             if (home.equals(selected)) context.fill(sx, sy, sx + 16, sy + 16, SELECTED);
             else if (hovered == slot) context.fill(sx, sy, sx + 16, sy + 16, HOVER);
         }
@@ -202,12 +202,12 @@ public class HomesScreen extends Screen {
             if (stack.isEmpty()) continue;
             int slot = PAGE_SIZE + column;
             int sx = slotX(slot), sy = slotY(slot);
-            context.renderItem(stack, sx, sy);
+            context.item(stack, sx, sy);
             if (column == DELETE && confirmDelete) context.fill(sx, sy, sx + 16, sy + 16, ARMED);
             else if (hovered == slot) context.fill(sx, sy, sx + 16, sy + 16, HOVER);
         }
 
-        context.drawCenteredString(font, Component.literal("Right-click a home to use your held item as its icon"),
+        context.centeredText(font, Component.literal("Right-click a home to use your held item as its icon"),
             x + PANEL_WIDTH / 2, y + PANEL_HEIGHT + 6, 0xFFFFFFFF);
 
         if (hovered < 0) return;

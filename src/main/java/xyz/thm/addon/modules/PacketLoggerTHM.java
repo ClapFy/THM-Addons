@@ -20,8 +20,8 @@ package xyz.thm.addon.modules;
 import com.google.gson.*;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
-import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -39,6 +39,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.HashedStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.game.ClientboundBlockChangedAckPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
@@ -92,19 +93,19 @@ public class PacketLoggerTHM extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgOutput = settings.createGroup("Output");
 
-    private final Setting<Set<Class<? extends Packet<?>>>> s2cPackets = sgGeneral.add(new PacketListSetting.Builder()
+    private final Setting<Set<PacketType<? extends Packet<?>>>> s2cPackets = sgGeneral.add(new PacketListSetting.Builder()
         .name("S2C-packets")
         .description("Server-to-client packets to log.")
-        .filter(aClass -> PacketUtils.getS2CPackets().contains(aClass))
-        .defaultValue(new ObjectOpenHashSet<>(PacketUtils.getS2CPackets()))
+        .filter(type -> PacketUtils.getClientboundPackets().contains(type))
+        .defaultValue(new ObjectOpenHashSet<>(PacketUtils.getClientboundPackets()))
         .build()
     );
 
-    private final Setting<Set<Class<? extends Packet<?>>>> c2sPackets = sgGeneral.add(new PacketListSetting.Builder()
+    private final Setting<Set<PacketType<? extends Packet<?>>>> c2sPackets = sgGeneral.add(new PacketListSetting.Builder()
         .name("C2S-packets")
         .description("Client-to-server packets to log.")
-        .filter(aClass -> PacketUtils.getC2SPackets().contains(aClass))
-        .defaultValue(new ObjectOpenHashSet<>(PacketUtils.getC2SPackets()))
+        .filter(type -> PacketUtils.getServerboundPackets().contains(type))
+        .defaultValue(new ObjectOpenHashSet<>(PacketUtils.getServerboundPackets()))
         .build()
     );
 
@@ -180,7 +181,7 @@ public class PacketLoggerTHM extends Module {
         .build()
     );
 
-    private final Reference2IntOpenHashMap<Class<? extends Packet<?>>> packetCounts = new Reference2IntOpenHashMap<>();
+    private final Object2IntOpenHashMap<PacketType<? extends Packet<?>>> packetCounts = new Object2IntOpenHashMap<>();
     private final List<Path> sessionFiles = new ArrayList<>();
 
     private BufferedWriter fileWriter;
@@ -240,27 +241,31 @@ public class PacketLoggerTHM extends Module {
 
     @EventHandler(priority = EventPriority.HIGHEST + 1)
     private void onReceivePacket(PacketEvent.Receive event) {
-        if (s2cPackets.get().contains(event.packet.getClass())) logPacket("s2c", "<- S2C", event.packet);
+        if (s2cPackets.get().contains(event.packet.type())) logPacket("s2c", "<- S2C", event.packet);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST + 1)
     private void onSendPacket(PacketEvent.Send event) {
-        if (c2sPackets.get().contains(event.packet.getClass())) logPacket("c2s", "-> C2S", event.packet);
+        if (c2sPackets.get().contains(event.packet.type())) logPacket("c2s", "-> C2S", event.packet);
     }
 
     private void logPacket(String dir, String chatDir, Packet<?> packet) {
         if (!logToChat.get() && !logToFile.get()) return;
 
-        @SuppressWarnings("unchecked")
-        Class<? extends Packet<?>> packetClass = (Class<? extends Packet<?>>) packet.getClass();
-        packetCounts.addTo(packetClass, 1);
+        PacketType<? extends Packet<?>> packetType = eventPacketType(packet);
+        packetCounts.addTo(packetType, 1);
 
         long ordinal = ++ordinalCounter;
-        if (logToChat.get()) logPacketToChat(chatDir, packetClass);
+        if (logToChat.get()) logPacketToChat(chatDir, packetType);
         if (logToFile.get()) writeJsonRecord(buildPacketRecord(dir, ordinal, packet));
     }
 
-    private void logPacketToChat(String direction, Class<? extends Packet<?>> packetClass) {
+    @SuppressWarnings("unchecked")
+    private static PacketType<? extends Packet<?>> eventPacketType(Packet<?> packet) {
+        return (PacketType<? extends Packet<?>>) packet.type();
+    }
+
+    private void logPacketToChat(String direction, PacketType<? extends Packet<?>> packetType) {
         StringBuilder line = new StringBuilder(96);
 
         if (showTimestamp.get()) {
@@ -269,10 +274,10 @@ public class PacketLoggerTHM extends Module {
                 .append("] ");
         }
 
-        line.append(direction).append(' ').append(PacketUtils.getName(packetClass));
+        line.append(direction).append(' ').append(packetType);
 
         if (showCount.get()) {
-            line.append(" (#").append(packetCounts.getInt(packetClass)).append(')');
+            line.append(" (#").append(packetCounts.getInt(packetType)).append(')');
         }
 
         info(line.toString());
@@ -283,9 +288,9 @@ public class PacketLoggerTHM extends Module {
         info("--- THM Packet Logger Summary ---");
         info("Total packets logged: %d", totalPackets);
 
-        packetCounts.reference2IntEntrySet().stream()
+        packetCounts.object2IntEntrySet().stream()
             .sorted((a, b) -> Integer.compare(b.getIntValue(), a.getIntValue()))
-            .forEach(entry -> info("%s: %d", PacketUtils.getName(entry.getKey()), entry.getIntValue()));
+            .forEach(entry -> info("%s: %d", entry.getKey(), entry.getIntValue()));
     }
 
     private JsonObject buildStartRecord() {
@@ -313,13 +318,12 @@ public class PacketLoggerTHM extends Module {
 
     private JsonObject buildPacketRecord(String dir, long ordinal, Packet<?> packet) {
         JsonObject record = baseRecord("packet");
-        @SuppressWarnings("unchecked")
-        Class<? extends Packet<?>> packetClass = (Class<? extends Packet<?>>) packet.getClass();
+        PacketType<? extends Packet<?>> packetType = eventPacketType(packet);
 
         record.addProperty("dir", dir);
         record.addProperty("ordinal", ordinal);
-        record.addProperty("packet_class", packetClass.getName());
-        record.addProperty("packet_name", PacketUtils.getName(packetClass));
+        record.addProperty("packet_class", packet.getClass().getName());
+        record.addProperty("packet_name", packetType.toString());
 
         JsonObject fields;
         try {
@@ -370,12 +374,12 @@ public class PacketLoggerTHM extends Module {
 
     private JsonArray buildPacketCountsArray() {
         JsonArray counts = new JsonArray();
-        packetCounts.reference2IntEntrySet().stream()
+        packetCounts.object2IntEntrySet().stream()
             .sorted((a, b) -> Integer.compare(b.getIntValue(), a.getIntValue()))
             .forEach(entry -> {
                 JsonObject packetCount = new JsonObject();
-                packetCount.addProperty("packet_class", entry.getKey().getName());
-                packetCount.addProperty("packet_name", PacketUtils.getName(entry.getKey()));
+                packetCount.addProperty("packet_class", entry.getKey().toString());
+                packetCount.addProperty("packet_name", entry.getKey().toString());
                 packetCount.addProperty("count", entry.getIntValue());
                 counts.add(packetCount);
             });
@@ -390,10 +394,10 @@ public class PacketLoggerTHM extends Module {
         return files;
     }
 
-    private JsonArray packetNamesToJsonArray(Set<Class<? extends Packet<?>>> packets) {
+    private JsonArray packetNamesToJsonArray(Set<PacketType<? extends Packet<?>>> packets) {
         JsonArray array = new JsonArray();
         packets.stream()
-            .map(PacketUtils::getName)
+            .map(PacketType::toString)
             .sorted()
             .forEach(array::add);
         return array;
@@ -439,7 +443,7 @@ public class PacketLoggerTHM extends Module {
             fields.addProperty("revision", p.stateId());
             fields.addProperty("slot", p.slotNum());
             fields.addProperty("button", p.buttonNum());
-            fields.addProperty("action_type", p.clickType().name());
+            fields.addProperty("action_type", p.containerInput().name());
             fields.add("cursor", serializeItemStackHash(p.carriedItem()));
             fields.add("changed_stacks", serializeChangedStackHashes(p.changedSlots()));
             return fields;

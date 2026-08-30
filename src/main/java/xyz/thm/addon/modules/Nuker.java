@@ -8,7 +8,7 @@ package xyz.thm.addon.modules;
 
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import meteordevelopment.meteorclient.events.entity.player.BlockBreakingCooldownEvent;
-import meteordevelopment.meteorclient.events.meteor.KeyEvent;
+import meteordevelopment.meteorclient.events.meteor.KeyInputEvent;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -54,6 +54,7 @@ import xyz.thm.addon.utils.InventoryManager;
 import xyz.thm.addon.utils.RangeUtils;
 
 import java.util.*;
+import xyz.thm.addon.compat.ClientGui;
 
 public class Nuker extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -203,7 +204,7 @@ public class Nuker extends Module {
     }
 
     @EventHandler
-    private void onKey(KeyEvent event) {
+    private void onKey(KeyInputEvent event) {
         if (event.action == KeyAction.Press) addTargetedBlockToList();
     }
 
@@ -638,7 +639,7 @@ public class Nuker extends Module {
     }
 
     private void addTargetedBlockToList() {
-        if (!selectBlockBind.get().isPressed() || mc.screen != null) return;
+        if (!selectBlockBind.get().isPressed() || ClientGui.screen(mc) != null) return;
 
         HitResult hitResult = mc.hitResult;
         if (!(hitResult instanceof BlockHitResult bhr)) return;

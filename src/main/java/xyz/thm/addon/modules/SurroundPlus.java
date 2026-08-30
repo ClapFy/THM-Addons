@@ -25,7 +25,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundExplodePacket;
-import net.minecraft.network.protocol.game.ServerboundInteractPacket;
+import net.minecraft.network.protocol.game.ServerboundAttackPacket;
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -573,7 +573,7 @@ public class SurroundPlus extends Module {
                 .findFirst()
                 .orElse(null);
             if (crystal != null) {
-                mc.getConnection().send(ServerboundInteractPacket.createAttackPacket(crystal, mc.player.isShiftKeyDown()));
+                mc.getConnection().send(new ServerboundAttackPacket(crystal.getId()));
                 mc.getConnection().send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
                 return;
             }

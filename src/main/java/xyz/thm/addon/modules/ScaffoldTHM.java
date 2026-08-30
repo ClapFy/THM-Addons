@@ -7,7 +7,7 @@
 package xyz.thm.addon.modules;
 
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixininterface.IVec3d;
+import meteordevelopment.meteorclient.mixininterface.IVec3;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
@@ -94,7 +94,7 @@ public class ScaffoldTHM extends Module {
         for (int i = 0; i <= (mc.player.getDeltaMovement().x == 0.0 && mc.player.getDeltaMovement().z == 0.0 ? 0 : ext.get()); i++) {
             // Loop body
             Vec3 pos = mc.player.position().add(-f * i, -0.5, g * i);
-            if (keepY.get()) ((IVec3d) pos).meteor$setY(height.get() - 1.0);
+            if (keepY.get()) ((IVec3) pos).meteor$setY(height.get() - 1.0);
 
             BlockPos bPos = BlockPos.containing(pos);
 

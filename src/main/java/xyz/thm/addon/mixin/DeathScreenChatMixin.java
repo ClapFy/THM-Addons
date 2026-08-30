@@ -15,6 +15,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import xyz.thm.addon.gui.DeathChatScreen;
+import xyz.thm.addon.compat.ClientGui;
 
 /**
  * Lets the chat/command key open chat on the death screen — it is client-side only, the server
@@ -31,7 +32,7 @@ public class DeathScreenChatMixin {
         boolean command = mc.options.keyCommand.matches(input);
         if (!command && !mc.options.keyChat.matches(input)) return;
 
-        mc.setScreen(new DeathChatScreen((Screen) (Object) this, command ? "/" : ""));
+        ClientGui.setScreen(mc, new DeathChatScreen((Screen) (Object) this, command ? "/" : ""));
         cir.setReturnValue(true);
     }
 }

@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.*;
+import xyz.thm.addon.compat.ClientGui;
 
 public class ModuleManager extends Module {
     private static final String DEBUG_FILE_NAME = "module-manager-debug.log";
@@ -663,7 +664,7 @@ public class ModuleManager extends Module {
     private String formatEventLine(String eventType, String detail, Module module, List<String> leaseLabels, String stack) {
         String moduleName = module == null ? "none" : module.name;
         String moduleTitle = module == null ? "none" : module.title;
-        String screenName = mc == null || mc.screen == null ? "none" : mc.screen.getClass().getSimpleName();
+        String screenName = mc == null || ClientGui.screen(mc) == null ? "none" : ClientGui.screen(mc).getClass().getSimpleName();
         String serverState = String.valueOf(getCommittedServerState());
         boolean builderActive = isModuleActive(HighwayBuilderTHM.class);
         boolean monitorActive = isModuleActive(THMHwyMonitor.class);

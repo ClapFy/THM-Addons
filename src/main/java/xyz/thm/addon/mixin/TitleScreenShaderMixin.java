@@ -6,7 +6,7 @@
 
 package xyz.thm.addon.mixin;
 
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -28,8 +28,8 @@ import xyz.thm.addon.shaders.ShaderBackground;
 @Mixin(Screen.class)
 public abstract class TitleScreenShaderMixin {
 
-    @Inject(method = "renderPanorama", at = @At("HEAD"), cancellable = true)
-    private void thm$renderShaderBackground(GuiGraphics context, float deltaTicks, CallbackInfo ci) {
+    @Inject(method = "extractPanorama", at = @At("HEAD"), cancellable = true)
+    private void thm$renderShaderBackground(GuiGraphicsExtractor context, float deltaTicks, CallbackInfo ci) {
         if (ShaderBackground.render()) ci.cancel();
     }
 }

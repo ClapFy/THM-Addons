@@ -47,6 +47,7 @@ import xyz.thm.addon.mixin.accessor.LogoutSpotsEntryAccessor;
 import xyz.thm.addon.utils.PlacementUtils;
 
 import java.util.*;
+import xyz.thm.addon.compat.ClientGui;
 
 public class AutoTrapPlus extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -371,7 +372,7 @@ public class AutoTrapPlus extends Module {
         if (logoutTrapMode.get() == LogoutTrapMode.Auto) {
             if (!pendingLogoutSpots.isEmpty()) spotsToProcess.addAll(pendingLogoutSpots);
         } else {
-            if (logoutTrapKeybind.get().isPressed() && mc.screen == null) {
+            if (logoutTrapKeybind.get().isPressed() && ClientGui.screen(mc) == null) {
                 if (!logoutManualPressed) {
                     logoutManualPressed = true;
                     if (!pendingLogoutSpots.isEmpty()) spotsToProcess.addAll(pendingLogoutSpots);

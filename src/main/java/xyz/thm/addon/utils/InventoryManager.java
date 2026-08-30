@@ -18,7 +18,7 @@ import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.AxeItem;
@@ -253,7 +253,7 @@ public class InventoryManager {
         for (int i = start; i < end; i++) {
             Slot slot = handler.getSlot(i);
             if (!slot.getItem().isEmpty() || !slot.mayPlace(cursor)) continue;
-            mc.gameMode.handleInventoryMouseClick(handler.containerId, i, 0, ClickType.PICKUP, mc.player);
+            mc.gameMode.handleContainerInput(handler.containerId, i, 0, ContainerInput.PICKUP, mc.player);
             return true;
         }
         return false;
@@ -390,7 +390,7 @@ public class InventoryManager {
                 // Single SWAP packet: swaps screen-handler slot `slot` with hotbar slot `targetHotbar` (0-8).
                 // Calling the same packet again in swapBack self-reverses the swap.
                 int syncId = mc.player.containerMenu.containerId;
-                mc.gameMode.handleInventoryMouseClick(syncId, slot, targetHotbar, ClickType.SWAP, mc.player);
+                mc.gameMode.handleContainerInput(syncId, slot, targetHotbar, ContainerInput.SWAP, mc.player);
 
                 if (silent) {
                     mgr.setSlotForced(targetHotbar);
@@ -421,7 +421,7 @@ public class InventoryManager {
         if (mgr.lastSwapBufferSlot != -1) {
             // Same SWAP packet as swapTo — calling it again reverses the swap exactly.
             int syncId = mc.player.containerMenu.containerId;
-            mc.gameMode.handleInventoryMouseClick(syncId, mgr.lastSwapOriginalSlot, mgr.lastSwapBufferSlot, ClickType.SWAP, mc.player);
+            mc.gameMode.handleContainerInput(syncId, mgr.lastSwapOriginalSlot, mgr.lastSwapBufferSlot, ContainerInput.SWAP, mc.player);
         }
 
         if (silent) {

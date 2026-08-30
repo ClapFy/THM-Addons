@@ -6,7 +6,7 @@
 
 package xyz.thm.addon.gui;
 
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
+import xyz.thm.addon.compat.ClientGui;
 
 // Plain vanilla Screen - no Meteor GuiTheme/WidgetScreen dependency - styled with the same
 // BleachHack window chrome as the title screen (see MainMenuFx). Reads/writes THMSystem's
@@ -96,7 +97,7 @@ public class MainMenuSettingsScreen extends Screen {
         // screen is hidden meanwhile - see TitleScreenMenuMixin.
         Button preview = this.addRenderableWidget(Button.builder(Component.literal("Preview Shader"), b -> {
                 MainMenuFx.previewMode = true;
-                this.minecraft.setScreen(parent);
+                ClientGui.setScreen(this.minecraft, parent);
             })
             .bounds(contentX, y, contentWidth, 20)
             .build());
@@ -248,19 +249,19 @@ public class MainMenuSettingsScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics context, int mouseX, int mouseY, float deltaTicks) {
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks) {
         MainMenuFx.renderChrome(context, this.font, x1, y1, x2, y2, "THM Menu");
-        super.render(context, mouseX, mouseY, deltaTicks);
+        super.extractRenderState(context, mouseX, mouseY, deltaTicks);
     }
 
     @Override
-    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float deltaTicks) {
+    public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks) {
         // Keep whatever's already drawn behind this screen (the title screen's own shader/
         // window) instead of vanilla's dirt/blur background.
     }
 
     @Override
     public void onClose() {
-        this.minecraft.setScreen(parent);
+        ClientGui.setScreen(this.minecraft, parent);
     }
 }

@@ -20,8 +20,8 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixin.ShulkerBoxScreenHandlerAccessor;
-import meteordevelopment.meteorclient.mixininterface.IVec3d;
+import meteordevelopment.meteorclient.mixin.ShulkerBoxMenuAccessor;
+import meteordevelopment.meteorclient.mixininterface.IVec3;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
@@ -82,7 +82,7 @@ import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ArrowItem;
 import net.minecraft.world.item.BlockItem;
@@ -149,6 +149,7 @@ import java.util.regex.Pattern;
 
 import static xyz.thm.addon.utils.APIUtils.*;
 import static xyz.thm.addon.utils.THMUtils.*;
+import xyz.thm.addon.compat.ClientGui;
 
 @SuppressWarnings("ConstantConditions")
 public class HighwayBuilderTHM extends Module {
@@ -3626,7 +3627,7 @@ public class HighwayBuilderTHM extends Module {
         bridge.thm$forceStopEating(eatingPauseRecoveryToken);
         resetEatingRetryProgress(now);
 
-        if (mc.screen != null) {
+        if (ClientGui.screen(mc) != null) {
             closeHandledScreen();
             eatingRetryPhase = EatingRetryPhase.PENDING_SCREEN_CLOSE;
             eatingPauseSettleTicks = 0;
@@ -3641,7 +3642,7 @@ public class HighwayBuilderTHM extends Module {
             case NONE -> {
             }
             case PENDING_SCREEN_CLOSE -> {
-                if (mc.screen == null) {
+                if (ClientGui.screen(mc) == null) {
                     eatingRetryPhase = EatingRetryPhase.PENDING_SCREEN_SETTLE;
                     eatingPauseSettleTicks = 1;
                 }
@@ -4536,7 +4537,7 @@ public class HighwayBuilderTHM extends Module {
         float sidewaysAmount = input.sidewaysAmount();
         double y = event.movement.y;
         if (forwardAmount == 0.0f && sidewaysAmount == 0.0f) {
-            ((IVec3d) event.movement).meteor$set(0.0, y, 0.0);
+            ((IVec3) event.movement).meteor$set(0.0, y, 0.0);
             return;
         }
 
@@ -4548,7 +4549,7 @@ public class HighwayBuilderTHM extends Module {
 
         double x = (-sin * forwardAmount * forwardSpeed) + (cos * sidewaysAmount * lateralSpeed);
         double z = (cos * forwardAmount * forwardSpeed) + (sin * sidewaysAmount * lateralSpeed);
-        ((IVec3d) event.movement).meteor$set(x, y, z);
+        ((IVec3) event.movement).meteor$set(x, y, z);
     }
 
     private double currentThmForwardSpeedPerTick() {
@@ -5304,7 +5305,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void closeHandledScreen() {
-        if (mc.player != null && mc.screen != null) mc.player.closeContainer();
+        if (mc.player != null && ClientGui.screen(mc) != null) mc.player.closeContainer();
     }
 
     private void setState(State state) {
@@ -7262,7 +7263,7 @@ public class HighwayBuilderTHM extends Module {
                 return RESTOCK_WATCHDOG_SETUP_TIMEOUT_TICKS;
             }
 
-            if (b.state == State.Restock && b.mc.screen != null) {
+            if (b.state == State.Restock && ClientGui.screen(b.mc) != null) {
                 return RESTOCK_WATCHDOG_TRANSFER_TIMEOUT_TICKS;
             }
 
@@ -7367,7 +7368,7 @@ public class HighwayBuilderTHM extends Module {
                 }
             }
 
-            if (b.mc.screen != null) {
+            if (ClientGui.screen(b.mc) != null) {
                 b.closeHandledScreen();
                 return true;
             }
@@ -7480,7 +7481,7 @@ public class HighwayBuilderTHM extends Module {
         }
 
         private void appendScreenSignature(StringBuilder sb) {
-            String screenName = b.mc.screen == null ? "none" : b.mc.screen.getClass().getSimpleName();
+            String screenName = ClientGui.screen(b.mc) == null ? "none" : ClientGui.screen(b.mc).getClass().getSimpleName();
             int screenSyncId = b.mc.player.containerMenu != null ? b.mc.player.containerMenu.containerId : -1;
             ItemStack cursorStack = b.mc.player.containerMenu != null
                 ? b.mc.player.containerMenu.getCarried()
@@ -10843,11 +10844,11 @@ public class HighwayBuilderTHM extends Module {
 
         if (emptySlot == -1) return false;
 
-        mc.gameMode.handleInventoryMouseClick(
+        mc.gameMode.handleContainerInput(
             mc.player.containerMenu.containerId,
             SlotUtils.indexToId(emptySlot),
             0,
-            ClickType.PICKUP,
+            ContainerInput.PICKUP,
             mc.player
         );
 
@@ -10876,11 +10877,11 @@ public class HighwayBuilderTHM extends Module {
             return true;
         }
 
-        mc.gameMode.handleInventoryMouseClick(
+        mc.gameMode.handleContainerInput(
             mc.player.containerMenu.containerId,
             SlotUtils.indexToId(trashSlot),
             0,
-            ClickType.PICKUP,
+            ContainerInput.PICKUP,
             mc.player
         );
 
@@ -10940,11 +10941,11 @@ public class HighwayBuilderTHM extends Module {
         if (wasActive) antiDrop.toggle();
 
         try {
-            mc.gameMode.handleInventoryMouseClick(
+            mc.gameMode.handleContainerInput(
                 mc.player.containerMenu.containerId,
                 -999,
                 0,
-                ClickType.PICKUP,
+                ContainerInput.PICKUP,
                 mc.player
             );
         } finally {
@@ -12433,8 +12434,8 @@ public class HighwayBuilderTHM extends Module {
             Vec3 vec1 = new Vec3(0, 0, 0);
             Vec3 vec2 = new Vec3(0, 0, 0);
 
-            ((IVec3d) vec1).meteor$set(mc.player.getX(), mc.player.getY() + mc.player.getEyeHeight(), mc.player.getZ());
-            ((IVec3d) vec2).meteor$set(entity.getX(), entity.getY() + 0.5, entity.getZ());
+            ((IVec3) vec1).meteor$set(mc.player.getX(), mc.player.getY() + mc.player.getEyeHeight(), mc.player.getZ());
+            ((IVec3) vec2).meteor$set(entity.getX(), entity.getY() + 0.5, entity.getZ());
             return mc.level.clip(new ClipContext(vec1, vec2, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player)).getType() == HitResult.Type.MISS;
         }
 
@@ -12815,8 +12816,8 @@ public class HighwayBuilderTHM extends Module {
                     Vec3 vec1 = new Vec3(0, 0, 0);
                     Vec3 vec2 = new Vec3(0, 0, 0);
 
-                    ((IVec3d) vec1).meteor$set(b.mc.player.getX(), b.mc.player.getY() + b.mc.player.getEyeHeight(), b.mc.player.getZ());
-                    ((IVec3d) vec2).meteor$set(entity.getX(), entity.getY() + 0.5, entity.getZ());
+                    ((IVec3) vec1).meteor$set(b.mc.player.getX(), b.mc.player.getY() + b.mc.player.getEyeHeight(), b.mc.player.getZ());
+                    ((IVec3) vec2).meteor$set(entity.getX(), entity.getY() + 0.5, entity.getZ());
                     return b.mc.level.clip(new ClipContext(vec1, vec2, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, b.mc.player)).getType() == HitResult.Type.MISS;
                 }
 
@@ -13258,11 +13259,11 @@ public class HighwayBuilderTHM extends Module {
                     return true;
                 }
 
-                b.mc.gameMode.handleInventoryMouseClick(
+                b.mc.gameMode.handleContainerInput(
                     b.mc.player.containerMenu.containerId,
                     SlotUtils.indexToId(trashSlot),
                     0,
-                    ClickType.PICKUP,
+                    ContainerInput.PICKUP,
                     b.mc.player
                 );
 
@@ -13289,11 +13290,11 @@ public class HighwayBuilderTHM extends Module {
                 int trashSlot = findTrashSwapSlot(b, false);
                 if (trashSlot == -1) return false;
 
-                b.mc.gameMode.handleInventoryMouseClick(
+                b.mc.gameMode.handleContainerInput(
                     b.mc.player.containerMenu.containerId,
                     SlotUtils.indexToId(trashSlot),
                     0,
-                    ClickType.PICKUP,
+                    ContainerInput.PICKUP,
                     b.mc.player
                 );
 
@@ -13667,7 +13668,7 @@ public class HighwayBuilderTHM extends Module {
                 BlockState blockState = b.mc.level.getBlockState(bp);
 
                 if (blockState.getBlock() == Blocks.ENDER_CHEST) {
-                    if (b.mc.screen instanceof ContainerScreen screen) {
+                    if (ClientGui.screen(b.mc) instanceof ContainerScreen screen) {
                         // wait for the screen to be properly loaded
                         if (screen.getMenu().containerId != b.syncId) return;
 
@@ -15087,7 +15088,7 @@ public class HighwayBuilderTHM extends Module {
 
                 if (!b.mc.player.containerMenu.getCarried().isEmpty()) {
                     b.restockDebug("Restock.tick cursor stack not empty: %s.", b.mc.player.containerMenu.getCarried().getItem());
-                    if (b.mc.screen != null) b.closeHandledScreen();
+                    if (ClientGui.screen(b.mc) != null) b.closeHandledScreen();
                     if (!b.mc.player.containerMenu.getCarried().isEmpty()
                         && !b.clearCursorStackToEmptySlot("Restock.tick")
                         && !b.dropCursorStackIfSafe("Restock.tick")) {
@@ -15116,11 +15117,11 @@ public class HighwayBuilderTHM extends Module {
                         Container foodContainerInventory = null;
                         boolean directEnderChestFoodContainer = false;
 
-                        if (b.mc.screen instanceof ShulkerBoxScreen screen
+                        if (ClientGui.screen(b.mc) instanceof ShulkerBoxScreen screen
                             && screen.getMenu().containerId == b.syncId) {
-                            foodContainerInventory = ((ShulkerBoxScreenHandlerAccessor) screen.getMenu()).meteor$getInventory();
+                            foodContainerInventory = ((ShulkerBoxMenuAccessor) screen.getMenu()).meteor$getContainer();
                         }
-                        else if (b.mc.screen instanceof ContainerScreen screen
+                        else if (ClientGui.screen(b.mc) instanceof ContainerScreen screen
                             && screen.getMenu().containerId == b.syncId) {
                             foodContainerInventory = screen.getMenu().getContainer();
                             directEnderChestFoodContainer = true;
@@ -15133,9 +15134,9 @@ public class HighwayBuilderTHM extends Module {
                         }
                     }
                     if (b.restockTask.enderChests
-                        && b.mc.screen instanceof ShulkerBoxScreen screen
+                        && ClientGui.screen(b.mc) instanceof ShulkerBoxScreen screen
                         && screen.getMenu().containerId == b.syncId) {
-                        Container inv = ((ShulkerBoxScreenHandlerAccessor) screen.getMenu()).meteor$getInventory();
+                        Container inv = ((ShulkerBoxMenuAccessor) screen.getMenu()).meteor$getContainer();
                         if (returnSmallestExtraEnderChestStackToContainer(b)) {
                             delayTimer = b.inventoryDelay.get();
                             return;
@@ -15147,7 +15148,7 @@ public class HighwayBuilderTHM extends Module {
                     indicateStopping = true;
                     breakContainer = true;
                     stopTimer = 12;
-                    if (b.mc.screen != null) b.closeHandledScreen();
+                    if (ClientGui.screen(b.mc) != null) b.closeHandledScreen();
                     return;
                 }
                 if (b.restockTask.canTransitionToMineEnderChests() && !indicateStopping) {
@@ -15158,7 +15159,7 @@ public class HighwayBuilderTHM extends Module {
                     indicateStopping = true;
                     breakContainer = true;
                     stopTimer = 12;
-                    if (b.mc.screen != null) b.closeHandledScreen();
+                    if (ClientGui.screen(b.mc) != null) b.closeHandledScreen();
                     return;
                 }
 
@@ -15176,11 +15177,11 @@ public class HighwayBuilderTHM extends Module {
                 switch (blockState.getBlock()) {
                     // if we have placed a shulker box there should be items inside we want
                     case ShulkerBoxBlock ignored -> {
-                        if (b.mc.screen instanceof ShulkerBoxScreen screen) {
+                        if (ClientGui.screen(b.mc) instanceof ShulkerBoxScreen screen) {
                             // wait for the screen to be properly loaded
                             if (screen.getMenu().containerId != b.syncId) return;
 
-                            Container inv = ((ShulkerBoxScreenHandlerAccessor) screen.getMenu()).meteor$getInventory();
+                            Container inv = ((ShulkerBoxMenuAccessor) screen.getMenu()).meteor$getContainer();
 
                             if (restockItems(b, inv)) {
                                 delayTimer = b.inventoryDelay.get();
@@ -15204,7 +15205,7 @@ public class HighwayBuilderTHM extends Module {
 
                     // we are either pulling items themselves, or shulkers containing items from your ec
                     case EnderChestBlock ignored -> {
-                        if (b.mc.screen instanceof ContainerScreen screen) {
+                        if (ClientGui.screen(b.mc) instanceof ContainerScreen screen) {
                             // wait for the screen to be properly loaded
                             if (screen.getMenu().containerId != b.syncId) return;
 
@@ -15397,7 +15398,7 @@ public class HighwayBuilderTHM extends Module {
                 int beforeProgress = session != null ? session.getProgressTowardsTarget() : 0;
                 int beforeUsablePulledEchests = session != null ? session.getUsablePulledEchests() : 0;
                 if (!grabFromInventory(b, inv, filterItem)) return false;
-                if (b.restockTask.food && sourcePhase == RestockTask.SourcePhase.EnderChest && b.mc.screen instanceof ContainerScreen) {
+                if (b.restockTask.food && sourcePhase == RestockTask.SourcePhase.EnderChest && ClientGui.screen(b.mc) instanceof ContainerScreen) {
                     b.invalidateEChestMemorySnapshot("direct-food-pull");
                 }
                 b.restockTask.noteSourceForwardProgress(sourcePhase, beforeProgress, beforeUsablePulledEchests);
@@ -15569,7 +15570,7 @@ public class HighwayBuilderTHM extends Module {
                         return true;
                     }
 
-                    if (b.mc.screen != null) b.closeHandledScreen();
+                    if (ClientGui.screen(b.mc) != null) b.closeHandledScreen();
                     if (!b.mc.player.containerMenu.getCarried().isEmpty()) {
                         dropCursorBypassAntiDrop(b);
                     }
@@ -15587,7 +15588,7 @@ public class HighwayBuilderTHM extends Module {
                 for (int i = 0; i < b.mc.player.containerMenu.slots.size(); i++) {
                     Slot slot = b.mc.player.containerMenu.slots.get(i);
                     if (slot.container == b.mc.player.getInventory() && slot.getItem().isEmpty()) {
-                        b.mc.gameMode.handleInventoryMouseClick(b.mc.player.containerMenu.containerId, i, 0, ClickType.PICKUP, b.mc.player);
+                        b.mc.gameMode.handleContainerInput(b.mc.player.containerMenu.containerId, i, 0, ContainerInput.PICKUP, b.mc.player);
                         if (b.mc.player.containerMenu.getCarried().isEmpty()) return true;
                     }
                 }
@@ -16073,7 +16074,7 @@ public class HighwayBuilderTHM extends Module {
                     return true;
                 }
 
-                if (!(b.mc.screen instanceof ContainerScreen screen)) {
+                if (!(ClientGui.screen(b.mc) instanceof ContainerScreen screen)) {
                     handleContainerBlock(b, blockPos);
                     return true;
                 }
@@ -16087,11 +16088,11 @@ public class HighwayBuilderTHM extends Module {
                     ItemStack trackedShulker = b.mc.player.getInventory().getItem(trackedSlot);
                     if (!b.isContainerItemEmpty(trackedShulker)) {
                         ItemStack before = trackedShulker.copy();
-                        b.mc.gameMode.handleInventoryMouseClick(
+                        b.mc.gameMode.handleContainerInput(
                             b.mc.player.containerMenu.containerId,
                             SlotUtils.indexToId(trackedSlot),
                             0,
-                            ClickType.QUICK_MOVE,
+                            ContainerInput.QUICK_MOVE,
                             b.mc.player
                         );
                         ItemStack after = b.mc.player.getInventory().getItem(trackedSlot);
@@ -16216,7 +16217,7 @@ public class HighwayBuilderTHM extends Module {
                     return true;
                 }
 
-                if (!(b.mc.screen instanceof ContainerScreen screen)) {
+                if (!(ClientGui.screen(b.mc) instanceof ContainerScreen screen)) {
                     handleContainerBlock(b, blockPos);
                     return true;
                 }
@@ -16230,11 +16231,11 @@ public class HighwayBuilderTHM extends Module {
                     ItemStack trackedShulker = b.mc.player.getInventory().getItem(trackedSlot);
                     if (!b.isContainerItemEmpty(trackedShulker)) {
                         ItemStack before = trackedShulker.copy();
-                        b.mc.gameMode.handleInventoryMouseClick(
+                        b.mc.gameMode.handleContainerInput(
                             b.mc.player.containerMenu.containerId,
                             SlotUtils.indexToId(trackedSlot),
                             0,
-                            ClickType.QUICK_MOVE,
+                            ContainerInput.QUICK_MOVE,
                             b.mc.player
                         );
                         ItemStack after = b.mc.player.getInventory().getItem(trackedSlot);
@@ -16310,11 +16311,11 @@ public class HighwayBuilderTHM extends Module {
                 if (matchingEnderChestStacks <= 1 || smallestSlot == -1) return false;
 
                 ItemStack before = b.mc.player.getInventory().getItem(smallestSlot).copy();
-                b.mc.gameMode.handleInventoryMouseClick(
+                b.mc.gameMode.handleContainerInput(
                     b.mc.player.containerMenu.containerId,
                     SlotUtils.indexToId(smallestSlot),
                     0,
-                    ClickType.QUICK_MOVE,
+                    ContainerInput.QUICK_MOVE,
                     b.mc.player
                 );
 
@@ -16538,8 +16539,8 @@ public class HighwayBuilderTHM extends Module {
                     Vec3 vec1 = new Vec3(0, 0, 0);
                     Vec3 vec2 = new Vec3(0, 0, 0);
 
-                    ((IVec3d) vec1).meteor$set(b.mc.player.getX(), b.mc.player.getY() + b.mc.player.getEyeHeight(), b.mc.player.getZ());
-                    ((IVec3d) vec2).meteor$set(entity.getX(), entity.getY() + 0.5, entity.getZ());
+                    ((IVec3) vec1).meteor$set(b.mc.player.getX(), b.mc.player.getY() + b.mc.player.getEyeHeight(), b.mc.player.getZ());
+                    ((IVec3) vec2).meteor$set(entity.getX(), entity.getY() + 0.5, entity.getZ());
                     return b.mc.level.clip(new ClipContext(vec1, vec2, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, b.mc.player)).getType() == HitResult.Type.MISS;
                 }, SortPriority.LowestDistance);
 
@@ -17050,11 +17051,11 @@ public class HighwayBuilderTHM extends Module {
                 }
             }
 
-            b.mc.gameMode.handleInventoryMouseClick(
+            b.mc.gameMode.handleContainerInput(
                 b.mc.player.containerMenu.containerId,
                 SlotUtils.indexToId(hotbarSlot),
                 0,
-                ClickType.PICKUP,
+                ContainerInput.PICKUP,
                 b.mc.player
             );
 

@@ -16,10 +16,63 @@ plugins {
     alias(libs.plugins.fabric.loom)
 }
 
+data class McFlavor(
+    val minecraft: String,
+    val fabricApi: String,
+    val meteor: String,
+    val baritone: String,
+    val minecraftDepends: String,
+    val compat: String,
+)
+
+val flavors = mapOf(
+    "26.1.1" to McFlavor(
+        minecraft = "26.1.1",
+        fabricApi = "0.145.4+26.1.1",
+        meteor = "26.1.2-SNAPSHOT",
+        baritone = "26.1-SNAPSHOT",
+        minecraftDepends = "26.1.1",
+        compat = "26.1",
+    ),
+    "26.1.2" to McFlavor(
+        minecraft = "26.1.2",
+        fabricApi = "0.155.2+26.1.2",
+        meteor = "26.1.2-SNAPSHOT",
+        baritone = "26.1-SNAPSHOT",
+        minecraftDepends = "~26.1",
+        compat = "26.1",
+    ),
+    "26.2" to McFlavor(
+        minecraft = "26.2",
+        fabricApi = "0.154.2+26.2",
+        meteor = "26.2-SNAPSHOT",
+        baritone = "26.2-SNAPSHOT",
+        minecraftDepends = "~26.2",
+        compat = "26.2",
+    ),
+)
+
+val mcTarget = providers.gradleProperty("mc").orElse("26.2").get()
+val flavor = flavors[mcTarget] ?: error(
+    "Unknown -Pmc=$mcTarget. Use one of: ${flavors.keys.joinToString()}"
+)
+
+val jdkVersion = libs.versions.jdk.get()
+val modVersion = libs.versions.mod.version.get()
+
+val archivesBaseName = providers.gradleProperty("archives_base_name").get()
+val mavenGroup = providers.gradleProperty("maven_group").get()
+
 base {
-    archivesName = properties["archives_base_name"] as String
-    version = libs.versions.mod.version.get()
-    group = properties["maven_group"] as String
+    archivesName = archivesBaseName
+    version = "$modVersion+$mcTarget"
+    group = mavenGroup
+}
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(jdkVersion.toInt()))
+    }
 }
 
 repositories {
@@ -34,20 +87,14 @@ repositories {
 }
 
 dependencies {
-    // Fabric
-    minecraft(libs.minecraft)
-    mappings(loom.officialMojangMappings())
-    modImplementation(libs.fabric.loader)
-    modImplementation(libs.fabric.api)
-
-    // Meteor
-    modImplementation(libs.meteor.client)
-
-    // Baritone
-    modCompileOnly(libs.baritone)
+    minecraft("com.mojang:minecraft:${flavor.minecraft}")
+    implementation(libs.fabric.loader)
+    implementation("net.fabricmc.fabric-api:fabric-api:${flavor.fabricApi}")
+    implementation("meteordevelopment:meteor-client:${flavor.meteor}")
+    compileOnly("meteordevelopment:baritone:${flavor.baritone}")
 }
 
-val generateAPIUtils by tasks.registering {
+val generateAPIUtils = tasks.register("generateAPIUtils") {
     val secretsFile = file("secrets.properties")
     val secretsExampleFile = file("secrets.properties.example")
     // Falls back to the example (placeholder example.com URLs) so contributors without the
@@ -187,6 +234,7 @@ val generateAPIUtils by tasks.registering {
 sourceSets {
     main {
         java {
+            srcDir("src/compat/${flavor.compat}/java")
             exclude("xyz/thm/addon/modules/HandshakeHostTest.java")
             exclude("xyz/thm/addon/mixin/ClientConnectionMixin.java")
             exclude("xyz/thm/addon/mixin/HandshakeC2SPacketMixin.java")
@@ -200,7 +248,9 @@ tasks {
     processResources {
         val propertyMap = mapOf(
             "version" to project.version,
-            "mc_version" to libs.versions.minecraft.get(),
+            "mc_version" to flavor.minecraft,
+            "minecraft_version" to flavor.minecraftDepends,
+            "jdk_version" to jdkVersion,
             "gh_hash" to (System.getenv("GITHUB_SHA") ?: run {
                 val process = ProcessBuilder("git", "rev-parse", "HEAD")
                     .directory(rootDir)
@@ -245,14 +295,9 @@ tasks {
         }
     }
 
-    java {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
-    }
-
-    withType<JavaCompile> {
+    withType<JavaCompile>().configureEach {
         options.encoding = "UTF-8"
-        options.release = 21
+        options.release = jdkVersion.toInt()
         options.isFork = true
         options.forkOptions.memoryMaximumSize = "3g"
         options.compilerArgs.add("-Xlint:deprecation")
@@ -260,3 +305,5 @@ tasks {
         dependsOn(generateAPIUtils)
     }
 }
+
+logger.lifecycle("THM Addons target Minecraft ${flavor.minecraft} / Meteor ${flavor.meteor} (compat ${flavor.compat})")

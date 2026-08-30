@@ -26,6 +26,7 @@ import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
 import xyz.thm.addon.utils.InventoryManager;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
+import xyz.thm.addon.compat.ClientGui;
 @Mixin(value = AutoEat.class, remap = false)
 public abstract class AutoEatMixin implements StuckEatingRetryBridge {
     @Shadow public boolean eating;
@@ -67,7 +68,7 @@ public abstract class AutoEatMixin implements StuckEatingRetryBridge {
             bephax$changeSlot(slot);
         }
         invManager.setEating(true);
-        boolean shouldPressKey = mc.screen == null;
+        boolean shouldPressKey = ClientGui.screen(mc) == null;
         if (shouldPressKey) {
             mc.options.keyUse.setDown(true);
         }
@@ -85,7 +86,7 @@ public abstract class AutoEatMixin implements StuckEatingRetryBridge {
             return;
         }
         if (eating) {
-            boolean shouldPressKey = mc.screen == null;
+            boolean shouldPressKey = ClientGui.screen(mc) == null;
             if (mc.options != null) {
                 if (shouldPressKey && !mc.options.keyUse.isDown()) {
                     mc.options.keyUse.setDown(true);

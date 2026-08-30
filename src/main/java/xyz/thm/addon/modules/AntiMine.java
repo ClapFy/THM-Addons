@@ -8,7 +8,7 @@ package xyz.thm.addon.modules;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixin.WorldRendererAccessor;
+import meteordevelopment.meteorclient.mixin.LevelRendererAccessor;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
@@ -183,7 +183,7 @@ public class AntiMine extends Module {
     }
 
     private Int2ObjectMap<BlockDestructionProgress> breakingInfos() {
-        return ((WorldRendererAccessor) mc.levelRenderer).meteor$getBlockBreakingInfos();
+        return ((LevelRendererAccessor) mc.levelRenderer).meteor$getDestroyingBlocks();
     }
 
     /** One line a second while debug is on, so a silent phase says which gate stopped it. */

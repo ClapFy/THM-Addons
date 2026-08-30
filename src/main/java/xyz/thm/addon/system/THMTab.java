@@ -17,6 +17,7 @@ import meteordevelopment.meteorclient.utils.misc.NbtUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import xyz.thm.addon.utils.ThmMembers;
+import xyz.thm.addon.compat.ClientGui;
 
 public class THMTab extends Tab {
     private static boolean thmTabOpen;
@@ -68,7 +69,7 @@ public class THMTab extends Tab {
 
             WButton wavyCapesBtn = add(theme.button("Wavy Capes Settings")).expandX().widget();
             wavyCapesBtn.action = () ->
-                Minecraft.getInstance().setScreen(WaveyCapesTab.INSTANCE.createScreen(theme));
+                ClientGui.setScreen(Minecraft.getInstance(), WaveyCapesTab.INSTANCE.createScreen(theme));
 
             add(theme.horizontalSeparator()).expandX();
 

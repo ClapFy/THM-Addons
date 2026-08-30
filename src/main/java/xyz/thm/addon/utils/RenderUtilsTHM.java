@@ -14,8 +14,6 @@ import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.systems.modules.render.blockesp.ESPBlockData;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.world.Dir;
-import net.minecraft.client.gui.Font;
-import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
@@ -25,13 +23,13 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.NotNull;
+import xyz.thm.addon.compat.ClientText;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
-import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.PoseStack;
 
 /**
@@ -39,9 +37,6 @@ import com.mojang.blaze3d.vertex.PoseStack;
  * Use this instead of calling event.renderer directly.
  */
 public class RenderUtilsTHM {
-    private static final MultiBufferSource.BufferSource vertex =
-        MultiBufferSource.immediate(new ByteBufferBuilder(2048));
-
     private RenderUtilsTHM() {}
 
     // =========================================================
@@ -279,10 +274,7 @@ public class RenderUtilsTHM {
     // =========================================================
 
     public static void text(String text, PoseStack stack, float x, float y, int color) {
-        mc.font.drawInBatch(text, x, y, color, false,
-            stack.last().pose(), vertex,
-            Font.DisplayMode.NORMAL, 0, 15728880);
-        vertex.endBatch();
+        ClientText.draw(text, stack, x, y, color);
     }
 
     // =========================================================

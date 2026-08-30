@@ -31,7 +31,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -62,6 +62,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Predicate;
+import xyz.thm.addon.compat.ClientGui;
 
 public class ObsidianFarmerTHM extends Module {
     private static final int COORDINATE_LIMIT = 30_000_000;
@@ -949,7 +950,7 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private void closeHandledScreen() {
-        if (mc.player != null && mc.screen != null) mc.player.closeContainer();
+        if (mc.player != null && ClientGui.screen(mc) != null) mc.player.closeContainer();
     }
 
     private boolean isExecutionAllowedOnCurrentServer() {
@@ -1053,7 +1054,7 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Close;
             }
             case Close -> {
-                if (mc.screen != null) {
+                if (ClientGui.screen(mc) != null) {
                     traceDebug("storage-check waiting for chest screen to close screen=%s", formatCurrentScreenSafe());
                     closeHandledScreen();
                     actionDelayTicks = Math.max(actionDelayTicks, 1);
@@ -1137,7 +1138,7 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Close;
             }
             case Close -> {
-                if (mc.screen != null) {
+                if (ClientGui.screen(mc) != null) {
                     traceDebug("loose-obsidian-pickup waiting for screen close screen=%s", formatCurrentScreenSafe());
                     closeHandledScreen();
                     actionDelayTicks = Math.max(actionDelayTicks, 1);
@@ -1556,9 +1557,9 @@ public class ObsidianFarmerTHM extends Module {
 
     private boolean ensureContainerScreenOpen(BlockPos pos) {
         if (pos == null) return false;
-        if (mc.screen instanceof ContainerScreen
-            || mc.screen instanceof HopperScreen
-            || mc.screen instanceof ShulkerBoxScreen) return true;
+        if (ClientGui.screen(mc) instanceof ContainerScreen
+            || ClientGui.screen(mc) instanceof HopperScreen
+            || ClientGui.screen(mc) instanceof ShulkerBoxScreen) return true;
         interactBlock(pos);
         actionDelayTicks = inventoryDelay.get();
         return false;
@@ -1577,11 +1578,11 @@ public class ObsidianFarmerTHM extends Module {
         for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size() && moves < maxMoves; i++) {
             ItemStack stack = mc.player.getInventory().getItem(i);
             if (!predicate.test(stack)) continue;
-            mc.gameMode.handleInventoryMouseClick(
+            mc.gameMode.handleContainerInput(
                 mc.player.containerMenu.containerId,
                 SlotUtils.indexToId(i),
                 0,
-                ClickType.QUICK_MOVE,
+                ContainerInput.QUICK_MOVE,
                 mc.player
             );
             moved = true;
@@ -1609,11 +1610,11 @@ public class ObsidianFarmerTHM extends Module {
         if (mc.player == null || mc.player.containerMenu == null) return false;
         if (slot < 0 || slot >= getOpenedContainerSlotCount()) return false;
         ItemStack before = mc.player.containerMenu.slots.get(slot).getItem().copy();
-        mc.gameMode.handleInventoryMouseClick(
+        mc.gameMode.handleContainerInput(
             mc.player.containerMenu.containerId,
             slot,
             0,
-            ClickType.QUICK_MOVE,
+            ContainerInput.QUICK_MOVE,
             mc.player
         );
         ItemStack after = mc.player.containerMenu.slots.get(slot).getItem();
@@ -1989,7 +1990,7 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Open;
             }
             case Open -> {
-                if (mc.screen instanceof ShulkerBoxScreen) {
+                if (ClientGui.screen(mc) instanceof ShulkerBoxScreen) {
                     containerStep = ContainerStep.Transfer;
                     return;
                 }
@@ -2065,7 +2066,7 @@ public class ObsidianFarmerTHM extends Module {
             }
             case Open -> {
                 if (!ensureContainerScreenOpen(getSingleFallbackContainerPos())) return;
-                if (mc.screen instanceof ContainerScreen) containerStep = ContainerStep.Transfer;
+                if (ClientGui.screen(mc) instanceof ContainerScreen) containerStep = ContainerStep.Transfer;
             }
             case Transfer -> {
                 fallbackRecoveredLooseItems = transferFromOpenedContainerForActiveTask(true);
@@ -2123,7 +2124,7 @@ public class ObsidianFarmerTHM extends Module {
             }
             case Open -> {
                 if (!ensureContainerScreenOpen(getSingleFallbackContainerPos())) return;
-                if (mc.screen instanceof ContainerScreen) containerStep = ContainerStep.Transfer;
+                if (ClientGui.screen(mc) instanceof ContainerScreen) containerStep = ContainerStep.Transfer;
             }
             case Transfer -> {
                 fallbackRecoveredLooseItems = transferFromOpenedContainerForActiveTask(true);
@@ -2700,7 +2701,7 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private String formatCurrentScreenSafe() {
-        return mc.screen == null ? "none" : mc.screen.getClass().getSimpleName();
+        return ClientGui.screen(mc) == null ? "none" : ClientGui.screen(mc).getClass().getSimpleName();
     }
 
     private String formatItemStackSafe(ItemStack stack) {

@@ -21,7 +21,7 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.network.protocol.game.ServerboundInteractPacket;
+import net.minecraft.network.protocol.game.ServerboundAttackPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -467,8 +467,7 @@ public abstract class KillAuraMixin extends Module {
         if (thm$silentRotate.get() && thm$silentRotations != null) {
             thm$rotationManager.setRotationSilent(thm$silentRotations[0], thm$silentRotations[1]);
         }
-        ServerboundInteractPacket packet = ServerboundInteractPacket.createAttackPacket(entity, mc.player.isShiftKeyDown());
-        mc.getConnection().send(packet);
+        mc.getConnection().send(new ServerboundAttackPacket(entity.getId()));
         mc.player.swing(InteractionHand.MAIN_HAND);
         if (thm$silentRotate.get()) {
             thm$rotationManager.setRotationSilentSync();

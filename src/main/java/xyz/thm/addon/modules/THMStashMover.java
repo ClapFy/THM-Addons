@@ -53,7 +53,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
@@ -80,6 +80,7 @@ import java.util.*;
 import java.util.function.Consumer;
 
 import static xyz.thm.addon.utils.THMUtils.getSaveName;
+import xyz.thm.addon.compat.ClientGui;
 
 public class THMStashMover extends Module {
     private static final int PLAYER_MENU_SLOTS = 36;
@@ -320,7 +321,7 @@ public class THMStashMover extends Module {
         super.onDeactivate();
         releaseThmHwyMonitorReconnectOnDeactivate();
         stopNavigation();
-        if (mc.player != null && mc.screen != null) mc.player.closeContainer();
+        if (mc.player != null && ClientGui.screen(mc) != null) mc.player.closeContainer();
         state = RunState.IDLE;
         purpose = OpenPurpose.NONE;
         currentTravelSide = TravelSide.UNKNOWN;
@@ -1121,7 +1122,7 @@ public class THMStashMover extends Module {
         tickTimer++;
         if (tickTimer < openDelay.get()) return;
 
-        if (!(mc.screen instanceof AbstractContainerScreen<?> screen)) {
+        if (!(ClientGui.screen(mc) instanceof AbstractContainerScreen<?> screen)) {
             recordOpenAttemptFailure("Container screen did not open.");
             retryOrBlock("Container screen did not open.");
             return;
@@ -1607,13 +1608,13 @@ public class THMStashMover extends Module {
     }
 
     private AbstractContainerMenu currentMenu() {
-        if (mc.screen instanceof AbstractContainerScreen<?> screen) return screen.getMenu();
+        if (ClientGui.screen(mc) instanceof AbstractContainerScreen<?> screen) return screen.getMenu();
         return null;
     }
 
     private void click(AbstractContainerMenu menu, int slot) {
         if (mc.gameMode != null && mc.player != null) {
-            mc.gameMode.handleInventoryMouseClick(menu.containerId, slot, 0, ClickType.QUICK_MOVE, mc.player);
+            mc.gameMode.handleContainerInput(menu.containerId, slot, 0, ContainerInput.QUICK_MOVE, mc.player);
         }
     }
 
@@ -1632,7 +1633,7 @@ public class THMStashMover extends Module {
         if (contents == null) return false;
 
         int nonEmpty = 0;
-        for (ItemStack item : contents.nonEmptyItems()) nonEmpty++;
+        for (ItemStack item : contents.nonEmptyItemCopyStream().toList()) nonEmpty++;
         return nonEmpty >= 27;
     }
 
@@ -1801,7 +1802,7 @@ public class THMStashMover extends Module {
     }
 
     private void closeScreen() {
-        if (mc.player != null && mc.screen != null) mc.player.closeContainer();
+        if (mc.player != null && ClientGui.screen(mc) != null) mc.player.closeContainer();
     }
 
     private List<String> resolvedHomes() {
@@ -1999,8 +2000,8 @@ public class THMStashMover extends Module {
     private String openAttemptDetails(OpenAttemptDiagnostics diagnostics) {
         String interaction = diagnostics.interactionDispatched ? diagnostics.interactionResult : "not_dispatched";
         String consumes = diagnostics.interactionDispatched ? Boolean.toString(diagnostics.consumesAction) : "unknown";
-        String currentScreen = screenType(mc.screen);
-        String currentMenu = screenMenuType(mc.screen);
+        String currentScreen = screenType(ClientGui.screen(mc));
+        String currentMenu = screenMenuType(ClientGui.screen(mc));
 
         return "trace=" + diagnostics.traceId
             + " attempt_id=" + diagnostics.attemptId
@@ -2545,7 +2546,7 @@ public class THMStashMover extends Module {
 
     private void sendMsg(String msg) {
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal("\u00a76[THMStashMover]\u00a7r " + msg), false);
+            mc.player.sendSystemMessage(Component.literal("\u00a76[THMStashMover]\u00a7r " + msg));
         }
     }
 
@@ -2597,7 +2598,7 @@ public class THMStashMover extends Module {
             clicking = false;
             event.cancel();
             MeteorClient.EVENT_BUS.unsubscribe(this);
-            mc.setScreen(previousScreen);
+            ClientGui.setScreen(mc, previousScreen);
         }
 
         @EventHandler
@@ -2612,7 +2613,7 @@ public class THMStashMover extends Module {
             clicking = false;
             event.cancel();
             MeteorClient.EVENT_BUS.unsubscribe(this);
-            mc.setScreen(previousScreen);
+            ClientGui.setScreen(mc, previousScreen);
         }
 
         private void startClickPick() {
@@ -2620,8 +2621,8 @@ public class THMStashMover extends Module {
 
             clicking = true;
             MeteorClient.EVENT_BUS.subscribe(this);
-            previousScreen = mc.screen;
-            mc.setScreen(null);
+            previousScreen = ClientGui.screen(mc);
+            ClientGui.setScreen(mc, null);
         }
 
         private void addTextBoxes() {
