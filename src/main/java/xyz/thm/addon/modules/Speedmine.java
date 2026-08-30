@@ -36,6 +36,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LevelEvent;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.mixin.accessor.ClientPlayerInteractionManagerTHMAccessor;
 import xyz.thm.addon.mixin.accessor.PlayerInventoryAccessor;
@@ -574,7 +575,7 @@ public class Speedmine extends Module {
             }
         }
         Comparator<BlockPos> byDistance =
-            Comparator.comparingDouble(pos -> mc.player.getEyePosition().distanceToSqr(pos.getCenter()));
+            Comparator.comparingDouble(pos -> mc.player.getEyePosition().distanceToSqr(Vec3.atCenterOf(pos)));
         // ponytail: absolute Y, not per-enemy feet level — right for one enemy, good enough for a pile of them
         if (feetFirst.get()) {
             out.sort(Comparator.comparingInt((BlockPos pos) -> pos.getY()).thenComparing(byDistance));

@@ -32,7 +32,6 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
@@ -44,6 +43,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientEntities;
 import xyz.thm.addon.mixin.accessor.ExplosionS2CPacketAccessor;
 import xyz.thm.addon.utils.PlacementUtils;
 
@@ -554,7 +554,7 @@ public class SurroundPlus extends Module {
             return;
         }
 
-        if (packet instanceof ClientboundAddEntityPacket p && prePlaceCrystalSpawn.get() && p.getType() == EntityType.END_CRYSTAL) {
+        if (packet instanceof ClientboundAddEntityPacket p && prePlaceCrystalSpawn.get() && p.getType() == ClientEntities.endCrystal()) {
             BlockPos pos = BlockPos.containing(p.getX(), p.getY(), p.getZ());
             if (surroundCache.contains(pos)) placeFallbackDirect(pos);
         }

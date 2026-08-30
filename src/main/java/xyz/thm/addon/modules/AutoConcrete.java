@@ -26,6 +26,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
 
 public class AutoConcrete extends Module {
@@ -232,8 +233,8 @@ public class AutoConcrete extends Module {
             for (net.minecraft.world.entity.Entity entity : mc.level.entitiesForRendering()) {
                 if (entity instanceof EndCrystal) {
                     if (entity.getBoundingBox().intersects(
-                        surround.getCenter().add(-0.5, 0, -0.5),
-                        surround.getCenter().add(0.5, 2.5, 0.5))) {
+                        Vec3.atCenterOf(surround).add(-0.5, 0, -0.5),
+                        Vec3.atCenterOf(surround).add(0.5, 2.5, 0.5))) {
                         return true;
                     }
                 }

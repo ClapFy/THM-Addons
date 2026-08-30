@@ -14,6 +14,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import xyz.thm.addon.compat.ClientGui;
 import xyz.thm.addon.gui.ThmChrome;
 import xyz.thm.addon.gui.themes.ThmTheme;
 
@@ -33,7 +34,7 @@ public abstract class ThmHeaderClickMixin {
         if (!(self.theme instanceof ThmTheme) || !ThmChrome.settingsWindow()) return;
 
         if (ThmChrome.closeGlyphHit(click.x(), click.y())) {
-            Screen screen = Minecraft.getInstance().screen;
+            Screen screen = ClientGui.screen(Minecraft.getInstance());
             if (screen != null) screen.onClose();
             cir.setReturnValue(true);
         }

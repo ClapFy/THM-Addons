@@ -17,6 +17,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import xyz.thm.addon.compat.ClientGui;
 import xyz.thm.addon.mixin.accessor.CameraAccessor;
 import xyz.thm.addon.modules.HighwayBuilderTHM;
 import xyz.thm.addon.modules.THMHwyMonitor;
@@ -40,7 +41,7 @@ public abstract class HighwayBuilderEntityMixin {
         Freecam freecam = Modules.get().get(Freecam.class);
         if (freecam != null && freecam.isActive()) return;
 
-        Camera camera = mc.gameRenderer.getMainCamera();
+        Camera camera = ClientGui.mainCamera(mc);
         float nextYaw = Mth.wrapDegrees((float) (camera.yRot() + cursorDeltaX * 0.15));
         float nextPitch = Mth.clamp((float) (camera.xRot() + cursorDeltaY * 0.15), -90.0f, 90.0f);
         ((CameraAccessor) camera).thm$setRotation(nextYaw, nextPitch);

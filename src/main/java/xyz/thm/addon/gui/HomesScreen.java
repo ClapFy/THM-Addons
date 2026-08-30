@@ -6,6 +6,7 @@
 
 package xyz.thm.addon.gui;
 
+import xyz.thm.addon.compat.DyedItems;
 import xyz.thm.addon.utils.Homes;
 
 import java.util.List;
@@ -104,8 +105,8 @@ public class HomesScreen extends Screen {
         return switch (column) {
             case PREV -> page > 0 ? new ItemStack(Items.GLASS_PANE) : ItemStack.EMPTY;
             case NEXT -> page < pageCount() - 1 ? new ItemStack(Items.GLASS_PANE) : ItemStack.EMPTY;
-            case TELEPORT -> new ItemStack(Items.GREEN_CONCRETE);
-            case DELETE -> new ItemStack(Items.RED_CONCRETE);
+            case TELEPORT -> new ItemStack(DyedItems.greenConcrete());
+            case DELETE -> new ItemStack(DyedItems.redConcrete());
             default -> ItemStack.EMPTY;
         };
     }

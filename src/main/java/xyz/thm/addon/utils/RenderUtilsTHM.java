@@ -195,7 +195,7 @@ public class RenderUtilsTHM {
 
     /** Tracer from screen centre to the centre of a block. */
     public static void renderTracerTo(Render3DEvent event, @NotNull BlockPos pos, Color color) {
-        Vec3 c = pos.getCenter();
+        Vec3 c = Vec3.atCenterOf(pos);
         Vec3 src = meteordevelopment.meteorclient.utils.render.RenderUtils.center;
         event.renderer.line(src.x, src.y, src.z, c.x, c.y, c.z, color);
     }

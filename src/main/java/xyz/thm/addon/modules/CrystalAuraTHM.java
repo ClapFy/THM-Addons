@@ -40,6 +40,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientFonts;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.PlacementUtils;
 import xyz.thm.addon.utils.RenderUtilsTHM;
@@ -701,7 +702,7 @@ public class CrystalAuraTHM extends Module {
             if (!NametagUtils.to2D(labelPos, damageTextScale.get())) continue;
 
             NametagUtils.begin(labelPos);
-            TextRenderer.get().begin(1.0, false, true);
+            ClientFonts.begin(TextRenderer.get(), event.graphics, 1.0, false, true);
             double w = TextRenderer.get().getWidth(label.text) / 2.0;
             TextRenderer.get().render(label.text, -w, 0.0, placeLineColor.get(), true);
             TextRenderer.get().end();

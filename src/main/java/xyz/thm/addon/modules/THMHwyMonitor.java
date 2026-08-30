@@ -3463,8 +3463,8 @@ public class THMHwyMonitor extends Module {
     }
 
     private void takeRestartScreenshot() {
-        if (mc == null || mc.getMainRenderTarget() == null) return;
-        Screenshot.grab(mc.gameDirectory, mc.getMainRenderTarget(), message -> info(message.getString()));
+        if (mc == null || ClientGui.mainRenderTarget(mc) == null) return;
+        Screenshot.grab(mc.gameDirectory, ClientGui.mainRenderTarget(mc), message -> info(message.getString()));
     }
 
     private void beginPostRejoinDirectionGate(long cycleId, String contextTag) {

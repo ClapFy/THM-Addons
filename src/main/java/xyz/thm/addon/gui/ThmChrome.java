@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
+import xyz.thm.addon.compat.ClientGui;
 
 /**
  * Draws the BleachHack-styled main-menu window chrome (see {@link MainMenuFx}) through Meteor's
@@ -75,7 +76,7 @@ public final class ThmChrome {
      * {@code ModulesScreen}, so they return false and get no title-bar controls.
      */
     public static boolean settingsWindow() {
-        Screen screen = Minecraft.getInstance().screen;
+        Screen screen = ClientGui.screen(Minecraft.getInstance());
         return screen instanceof WindowScreen || screen instanceof WindowTabScreen;
     }
 

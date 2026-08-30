@@ -10,7 +10,6 @@ import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.shaders.ShaderType;
-import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -18,12 +17,12 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.textures.TextureFormat;
 import org.lwjgl.system.MemoryStack;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientGui;
+import xyz.thm.addon.compat.GpuCompat;
 
 import java.nio.ByteBuffer;
-import java.util.OptionalInt;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -124,7 +123,7 @@ class TripBackground {
         GpuDevice device = RenderSystem.getDevice();
         if (!ensurePipelines(device)) return false;
 
-        RenderTarget framebuffer = Minecraft.getInstance().getMainRenderTarget();
+        RenderTarget framebuffer = ClientGui.mainRenderTarget(Minecraft.getInstance());
         GpuTextureView mainView = framebuffer.getColorTextureView();
         if (mainView == null) return false;
 
@@ -136,18 +135,18 @@ class TripBackground {
         writeParams(encoder, (float) (System.nanoTime() / 1.0e9), intensity);
 
         // Pass 1: framebuffer -> temp (passthrough copy, so pass 2 has a stable source to warp).
-        try (RenderPass pass = encoder.createRenderPass(() -> "THM trip copy", tempView, OptionalInt.empty())) {
+        try (RenderPass pass = GpuCompat.createPass(encoder, "THM trip copy", tempView)) {
             pass.setPipeline(copyPipeline);
             pass.bindTexture("InSampler", mainView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-            pass.draw(0, 3);
+            GpuCompat.drawFullscreen(pass);
         }
 
         // Pass 2: warped temp -> main framebuffer.
-        try (RenderPass pass = encoder.createRenderPass(() -> "THM trip draw", mainView, OptionalInt.empty())) {
+        try (RenderPass pass = GpuCompat.createPass(encoder, "THM trip draw", mainView)) {
             pass.setPipeline(tripPipeline);
             pass.setUniform("TripParams", paramsBuffer);
             pass.bindTexture("InSampler", tempView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-            pass.draw(0, 3);
+            GpuCompat.drawFullscreen(pass);
         }
 
         return true;
@@ -168,20 +167,22 @@ class TripBackground {
     private static boolean ensurePipelines(GpuDevice device) {
         if (pipelinesValid != null) return pipelinesValid;
 
-        copyPipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
-            .withLocation(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, "trip_copy"))
-            .withVertexShader(VSH_ID)
-            .withFragmentShader(COPY_FSH_ID)
-            .withSampler("InSampler")
-            .build();
+        copyPipeline = GpuCompat.withSampler(
+            RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, "trip_copy"))
+                .withVertexShader(VSH_ID)
+                .withFragmentShader(COPY_FSH_ID),
+            "InSampler"
+        ).build();
 
-        tripPipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
-            .withLocation(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, "trip_draw"))
-            .withVertexShader(VSH_ID)
-            .withFragmentShader(TRIP_FSH_ID)
-            .withUniform("TripParams", UniformType.UNIFORM_BUFFER)
-            .withSampler("InSampler")
-            .build();
+        tripPipeline = GpuCompat.withUniformAndSampler(
+            RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, "trip_draw"))
+                .withVertexShader(VSH_ID)
+                .withFragmentShader(TRIP_FSH_ID),
+            "TripParams",
+            "InSampler"
+        ).build();
 
         boolean copyOk = device.precompilePipeline(copyPipeline, TripBackground::shaderSource).isValid();
         boolean tripOk = device.precompilePipeline(tripPipeline, TripBackground::shaderSource).isValid();
@@ -203,8 +204,7 @@ class TripBackground {
         if (tempView != null) tempView.close();
         if (temp != null) temp.close();
 
-        temp = device.createTexture(() -> "THM trip temp",
-            GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_TEXTURE_BINDING, TextureFormat.RGBA8, w, h, 1, 1);
+        temp = GpuCompat.createColorTexture(device, "THM trip temp", w, h);
         tempView = device.createTextureView(temp);
         texWidth = w;
         texHeight = h;

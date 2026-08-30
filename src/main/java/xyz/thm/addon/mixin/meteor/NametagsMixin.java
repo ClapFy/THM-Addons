@@ -27,6 +27,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import xyz.thm.addon.compat.ClientFonts;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.ThmMembers;
 import xyz.thm.addon.utils.TotemTracker;
@@ -149,7 +150,7 @@ public abstract class NametagsMixin extends Module {
         double drawX = -width / 2;
         double drawY = heightDown + 2;
 
-        text.beginBig();
+        ClientFonts.beginBig(text, event.graphics);
         text.render(totemText, drawX, drawY, THM_TOTEM_COLOR, shadow);
         text.end();
     }

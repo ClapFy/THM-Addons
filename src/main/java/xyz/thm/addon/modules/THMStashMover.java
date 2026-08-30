@@ -1775,7 +1775,7 @@ public class THMStashMover extends Module {
     }
 
     private double horizontalDistanceToApproachSqr(BlockPos pos) {
-        Vec3 center = pos.getCenter();
+        Vec3 center = Vec3.atCenterOf(pos);
         double x = mc.player.getX() - center.x;
         double z = mc.player.getZ() - center.z;
         return x * x + z * z;

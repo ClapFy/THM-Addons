@@ -20,6 +20,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
 
 public class AntiConcreteDetection extends Module {
@@ -59,7 +60,7 @@ public class AntiConcreteDetection extends Module {
 
             if (isButtonBlock(block) || isTorchBlock(block)) {
                 if (rotate.get()) {
-                    Rotations.rotate(Rotations.getYaw(blockPos.getCenter()), Rotations.getPitch(blockPos.getCenter()));
+                    Rotations.rotate(Rotations.getYaw(Vec3.atCenterOf(blockPos)), Rotations.getPitch(Vec3.atCenterOf(blockPos)));
                 }
 
                 if (breakMode.get() == BreakMode.Hold) {

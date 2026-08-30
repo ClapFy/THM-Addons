@@ -11,7 +11,6 @@ import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.Window;
-import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -19,11 +18,12 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import org.lwjgl.system.MemoryStack;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientGui;
+import xyz.thm.addon.compat.GpuCompat;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.OptionalInt;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -58,7 +58,7 @@ public class ShaderBackground {
             if (pipeline == null) return false;
 
             Minecraft mc = Minecraft.getInstance();
-            RenderTarget framebuffer = mc.getMainRenderTarget();
+            RenderTarget framebuffer = ClientGui.mainRenderTarget(mc);
             GpuTextureView colorView = framebuffer.getColorTextureView();
             if (colorView == null) return false;
 
@@ -124,12 +124,13 @@ public class ShaderBackground {
         if (valid.getOrDefault(name, true) == Boolean.FALSE) return null;
 
         return pipelines.computeIfAbsent(name, n -> {
-            RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
-                .withLocation(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, "bg_" + n))
-                .withVertexShader(VERTEX_SHADER)
-                .withFragmentShader(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, n))
-                .withUniform("ThmShaderData", UniformType.UNIFORM_BUFFER)
-                .build();
+            RenderPipeline pipeline = GpuCompat.withUniformBuffer(
+                RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, "bg_" + n))
+                    .withVertexShader(VERTEX_SHADER)
+                    .withFragmentShader(Identifier.fromNamespaceAndPath(THMAddon.MOD_ID, n)),
+                "ThmShaderData"
+            ).build();
 
             CompiledRenderPipeline compiled = RenderSystem.getDevice().precompilePipeline(pipeline);
             if (!compiled.isValid()) {
@@ -167,10 +168,10 @@ public class ShaderBackground {
             encoder.writeToBuffer(uniformBuffer.slice(), data);
         }
 
-        try (RenderPass pass = encoder.createRenderPass(() -> "THM shader background", target, OptionalInt.empty())) {
+        try (RenderPass pass = GpuCompat.createPass(encoder, "THM shader background", target)) {
             pass.setPipeline(pipeline);
             pass.setUniform("ThmShaderData", uniformBuffer);
-            pass.draw(0, 3);
+            GpuCompat.drawFullscreen(pass);
         }
     }
 }

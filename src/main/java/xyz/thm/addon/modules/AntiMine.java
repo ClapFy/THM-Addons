@@ -6,9 +6,9 @@
 
 package xyz.thm.addon.modules;
 
-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import java.util.Collection;
+
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixin.LevelRendererAccessor;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
@@ -18,6 +18,7 @@ import net.minecraft.server.level.BlockDestructionProgress;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.BreakingBlocks;
 import xyz.thm.addon.utils.PearlPhaser;
 import xyz.thm.addon.utils.PlacementUtils;
 
@@ -165,11 +166,11 @@ public class AntiMine extends Module {
 
     /** Any block being broken that touches our own column at feet or head level. */
     private BlockPos findBreakingNeighbor() {
-        Int2ObjectMap<BlockDestructionProgress> infos = breakingInfos();
+        Collection<BlockDestructionProgress> infos = BreakingBlocks.all(mc);
         if (infos.isEmpty()) return null;
 
         BlockPos feet = mc.player.blockPosition();
-        for (BlockDestructionProgress info : infos.values()) {
+        for (BlockDestructionProgress info : infos) {
             if (!selfMine.get() && info.getId() == mc.player.getId()) continue;
 
             if (info.getProgress() < breakStage.get()) continue;
@@ -182,17 +183,13 @@ public class AntiMine extends Module {
         return null;
     }
 
-    private Int2ObjectMap<BlockDestructionProgress> breakingInfos() {
-        return ((LevelRendererAccessor) mc.levelRenderer).meteor$getDestroyingBlocks();
-    }
-
     /** One line a second while debug is on, so a silent phase says which gate stopped it. */
     private void debug(BlockPos target) {
         if (!debug.get() || mc.level.getGameTime() - lastDebug < 20) return;
         lastDebug = mc.level.getGameTime();
 
         StringBuilder seen = new StringBuilder();
-        for (BlockDestructionProgress info : breakingInfos().values()) {
+        for (BlockDestructionProgress info : BreakingBlocks.all(mc)) {
             seen.append(' ').append(info.getPos().toShortString())
                 .append("/by").append(info.getId())
                 .append("/st").append(info.getProgress());

@@ -20,6 +20,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.network.chat.Component;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientGui;
 import xyz.thm.addon.mixin.accessor.ChatHudAccessor;
 
 import java.util.ArrayDeque;
@@ -106,10 +107,10 @@ public final class StatsScreenshotChatGuard {
 
     private void replayBufferedMessages() {
         Minecraft mc = Minecraft.getInstance();
-        ChatComponent chatHud = mc.gui == null ? null : mc.gui.getChat();
+        ChatComponent chatHud = ClientGui.chat(mc);
 
         if (chatHud != null) {
-            int creationTick = mc.gui.getGuiTicks();
+            int creationTick = ClientGui.guiTicks(mc);
             while (!bufferedMessages.isEmpty()) {
                 BufferedMessage buffered = bufferedMessages.removeFirst();
                 ((ChatHudAccessor) chatHud).thm$addMessage(new GuiMessage(

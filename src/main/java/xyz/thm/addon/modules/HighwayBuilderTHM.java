@@ -117,6 +117,10 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.joml.Vector3d;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientFonts;
+import xyz.thm.addon.compat.ClientGui;
+import xyz.thm.addon.compat.DyedBlocks;
+import xyz.thm.addon.compat.SpeedMineFilter;
 import xyz.thm.addon.accessor.StuckEatingRetryBridge;
 import xyz.thm.addon.accessor.StuckEatingRetryResult;
 import xyz.thm.addon.settings.ItemPriorityList;
@@ -149,7 +153,6 @@ import java.util.regex.Pattern;
 
 import static xyz.thm.addon.utils.APIUtils.*;
 import static xyz.thm.addon.utils.THMUtils.*;
-import xyz.thm.addon.compat.ClientGui;
 
 @SuppressWarnings("ConstantConditions")
 public class HighwayBuilderTHM extends Module {
@@ -1788,7 +1791,7 @@ public class HighwayBuilderTHM extends Module {
     private record SpeedMineSettingsSnapshot(
         boolean wasActive,
         SpeedMine.Mode mode,
-        SpeedMine.ListMode blocksFilter,
+        Object blocksFilter,
         List<Block> blocks,
         boolean instamine,
         boolean grimBypass
@@ -2300,11 +2303,11 @@ public class HighwayBuilderTHM extends Module {
         if (Modules.get().get(InstantRebreak.class).isActive())
             warning("It's recommended to disable the Instant Rebreak module because HighwayBuilder manages ender chest rebreaking internally.");
         SpeedMine speedMine = Modules.get().get(SpeedMine.class);
-        Setting<SpeedMine.ListMode> speedMineBlocksFilter = speedMine.settings.get("blocks-filter", SpeedMine.ListMode.class);
+        @SuppressWarnings("unchecked") Setting<Object> speedMineBlocksFilter = (Setting<Object>) speedMine.settings.get("blocks-filter");
         @SuppressWarnings("unchecked")
         Setting<List<Block>> speedMineBlocks = (Setting<List<Block>>) speedMine.settings.get("blocks");
         if (speedMineBlocksFilter != null
-            && speedMineBlocksFilter.get() == SpeedMine.ListMode.Blacklist
+            && SpeedMineFilter.isBlacklist(speedMineBlocksFilter.get())
             && speedMineBlocks != null
             && speedMineBlocks.get().contains(Blocks.NETHERRACK)) {
             warning("It's recommended to add Netherrack to the blacklist in Speed Mine (Ignore if you let highway builder manage it)");
@@ -4897,8 +4900,8 @@ public class HighwayBuilderTHM extends Module {
     private void onRender2d(Render2DEvent event) {
         if (suspended || !renderMine.get()) return;
 
-        if (normalMining != null) normalMining.renderLetter();
-        if (packetMining != null) packetMining.renderLetter();
+        if (normalMining != null) normalMining.renderLetter(event.graphics);
+        if (packetMining != null) packetMining.renderLetter(event.graphics);
     }
 
     @EventHandler
@@ -5044,8 +5047,8 @@ public class HighwayBuilderTHM extends Module {
 
         speedMine.mode.set(SpeedMine.Mode.Damage);
 
-        Setting<SpeedMine.ListMode> blocksFilter = speedMine.settings.get("blocks-filter", SpeedMine.ListMode.class);
-        if (blocksFilter != null) blocksFilter.set(SpeedMine.ListMode.Blacklist);
+        @SuppressWarnings("unchecked") Setting<Object> blocksFilter = (Setting<Object>) speedMine.settings.get("blocks-filter");
+        if (blocksFilter != null) blocksFilter.set(SpeedMineFilter.blacklist());
 
         Setting<List<Block>> blocksSetting = (Setting<List<Block>>) speedMine.settings.get("blocks");
         if (blocksSetting != null) blocksSetting.set(buildAutosetupSpeedMineBlacklist());
@@ -5058,26 +5061,9 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private List<Block> buildAutosetupSpeedMineBlacklist() {
-        return new ArrayList<>(List.of(
-            Blocks.NETHERRACK,
-            Blocks.SHULKER_BOX,
-            Blocks.WHITE_SHULKER_BOX,
-            Blocks.ORANGE_SHULKER_BOX,
-            Blocks.MAGENTA_SHULKER_BOX,
-            Blocks.LIGHT_BLUE_SHULKER_BOX,
-            Blocks.YELLOW_SHULKER_BOX,
-            Blocks.LIME_SHULKER_BOX,
-            Blocks.PINK_SHULKER_BOX,
-            Blocks.GRAY_SHULKER_BOX,
-            Blocks.LIGHT_GRAY_SHULKER_BOX,
-            Blocks.CYAN_SHULKER_BOX,
-            Blocks.PURPLE_SHULKER_BOX,
-            Blocks.BLUE_SHULKER_BOX,
-            Blocks.BROWN_SHULKER_BOX,
-            Blocks.GREEN_SHULKER_BOX,
-            Blocks.RED_SHULKER_BOX,
-            Blocks.BLACK_SHULKER_BOX
-        ));
+        List<Block> blocks = new ArrayList<>(DyedBlocks.shulkerBoxes());
+        blocks.add(Blocks.NETHERRACK);
+        return blocks;
     }
 
     private void applyAutosetupReach() {
@@ -5121,7 +5107,7 @@ public class HighwayBuilderTHM extends Module {
 
     @SuppressWarnings("unchecked")
     private SpeedMineSettingsSnapshot captureSpeedMineSettings(SpeedMine speedMine) {
-        Setting<SpeedMine.ListMode> blocksFilter = speedMine.settings.get("blocks-filter", SpeedMine.ListMode.class);
+        @SuppressWarnings("unchecked") Setting<Object> blocksFilter = (Setting<Object>) speedMine.settings.get("blocks-filter");
         Setting<List<Block>> blocksSetting = (Setting<List<Block>>) speedMine.settings.get("blocks");
         Setting<Boolean> instamineSetting = (Setting<Boolean>) speedMine.settings.get("instamine");
         Setting<Boolean> grimBypassSetting = (Setting<Boolean>) speedMine.settings.get("grim-bypass");
@@ -5129,7 +5115,7 @@ public class HighwayBuilderTHM extends Module {
         List<Block> blocks = blocksSetting != null ? new ArrayList<>(blocksSetting.get()) : new ArrayList<>();
         boolean instamine = instamineSetting != null && instamineSetting.get();
         boolean grimBypass = grimBypassSetting != null && grimBypassSetting.get();
-        SpeedMine.ListMode filter = blocksFilter != null ? blocksFilter.get() : SpeedMine.ListMode.Blacklist;
+        Object filter = blocksFilter != null ? blocksFilter.get() : SpeedMineFilter.blacklist();
 
         return new SpeedMineSettingsSnapshot(
             speedMine.isActive(),
@@ -5148,8 +5134,8 @@ public class HighwayBuilderTHM extends Module {
 
         speedMine.mode.set(SpeedMine.Mode.Damage);
 
-        Setting<SpeedMine.ListMode> blocksFilter = speedMine.settings.get("blocks-filter", SpeedMine.ListMode.class);
-        if (blocksFilter != null) blocksFilter.set(SpeedMine.ListMode.Blacklist);
+        @SuppressWarnings("unchecked") Setting<Object> blocksFilter = (Setting<Object>) speedMine.settings.get("blocks-filter");
+        if (blocksFilter != null) blocksFilter.set(SpeedMineFilter.blacklist());
 
         Setting<List<Block>> blocksSetting = (Setting<List<Block>>) speedMine.settings.get("blocks");
         if (blocksSetting != null) {
@@ -5184,7 +5170,7 @@ public class HighwayBuilderTHM extends Module {
         SpeedMineSettingsSnapshot snapshot = speedMineSettingsSnapshot;
         speedMine.mode.set(snapshot.mode());
 
-        Setting<SpeedMine.ListMode> blocksFilter = speedMine.settings.get("blocks-filter", SpeedMine.ListMode.class);
+        @SuppressWarnings("unchecked") Setting<Object> blocksFilter = (Setting<Object>) speedMine.settings.get("blocks-filter");
         if (blocksFilter != null) blocksFilter.set(snapshot.blocksFilter());
 
         Setting<List<Block>> blocksSetting = (Setting<List<Block>>) speedMine.settings.get("blocks");
@@ -9599,7 +9585,7 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private void takeStatsProofScreenshot(String sessionId, String reason, StatsScreenshotSurface surface, long sequence, long captureToken) {
-        if (mc == null || mc.getMainRenderTarget() == null) {
+        if (mc == null || ClientGui.mainRenderTarget(mc) == null) {
             finishStatsScreenshotCapture(captureToken);
             flushPendingWebhookStats(null);
             return;
@@ -9607,7 +9593,7 @@ public class HighwayBuilderTHM extends Module {
 
         String fileName = buildStatsScreenshotFileName(sessionId, surface, sequence);
         try {
-            Screenshot.grab(mc.gameDirectory, fileName, mc.getMainRenderTarget(), 1, message -> {
+            Screenshot.grab(mc.gameDirectory, fileName, ClientGui.mainRenderTarget(mc), 1, message -> {
                 try {
                     mc.execute(() -> {
                         finishStatsScreenshotCapture(captureToken);
@@ -18533,12 +18519,12 @@ public class HighwayBuilderTHM extends Module {
             return BlockUtils.getBreakDelta(slot , blockState) * ((b.mc.player.tickCount - (packet ? packetStartTime : normalStartTime)) + 1);
         }
 
-        public void renderLetter() {
+        public void renderLetter(net.minecraft.client.gui.GuiGraphicsExtractor graphics) {
             vec3.set(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
             if (!NametagUtils.to2D(vec3, 2)) return;
 
             NametagUtils.begin(vec3);
-            TextRenderer.get().begin(1.0, false, true);
+            ClientFonts.begin(TextRenderer.get(), graphics, 1.0, false, true);
 
             String letter = packet ? "P" : "N";
             double w = TextRenderer.get().getWidth(letter) / 2.0;

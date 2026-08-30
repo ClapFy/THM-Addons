@@ -23,6 +23,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
 
 public class AntiConcrete extends Module {
@@ -171,7 +172,7 @@ public class AntiConcrete extends Module {
 
         // rotate only briefly — rotate to center of block (yaw/pitch)
         if (rotate.get()) {
-            Rotations.rotate(Rotations.getYaw(currentPos.getCenter()), Rotations.getPitch(currentPos.getCenter()));
+            Rotations.rotate(Rotations.getYaw(Vec3.atCenterOf(currentPos)), Rotations.getPitch(Vec3.atCenterOf(currentPos)));
         }
 
         // place and set cooldown to avoid placing every tick

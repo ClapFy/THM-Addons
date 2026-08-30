@@ -19,6 +19,7 @@ import meteordevelopment.meteorclient.utils.world.Dimension;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientGui;
 
 public class AxisViewer extends Module {
     private final SettingGroup sgOverworld = settings.createGroup("Overworld");
@@ -182,7 +183,7 @@ public class AxisViewer extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.options.hideGui) return;
+        if (mc.options != null && ClientGui.hideHud(mc)) return;
 
         AxisType axisType;
         int y;
