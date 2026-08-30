@@ -4,7 +4,9 @@
 # By using this code you agree to the license terms and to keep your repo public.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+rm -f build/libs/THM-Addons-*.jar
 for mc in 26.1.1 26.1.2 26.2; do
   echo "===== Building Minecraft ${mc} ====="
   ./gradlew --no-daemon build -Pmc="$mc"
+  python3 tools/check-meteor-abi.py
 done

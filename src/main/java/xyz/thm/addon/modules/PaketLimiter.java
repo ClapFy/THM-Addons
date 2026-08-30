@@ -14,7 +14,6 @@ import meteordevelopment.meteorclient.settings.PacketListSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.network.PacketUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.network.protocol.Packet;
@@ -22,6 +21,7 @@ import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.common.CommonPacketTypes;
 import net.minecraft.network.protocol.game.GamePacketTypes;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.utils.PacketFilters;
 
 import java.util.Set;
 
@@ -54,16 +54,18 @@ public class PaketLimiter extends Module {
         .build()
     );
 
+    @SuppressWarnings("unchecked")
     public final Setting<Set<PacketType<? extends Packet<?>>>> bypass = sgGeneral.add(new PacketListSetting.Builder()
         .name("bypass")
         .description("C2S packets that bypass the limiter.")
-        .filter(type -> PacketUtils.getServerboundPackets().contains(type))
+        .filter(PacketFilters.serverbound())
         .build()
     );
+    @SuppressWarnings("unchecked")
     public final Setting<Set<PacketType<? extends Packet<?>>>> alwaysBlock = sgGeneral.add(new PacketListSetting.Builder()
         .name("always-block")
         .description("C2S packets that are always cancelled, even if in bypass.")
-        .filter(type -> PacketUtils.getServerboundPackets().contains(type))
+        .filter(PacketFilters.serverbound())
         .build()
     );
 
