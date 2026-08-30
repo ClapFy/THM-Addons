@@ -21,11 +21,9 @@ import com.google.gson.*;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
-import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.network.PacketUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.fabricmc.loader.api.FabricLoader;
@@ -64,6 +62,7 @@ import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.utils.PacketFilters;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -95,19 +94,19 @@ public class PacketLoggerTHM extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgOutput = settings.createGroup("Output");
 
+    @SuppressWarnings("unchecked")
     private final Setting<Set<PacketType<? extends Packet<?>>>> s2cPackets = sgGeneral.add(new PacketListSetting.Builder()
         .name("S2C-packets")
-        .description("Server-to-client packets to log.")
-        .filter(type -> PacketUtils.getClientboundPackets().contains(type))
-        .defaultValue(new ObjectOpenHashSet<>(PacketUtils.getClientboundPackets()))
+        .description("Server-to-client packets to log. Leave empty to log every S2C packet.")
+        .filter(PacketFilters.clientbound())
         .build()
     );
 
+    @SuppressWarnings("unchecked")
     private final Setting<Set<PacketType<? extends Packet<?>>>> c2sPackets = sgGeneral.add(new PacketListSetting.Builder()
         .name("C2S-packets")
-        .description("Client-to-server packets to log.")
-        .filter(type -> PacketUtils.getServerboundPackets().contains(type))
-        .defaultValue(new ObjectOpenHashSet<>(PacketUtils.getServerboundPackets()))
+        .description("Client-to-server packets to log. Leave empty to log every C2S packet.")
+        .filter(PacketFilters.serverbound())
         .build()
     );
 
@@ -243,12 +242,12 @@ public class PacketLoggerTHM extends Module {
 
     @EventHandler(priority = EventPriority.HIGHEST + 1)
     private void onReceivePacket(PacketEvent.Receive event) {
-        if (s2cPackets.get().contains(event.packet.type())) logPacket("s2c", "<- S2C", event.packet);
+        if (PacketFilters.selected(s2cPackets.get(), event.packet)) logPacket("s2c", "<- S2C", event.packet);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST + 1)
     private void onSendPacket(PacketEvent.Send event) {
-        if (c2sPackets.get().contains(event.packet.type())) logPacket("c2s", "-> C2S", event.packet);
+        if (PacketFilters.selected(c2sPackets.get(), event.packet)) logPacket("c2s", "-> C2S", event.packet);
     }
 
     private void logPacket(String dir, String chatDir, Packet<?> packet) {
