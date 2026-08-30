@@ -10,10 +10,18 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import meteordevelopment.meteorclient.MeteorClient;
 import xyz.thm.addon.THMAddon;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -30,11 +38,52 @@ public final class APIUtils {
     private static final int MAX_CAPES = 64;
     private static final int MAX_HIGHWAY_ROWS = 8_000;
 
+    private static volatile String cachedStatsKey;
+
     private APIUtils() {}
 
-    /** Local key used to encrypt on-disk HighwayBuilder stats artifacts. Not sent anywhere. */
+    /**
+     * Key for local HighwayBuilder stats-cache encryption. Not sent to the API.
+     * Persisted under {@code meteor-client/thm/stats-key} so encrypted caches
+     * survive client restarts and addon rebuilds.
+     */
     public static String getPassword() {
-        return GeneratedApiEndpoints.localPassword();
+        String existing = cachedStatsKey;
+        if (existing != null) return existing;
+        synchronized (APIUtils.class) {
+            if (cachedStatsKey != null) return cachedStatsKey;
+            cachedStatsKey = loadOrCreateStatsKey();
+            return cachedStatsKey;
+        }
+    }
+
+    private static String loadOrCreateStatsKey() {
+        try {
+            Path file = MeteorClient.FOLDER.toPath().resolve("thm").resolve("stats-key");
+            Files.createDirectories(file.getParent());
+            if (Files.isRegularFile(file)) {
+                String loaded = Files.readString(file, StandardCharsets.UTF_8).trim();
+                if (!loaded.isEmpty()) return loaded;
+            }
+            byte[] raw = new byte[32];
+            new SecureRandom().nextBytes(raw);
+            String generated = HexFormat.of().formatHex(raw);
+            Path tmp = file.resolveSibling("stats-key.tmp");
+            Files.writeString(tmp, generated, StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
+            return generated;
+        } catch (Exception e) {
+            THMAddon.LOG.warn("Failed to persist stats cache key; using a session-only key: {}", e.getMessage());
+            byte[] raw = new byte[32];
+            new SecureRandom().nextBytes(raw);
+            return HexFormat.of().formatHex(raw);
+        }
     }
 
     public static void sendStatus(String message) {

@@ -4,7 +4,6 @@
  * By using this code you agree to the license terms and to keep your repo public.
  */
 
-import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.Properties
@@ -135,15 +134,9 @@ val generateAPIUtils = tasks.register("generateAPIUtils") {
         }
 
         val rng = SecureRandom()
-        val password = MessageDigest.getInstance("SHA-256")
-            .digest(("thm-local-stats-v1\n" + urls.values.joinToString("\n")).toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        val masterKey = MessageDigest.getInstance("SHA-256").digest(password.toByteArray(Charsets.UTF_8))
+        val masterKey = ByteArray(32).also { rng.nextBytes(it) }
         val keyA = ByteArray(32).also { rng.nextBytes(it) }
         val keyB = ByteArray(32) { (masterKey[it].toInt() xor keyA[it].toInt()).toByte() }
-        val passwordBytes = password.toByteArray(Charsets.UTF_8)
-        val passwordMask = ByteArray(passwordBytes.size).also { rng.nextBytes(it) }
-        val passwordMasked = ByteArray(passwordBytes.size) { (passwordBytes[it].toInt() xor passwordMask[it].toInt()).toByte() }
 
         fun encryptUrl(url: String): String {
             val iv = ByteArray(12).also { rng.nextBytes(it) }
@@ -169,14 +162,13 @@ val generateAPIUtils = tasks.register("generateAPIUtils") {
             |import java.util.Base64;
             |
             |/**
-            | * Build-generated vault for API endpoint URLs and the local stats-artifact password.
+            | * Build-generated vault for API endpoint URLs.
             | * Method names and HTTP behaviour live in {@link APIUtils}; only ciphertext is here.
+            | * The local stats-cache key is persisted on disk by {@link APIUtils#getPassword()}.
             | */
             |final class GeneratedApiEndpoints {
             |    private static final byte[] KEY_A = {${ba(keyA)}};
             |    private static final byte[] KEY_B = {${ba(keyB)}};
-            |    private static final byte[] PASSWORD_MASKED = {${ba(passwordMasked)}};
-            |    private static final byte[] PASSWORD_MASK = {${ba(passwordMask)}};
             |    private static final String MEMBER_HUD = "${encrypted["memberHud"]}";
             |    private static final String HIGHWAY = "${encrypted["highway"]}";
             |    private static final String STATUS = "${encrypted["status"]}";
@@ -186,12 +178,6 @@ val generateAPIUtils = tasks.register("generateAPIUtils") {
             |    private static final String CAPE_INDEX = "${encrypted["capeIndex"]}";
             |
             |    private GeneratedApiEndpoints() {}
-            |
-            |    static String localPassword() {
-            |        byte[] out = new byte[PASSWORD_MASKED.length];
-            |        for (int i = 0; i < out.length; i++) out[i] = (byte) (PASSWORD_MASKED[i] ^ PASSWORD_MASK[i]);
-            |        return new String(out, StandardCharsets.UTF_8);
-            |    }
             |
             |    static String memberHudUrl() { return decrypt(MEMBER_HUD); }
             |    static String highwayUrl() { return decrypt(HIGHWAY); }

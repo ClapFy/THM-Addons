@@ -22,12 +22,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /** Downloads THM capes listed in the API's cape index to disk and registers them as textures on demand. */
 public final class CapeManager {
     public record CapeEntry(String id, String url) {}
 
     private static volatile String[] availableIds = {"None"};
+    /** Downloaded for NPC rendering (e.g. KitBot) but omitted from the player cape picker. */
+    private static final Set<String> HIDDEN_CAPE_IDS = Set.of("kitbot");
     private static final Map<String, Identifier> textureCache = new HashMap<>();
     private static final Identifier MISSING = Identifier.fromNamespaceAndPath("thm-addon", "cape/missing");
     private static final int MAX_CAPE_WIDTH = 512;
@@ -50,8 +53,8 @@ public final class CapeManager {
         ids.add("None");
         for (CapeEntry entry : entries) {
             if (!TrustedHttp.isSafeCapeId(entry.id()) || entry.id().equalsIgnoreCase("None")) continue;
-            ids.add(entry.id());
             downloadIfMissing(entry);
+            if (!HIDDEN_CAPE_IDS.contains(entry.id().toLowerCase(Locale.ROOT))) ids.add(entry.id());
         }
         availableIds = ids.toArray(new String[0]);
     }
@@ -90,7 +93,7 @@ public final class CapeManager {
         }
     }
 
-    /** Options for the self-cape picker: "None" plus every id known from the cape index. */
+    /** Options for the self-cape picker: "None" plus every index id except hidden NPC-only capes. */
     public static String[] availableCapeIds() {
         return availableIds;
     }
