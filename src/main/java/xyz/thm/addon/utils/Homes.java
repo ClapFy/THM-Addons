@@ -100,6 +100,7 @@ public class Homes {
 
     @EventHandler
     private void onReceiveMessage(ReceiveMessageEvent event) {
+        if (!PrivacyGuard.allowsChatAccess()) return;
         if (!enabled() || System.currentTimeMillis() > captureUntil) return;
 
         List<String> found = parse(event.getMessage());

@@ -186,6 +186,7 @@ public class DiscordRPC extends Module {
         scripts.clear();
 
         for (String message : messages) {
+            if (templateCanLeakCoordinates(message)) continue;
             Script script = MeteorStarscript.compile(message);
             if (script != null) scripts.add(script);
         }
@@ -216,7 +217,7 @@ public class DiscordRPC extends Module {
             boolean highwayOverride = false;
             if (showHighwayStats.get()) {
                 HighwayBuilderTHM hb = Modules.get().get(HighwayBuilderTHM.class);
-                if (hb != null && hb.isActive()) {
+                if (hb != null && hb.isActive() && xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) {
                     String dir = hb.dir != null ? hb.dir.name : "?";
                     double dist = mc.player != null && hb.start != null
                         ? mc.player.getEyePosition().distanceTo(hb.start) : 0;
@@ -237,7 +238,7 @@ public class DiscordRPC extends Module {
                         i = line1I++;
                     }
 
-                    String message = MeteorStarscript.run(line1Scripts.get(i));
+                    String message = sanitizeRpcText(MeteorStarscript.run(line1Scripts.get(i)));
                     if (message != null) rpc.setDetails(message);
                 }
                 update = true;
@@ -254,7 +255,7 @@ public class DiscordRPC extends Module {
                         i = line2I++;
                     }
 
-                    String message = MeteorStarscript.run(line2Scripts.get(i));
+                    String message = sanitizeRpcText(MeteorStarscript.run(line2Scripts.get(i)));
                     if (message != null) rpc.setState(message);
                 }
                 update = true;
@@ -315,6 +316,25 @@ public class DiscordRPC extends Module {
         help.action = () -> Util.getPlatform().openUri("https://github.com/MeteorDevelopment/meteor-client/wiki/Starscript");
 
         return help;
+    }
+
+    private static String sanitizeRpcText(String text) {
+        if (text == null || text.isBlank()) return null;
+        if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(text)) return null;
+        return text;
+    }
+
+    private static boolean templateCanLeakCoordinates(String template) {
+        if (template == null) return false;
+        String lower = template.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("pos")
+            || lower.contains("coord")
+            || lower.contains("{x}")
+            || lower.contains("{y}")
+            || lower.contains("{z}")
+            || lower.contains("player.x")
+            || lower.contains("player.y")
+            || lower.contains("player.z");
     }
 
     public enum SelectMode {

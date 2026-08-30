@@ -42,6 +42,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.utils.PrivacyGuard;
 import xyz.thm.addon.utils.THMUtils;
 
 import java.io.IOException;
@@ -489,12 +490,14 @@ public class HighwayTools extends Module {
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
         if (mc.player == null) return;
         if (tpaSent) return;
 
         String msg = event.getMessage().getString();
 
         if (autoTp.get()
+            && PrivacyGuard.allowsRemoteExport()
             && msg.contains("KitBot1 whispers: Bot has arrived at highway")
             && msg.contains("you may teleport")) {
 

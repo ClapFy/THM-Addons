@@ -178,6 +178,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
         ServerReconnectService.getInstance();
         KitbotAvailabilityTracker.getInstance();
         KitbotChatRouter.getInstance();
+        PrivacyGuard.init();
         StatsScreenshotChatGuard.getInstance();
         ThmMembers.initialize();
         CapeManager.initialize();

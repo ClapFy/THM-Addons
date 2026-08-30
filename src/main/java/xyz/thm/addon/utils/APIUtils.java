@@ -87,14 +87,30 @@ public final class APIUtils {
     }
 
     public static void sendStatus(String message) {
+        if (!PrivacyGuard.allowsRemoteExport()) {
+            THMAddon.LOG.warn("Blocked status API post: Highway Builder is not paving a main highway");
+            return;
+        }
         postContent(GeneratedApiEndpoints.statusUrl(), message, "status");
     }
 
     public static void sendStatistics(String message) {
+        if (!PrivacyGuard.allowsRemoteExport()) {
+            THMAddon.LOG.warn("Blocked statistics API post: Highway Builder is not paving a main highway");
+            return;
+        }
         postContent(GeneratedApiEndpoints.highwayUrl(), message, "statistics");
     }
 
     public static void sendToWebhook(String url, String message) {
+        if (!PrivacyGuard.allowsRemoteExport()) {
+            THMAddon.LOG.warn("Blocked webhook: Highway Builder is not paving a main highway");
+            return;
+        }
+        if (PrivacyGuard.containsSecrets(message)) {
+            THMAddon.LOG.warn("Refusing webhook body that contains a local secret");
+            return;
+        }
         if (TrustedHttp.parseAllowedUri(url, TrustedHttp.Kind.USER_WEBHOOK) == null) {
             THMAddon.LOG.warn("Rejected webhook URL");
             return;
@@ -264,6 +280,11 @@ public final class APIUtils {
     }
 
     private static void postContent(String url, String message, String label) {
+        if (!PrivacyGuard.allowsRemoteExport()) return;
+        if (PrivacyGuard.containsCrackedPassword(message)) {
+            THMAddon.LOG.warn("Refusing API {} body that contains the cracked login password", label);
+            return;
+        }
         new Thread(() -> {
             boolean ok = TrustedHttp.postJson(url, TrustedHttp.jsonContent(message), TrustedHttp.Kind.API, null);
             if (!ok) THMAddon.LOG.warn("Failed to send {} to API", label);

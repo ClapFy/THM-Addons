@@ -116,7 +116,7 @@ public class DiscordNotifs extends Module
 
     public DiscordNotifs()
     {
-        super(THMAddon.MAIN, "discord-notifs", "Sends notifications to a discord webhook.");
+        super(THMAddon.MAIN, "discord-notifs", "Sends notifications to a discord webhook. Chat and coordinates are only forwarded while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
     }
 
     @Override
@@ -199,6 +199,7 @@ public class DiscordNotifs extends Module
     @EventHandler(priority = 999)
     private void onMessageReceive(ReceiveMessageEvent event)
     {
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
         Component message = event.getMessage();
         for (Component sibling : message.getSiblings())
         {
@@ -214,7 +215,10 @@ public class DiscordNotifs extends Module
 
     public void handleMessage(String message, MessageType messageType)
     {
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()
+            || !xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;
         if (webhookURL.get().isBlank()) return;
+        if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(message)) return;
 
         if (logAll.get())
         {

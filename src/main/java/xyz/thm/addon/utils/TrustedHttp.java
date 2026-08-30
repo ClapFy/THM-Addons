@@ -64,6 +64,7 @@ public final class TrustedHttp {
 
     public static boolean postJson(String url, String json, Kind kind, String bearerToken) {
         try {
+            if (!allowOutboundPost(kind, json == null ? null : json.getBytes(StandardCharsets.UTF_8))) return false;
             URI uri = parseAllowedUri(url, kind);
             if (uri == null) return false;
             byte[] body = json.getBytes(StandardCharsets.UTF_8);
@@ -81,6 +82,7 @@ public final class TrustedHttp {
 
     public static boolean postMultipart(String url, byte[] body, String contentType, Kind kind) {
         try {
+            if (!allowOutboundPost(kind, body)) return false;
             URI uri = parseAllowedUri(url, kind);
             if (uri == null) return false;
             if (body.length > MAX_WEBHOOK_BYTES) {
@@ -93,6 +95,35 @@ public final class TrustedHttp {
             THMAddon.LOG.warn("Trusted HTTP multipart POST failed: {}", e.getMessage());
             return false;
         }
+    }
+
+    private static boolean allowOutboundPost(Kind kind, byte[] body) {
+        if (kind == Kind.USER_WEBHOOK && !PrivacyGuard.allowsRemoteExport()) {
+            THMAddon.LOG.warn("Blocked webhook: chat and coordinates only leave this client while Highway Builder is paving a main highway, plus 5s after it turns off");
+            return false;
+        }
+        if (body == null || body.length == 0) return true;
+        String text = new String(body, StandardCharsets.UTF_8);
+        try {
+            xyz.thm.addon.system.THMSystem system = xyz.thm.addon.system.THMSystem.get();
+            if (system != null) {
+                String password = system.getCrackedPassword();
+                if (password != null && password.length() >= 3 && text.contains(password)) {
+                    THMAddon.LOG.warn("Refusing HTTP body that contains the cracked login password");
+                    return false;
+                }
+                if (kind == Kind.USER_WEBHOOK) {
+                    String token = system.getApiToken();
+                    if (token != null && token.length() >= 8 && text.contains(token)) {
+                        THMAddon.LOG.warn("Refusing webhook body that contains the API token");
+                        return false;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // Settings may not be loaded yet.
+        }
+        return true;
     }
 
     public static String jsonContent(String message) {
