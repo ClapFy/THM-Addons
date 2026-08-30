@@ -6,7 +6,7 @@
 
 # THM Addons for Meteor Client
 
-THM Addons is a Meteor Client addon focused on highway automation, travel utilities, PvP tooling, and quality-of-life HUD widgets for Minecraft 1.21.11.
+THM Addons is a Meteor Client addon focused on highway automation, travel utilities, PvP tooling, and quality-of-life HUD widgets for Minecraft 26.1 and 26.2.
 
 ## Highlights
 - Highway automation and monitoring with dedicated HUD support.
@@ -16,23 +16,37 @@ THM Addons is a Meteor Client addon focused on highway automation, travel utilit
 - [More Features](FEATURES.md)
 
 ## Requirements
-- Minecraft `1.21.11`
-- Fabric Loader `0.18.2`
-- Meteor Client `1.21.11-SNAPSHOT`
-- Java `21`
+| Minecraft | Meteor Client | Fabric Loader | Java |
+| --- | --- | --- | --- |
+| `26.1.1` | `26.1.2-SNAPSHOT` | `0.19.3` | `25` |
+| `26.1.2` | `26.1.2-SNAPSHOT` | `0.19.3` | `25` |
+| `26.2` | `26.2-SNAPSHOT` | `0.19.3` | `25` |
+
+Meteor 26.1.2 is the client used for every 26.1.x jar. There is no separate Meteor 26.1.1 artifact.
 
 ## Installation
-1. Build the addon (see below) or obtain a prebuilt jar.
+1. Build the addon for your Minecraft version (see below) or obtain a prebuilt jar.
 2. Place the jar in your Minecraft `mods` folder alongside Meteor Client.
 3. Launch the game with Fabric.
 
 ## Building
-1. Clone the repository.
-2. In the repository root, run:
-   ```bash
-   ./gradlew build
-   ```
-3. The jar is created in `build/libs`.
+Java 25 is required. Gradle downloads it via the Foojay toolchain if it is not installed.
+
+```bash
+./gradlew build -Pmc=26.1.1
+./gradlew build -Pmc=26.1.2
+./gradlew build -Pmc=26.2
+```
+
+Or build every target:
+
+```bash
+./tools/build-all-mc.sh
+```
+
+Jars are created in `build/libs` as `THM-Addons-<mod-version>+<mc>.jar`. Default `-Pmc` is `26.2`.
+
+Copy `secrets.properties.example` to `secrets.properties` for live THM API URLs. Endpoint URLs stay encrypted at build time; the HTTP client is readable source and rejects SSRF, private-network, and oversized payloads.
 
 ## Features
 A full module-by-module overview is available in `FEATURES.md`.

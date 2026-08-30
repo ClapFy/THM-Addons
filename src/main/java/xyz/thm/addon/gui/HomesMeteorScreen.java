@@ -11,7 +11,7 @@ import meteordevelopment.meteorclient.gui.WindowScreen;
 import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WConfirmedButton;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 import xyz.thm.addon.utils.Homes;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -41,7 +41,7 @@ public class HomesMeteorScreen extends WindowScreen {
             WButton icon = table.add(theme.button("Icon")).widget();
             icon.tooltip = "Use your held item as this home's icon.";
             icon.action = () -> {
-                ItemStack held = mc.player == null ? ItemStack.EMPTY : mc.player.getMainHandStack();
+                ItemStack held = mc.player == null ? ItemStack.EMPTY : mc.player.getMainHandItem();
                 module.setIcon(home, held.isEmpty() ? null : held.getItem());
                 reload();
             };

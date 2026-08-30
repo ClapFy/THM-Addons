@@ -18,29 +18,34 @@ import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.entity.vehicle.BoatEntity;
-import net.minecraft.item.BoatItem;
-import net.minecraft.item.Item;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.*;
-import net.minecraft.world.World;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.vehicle.boat.Boat;
+import net.minecraft.world.item.BoatItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.utils.PrivacyGuard;
 import xyz.thm.addon.utils.THMUtils;
 
 import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -272,7 +277,7 @@ public class HighwayTools extends Module {
 
     @Override
     public void onActivate() {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         if (highwayTp.get() && axiswalker.get()) {
             error("You cannot have both Highway Tp and Axis Walker enabled at the same time.");
@@ -281,7 +286,7 @@ public class HighwayTools extends Module {
         }
 
         if (axiswalker.get()) {
-            if (mc.world.getRegistryKey() == World.NETHER) {
+            if (mc.level.dimension() == Level.NETHER) {
                 baritone.getCommandManager().execute("axis");
                 baritone.getCommandManager().execute("path");
             } else {
@@ -318,19 +323,19 @@ public class HighwayTools extends Module {
 
         if (!highwayCheckerEnabled.get()) return;
 
-        if (THMUtils.isNot6B6T() && !mc.isInSingleplayer()) {
+        if (THMUtils.isNot6B6T() && !mc.isLocalServer()) {
             error("Highway Checker is intended for 6B6T highway runs.");
             toggle();
             return;
         }
 
-        if (World.NETHER != mc.world.getRegistryKey()) {
+        if (Level.NETHER != mc.level.dimension()) {
             error("Highway Checker can only be used in the Nether.");
             toggle();
             return;
         }
 
-        direction = TravelDirection.fromYaw(mc.player.getYaw());
+        direction = TravelDirection.fromYaw(mc.player.getYRot());
         line = direction.line;
         double distanceToLine = distanceToLockedLine(mc.player.getX(), mc.player.getZ(), line);
         if (distanceToLine > START_ALIGNMENT_TOLERANCE) {
@@ -351,7 +356,7 @@ public class HighwayTools extends Module {
         boatMountGraceTicks = 0;
         lastPathDecision = "";
         lastSampleTrusted = true;
-        lastProgressAge = mc.player.age;
+        lastProgressAge = mc.player.tickCount;
         lastMeasuredY = mc.player.getY();
         pendingStopReason = null;
         startSectionStreak = 0;
@@ -410,7 +415,7 @@ public class HighwayTools extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (obsidianGuardEnabled.get()) {
-            if (mc.player != null && mc.world != null) {
+            if (mc.player != null && mc.level != null) {
                 tickTimer++;
                 if (tickTimer >= CHECK_INTERVAL) {
                     tickTimer = 0;
@@ -436,9 +441,9 @@ public class HighwayTools extends Module {
         }
 
         if (!highwayCheckerEnabled.get()) return;
-        if (mc.player == null || mc.world == null || direction == null || line == null) return;
+        if (mc.player == null || mc.level == null || direction == null || line == null) return;
 
-        if (World.NETHER != mc.world.getRegistryKey()) {
+        if (Level.NETHER != mc.level.dimension()) {
             fail("Left the Nether while Highway Checker was active.");
             return;
         }
@@ -459,7 +464,7 @@ public class HighwayTools extends Module {
         boatMountGraceTicks = 0;
         if (handleMountedBoatHeightRecovery()) return;
         sampleIfAdvanced();
-        if (mc.player.age - lastProgressAge > STALL_TIMEOUT_TICKS) {
+        if (mc.player.tickCount - lastProgressAge > STALL_TIMEOUT_TICKS) {
             fail("Highway Checker stalled without progress.");
             return;
         }
@@ -492,7 +497,7 @@ public class HighwayTools extends Module {
         String msg = event.getMessage().getString();
 
         if (autoTp.get()
-            && xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()
+            && PrivacyGuard.allowsRemoteExport()
             && msg.contains("KitBot1 whispers: Bot has arrived at highway")
             && msg.contains("you may teleport")) {
 
@@ -512,12 +517,12 @@ public class HighwayTools extends Module {
             return;
         }
 
-        BoatEntity nearbyBoat = findNearestBoatEntity();
+        Boat nearbyBoat = findNearestBoatEntity();
         if (nearbyBoat != null) {
             if (tryMountBoat(nearbyBoat)) {
                 boatRecoveryTicks = 0;
                 boatMountGraceTicks = 0;
-                lastProgressAge = mc.player != null ? mc.player.age : lastProgressAge;
+                lastProgressAge = mc.player != null ? mc.player.tickCount : lastProgressAge;
                 debug("boat-recovery", "mounted-existing-boat");
                 return;
             }
@@ -554,12 +559,12 @@ public class HighwayTools extends Module {
 
         if (!InvUtils.swap(boatItem.slot(), true)) return;
 
-        mc.interactionManager.interactBlock(
+        mc.gameMode.useItemOn(
             mc.player,
-            Hand.MAIN_HAND,
+            InteractionHand.MAIN_HAND,
             placement.hitResult()
         );
-        mc.player.swingHand(Hand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND);
         boatMountGraceTicks = BOAT_MOUNT_GRACE_TICKS;
         debug("boat-recovery", "placed-boat floor=%s", formatPos(placement.floorAnchor()));
     }
@@ -569,7 +574,7 @@ public class HighwayTools extends Module {
         long key = pack(center.getX(), center.getZ());
         if (key == lastSampleKey) return;
         lastSampleKey = key;
-        lastProgressAge = mc.player.age;
+        lastProgressAge = mc.player.tickCount;
 
         SampleSnapshot snapshot = sampleCurrentSlice(center);
         if (!snapshot.trusted()) {
@@ -649,8 +654,8 @@ public class HighwayTools extends Module {
 
             y118Positions.add(low);
             y119Positions.add(high);
-            y118Blocks.add(blockId(mc.world.getBlockState(low)));
-            y119Blocks.add(blockId(mc.world.getBlockState(high)));
+            y118Blocks.add(blockId(mc.level.getBlockState(low)));
+            y119Blocks.add(blockId(mc.level.getBlockState(high)));
         }
 
         boolean lowAllObs = allObsidian(y118Positions);
@@ -661,7 +666,7 @@ public class HighwayTools extends Module {
         return new SampleSnapshot(
             trusted,
             center,
-            new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ()),
+            new Vec3(mc.player.getX(), mc.player.getY(), mc.player.getZ()),
             lowAllObs || highAllObs,
             lowAllNonObs && highAllNonObs,
             y118Blocks,
@@ -671,7 +676,7 @@ public class HighwayTools extends Module {
 
     private StepDecision chooseStep() {
         BlockPos center = currentCenterBlock();
-        BlockPos actual = mc.player.getBlockPos();
+        BlockPos actual = mc.player.blockPosition();
         int startX = actual.getX();
         int startZ = actual.getZ();
         int destX = center.getX() + direction.dx * PATH_LOOKAHEAD;
@@ -760,8 +765,8 @@ public class HighwayTools extends Module {
         boolean nonMineable = false;
 
         for (BlockPos pos : getSectionProbeVolume(centerX, centerZ)) {
-            BlockState state = mc.world.getBlockState(pos);
-            if (state.isAir() || state.isReplaceable()) continue;
+            BlockState state = mc.level.getBlockState(pos);
+            if (state.isAir() || state.canBeReplaced()) continue;
 
             if (!isMineableBlock(state, pos)) nonMineable = true;
             else obstacles.add(pos);
@@ -779,8 +784,8 @@ public class HighwayTools extends Module {
         }
 
         BlockPos target = probe.obstacles().stream()
-            .filter(pos -> mc.player.squaredDistanceTo(Vec3d.ofCenter(pos)) <= BOAT_INTERACT_RANGE * BOAT_INTERACT_RANGE)
-            .min(Comparator.comparingDouble(pos -> mc.player.squaredDistanceTo(Vec3d.ofCenter(pos))))
+            .filter(pos -> mc.player.distanceToSqr(Vec3.atCenterOf(pos)) <= BOAT_INTERACT_RANGE * BOAT_INTERACT_RANGE)
+            .min(Comparator.comparingDouble(pos -> mc.player.distanceToSqr(Vec3.atCenterOf(pos))))
             .orElse(null);
 
         if (target == null) {
@@ -788,7 +793,7 @@ public class HighwayTools extends Module {
             return;
         }
 
-        FindItemResult tool = InvUtils.findFastestTool(mc.world.getBlockState(target));
+        FindItemResult tool = InvUtils.findFastestTool(mc.level.getBlockState(target));
         if (tool.found() && tool.slot() != mc.player.getInventory().getSelectedSlot()) InvUtils.swap(tool.slot(), false);
         BlockUtils.breakBlock(target, true);
         debug("mine", "target=%s", formatPos(target));
@@ -797,23 +802,23 @@ public class HighwayTools extends Module {
     private boolean handleMountedBoatHeightRecovery() {
         if (mc.player == null) return false;
 
-        mc.options.jumpKey.setPressed(false);
-        mc.options.sprintKey.setPressed(false);
+        mc.options.keyJump.setDown(false);
+        mc.options.keySprint.setDown(false);
 
         double y = mc.player.getY();
         if (Math.abs(y - lastMeasuredY) >= 0.05) {
             lastMeasuredY = y;
-            lastProgressAge = mc.player.age;
+            lastProgressAge = mc.player.tickCount;
         }
 
         if (y < MIN_PLAYER_TRAVEL_Y) {
-            mc.options.jumpKey.setPressed(true);
+            mc.options.keyJump.setDown(true);
             steerToward(direction.dx, direction.dz);
             return true;
         }
 
         if (y > MAX_PLAYER_TRAVEL_Y) {
-            mc.options.sprintKey.setPressed(true);
+            mc.options.keySprint.setDown(true);
             steerToward(direction.dx, direction.dz);
             return true;
         }
@@ -828,59 +833,59 @@ public class HighwayTools extends Module {
         }
 
         float yaw = yawForStep(dx, dz);
-        mc.player.setYaw(yaw);
+        mc.player.setYRot(yaw);
         Entity vehicle = mc.player.getVehicle();
-        if (vehicle != null) vehicle.setYaw(yaw);
+        if (vehicle != null) vehicle.setYRot(yaw);
 
-        mc.options.forwardKey.setPressed(true);
-        mc.options.backKey.setPressed(false);
-        mc.options.leftKey.setPressed(false);
-        mc.options.rightKey.setPressed(false);
+        mc.options.keyUp.setDown(true);
+        mc.options.keyDown.setDown(false);
+        mc.options.keyLeft.setDown(false);
+        mc.options.keyRight.setDown(false);
     }
 
     private void steerTowardEntity(Entity entity) {
         if (mc.player == null || entity == null) return;
 
-        Vec3d delta = new Vec3d(
+        Vec3 delta = new Vec3(
             entity.getX() - mc.player.getX(),
             entity.getY() - mc.player.getY(),
             entity.getZ() - mc.player.getZ()
         );
         float yaw = (float) Math.toDegrees(Math.atan2(-delta.x, delta.z));
-        mc.player.setYaw(yaw);
-        mc.options.forwardKey.setPressed(true);
-        mc.options.backKey.setPressed(false);
-        mc.options.leftKey.setPressed(false);
-        mc.options.rightKey.setPressed(false);
+        mc.player.setYRot(yaw);
+        mc.options.keyUp.setDown(true);
+        mc.options.keyDown.setDown(false);
+        mc.options.keyLeft.setDown(false);
+        mc.options.keyRight.setDown(false);
     }
 
-    private boolean tryMountBoat(BoatEntity boat) {
+    private boolean tryMountBoat(Boat boat) {
         if (mc.player == null || boat == null) return false;
-        if (mc.player.squaredDistanceTo(boat) > BOAT_INTERACT_RANGE * BOAT_INTERACT_RANGE) return false;
+        if (mc.player.distanceToSqr(boat) > BOAT_INTERACT_RANGE * BOAT_INTERACT_RANGE) return false;
 
-        mc.interactionManager.interactEntity(mc.player, boat, Hand.MAIN_HAND);
+        mc.gameMode.interact(mc.player, boat, new EntityHitResult(boat), InteractionHand.MAIN_HAND);
         boatMountGraceTicks = BOAT_MOUNT_GRACE_TICKS;
         return isRidingBoat();
     }
 
-    private BoatEntity findNearestBoatEntity() {
-        if (mc.player == null || mc.world == null) return null;
+    private Boat findNearestBoatEntity() {
+        if (mc.player == null || mc.level == null) return null;
 
-        return mc.world.getEntitiesByClass(
-            BoatEntity.class,
-            new Box(mc.player.getBlockPos()).expand(6.0),
-            boat -> boat.isAlive() && boat.getPassengerList().size() < 2
-        ).stream().min(Comparator.comparingDouble(mc.player::squaredDistanceTo)).orElse(null);
+        return mc.level.getEntitiesOfClass(
+            Boat.class,
+            new AABB(mc.player.blockPosition()).inflate(6.0),
+            boat -> boat.isAlive() && boat.getPassengers().size() < 2
+        ).stream().min(Comparator.comparingDouble(mc.player::distanceToSqr)).orElse(null);
     }
 
     private ItemEntity findNearestBoatDrop() {
-        if (mc.player == null || mc.world == null) return null;
+        if (mc.player == null || mc.level == null) return null;
 
-        return mc.world.getEntitiesByClass(
+        return mc.level.getEntitiesOfClass(
             ItemEntity.class,
-            new Box(mc.player.getBlockPos()).expand(8.0),
-            item -> isBoatItem(item.getStack().getItem())
-        ).stream().min(Comparator.comparingDouble(mc.player::squaredDistanceTo)).orElse(null);
+            new AABB(mc.player.blockPosition()).inflate(8.0),
+            item -> isBoatItem(item.getItem().getItem())
+        ).stream().min(Comparator.comparingDouble(mc.player::distanceToSqr)).orElse(null);
     }
 
     private boolean hasBoatItem() {
@@ -898,15 +903,15 @@ public class HighwayTools extends Module {
     private int findEmptyHotbarSlot() {
         if (mc.player == null) return -1;
         for (int i = 0; i < 9; i++) {
-            if (mc.player.getInventory().getStack(i).isEmpty()) return i;
+            if (mc.player.getInventory().getItem(i).isEmpty()) return i;
         }
         return -1;
     }
 
     private BoatPlacementCandidate findBoatPlacementCandidate() {
-        if (mc.player == null || mc.world == null) return null;
+        if (mc.player == null || mc.level == null) return null;
 
-        BlockPos playerPos = mc.player.getBlockPos();
+        BlockPos playerPos = mc.player.blockPosition();
         int[] floorYs = { 119, 118 };
         for (int floorY : floorYs) {
             for (int ox = -2; ox <= 2; ox++) {
@@ -915,8 +920,8 @@ public class HighwayTools extends Module {
                     if (!isValidBoatPlacementArea(floor)) continue;
                     return new BoatPlacementCandidate(
                         floor,
-                        new BlockHitResult(Vec3d.ofCenter(floor), Direction.UP, floor, false),
-                        floor.up()
+                        new BlockHitResult(Vec3.atCenterOf(floor), Direction.UP, floor, false),
+                        floor.above()
                     );
                 }
             }
@@ -925,21 +930,21 @@ public class HighwayTools extends Module {
     }
 
     private boolean isValidBoatPlacementArea(BlockPos floorAnchor) {
-        if (mc.world == null) return false;
+        if (mc.level == null) return false;
 
         for (int dx = 0; dx < 2; dx++) {
             for (int dz = 0; dz < 2; dz++) {
-                BlockPos floor = floorAnchor.add(dx, 0, dz);
-                if (!mc.world.getBlockState(floor).isSolidBlock(mc.world, floor)) return false;
+                BlockPos floor = floorAnchor.offset(dx, 0, dz);
+                if (!mc.level.getBlockState(floor).isRedstoneConductor(mc.level, floor)) return false;
             }
         }
 
         for (int dx = 0; dx < 2; dx++) {
             for (int dz = 0; dz < 2; dz++) {
                 for (int y = 1; y <= 3; y++) {
-                    BlockPos air = floorAnchor.add(dx, y, dz);
-                    BlockState state = mc.world.getBlockState(air);
-                    if (!state.isAir() && !state.isReplaceable()) return false;
+                    BlockPos air = floorAnchor.offset(dx, y, dz);
+                    BlockState state = mc.level.getBlockState(air);
+                    if (!state.isAir() && !state.canBeReplaced()) return false;
                 }
             }
         }
@@ -963,11 +968,11 @@ public class HighwayTools extends Module {
     }
 
     private boolean isTravelSpaceClear(int centerX, int centerZ) {
-        if (mc.world == null) return false;
+        if (mc.level == null) return false;
 
         for (BlockPos pos : getSectionProbeVolume(centerX, centerZ)) {
-            BlockState state = mc.world.getBlockState(pos);
-            if (!state.isAir() && !state.isReplaceable()) return false;
+            BlockState state = mc.level.getBlockState(pos);
+            if (!state.isAir() && !state.canBeReplaced()) return false;
         }
 
         return true;
@@ -981,27 +986,27 @@ public class HighwayTools extends Module {
     }
 
     private boolean isRidingBoat() {
-        return mc.player != null && mc.player.getVehicle() instanceof BoatEntity;
+        return mc.player != null && mc.player.getVehicle() instanceof Boat;
     }
 
     private boolean allObsidian(List<BlockPos> positions) {
         for (BlockPos pos : positions) {
-            if (!mc.world.getBlockState(pos).isOf(Blocks.OBSIDIAN)) return false;
+            if (!mc.level.getBlockState(pos).is(Blocks.OBSIDIAN)) return false;
         }
         return true;
     }
 
     private boolean allNonObsidian(List<BlockPos> positions) {
         for (BlockPos pos : positions) {
-            if (mc.world.getBlockState(pos).isOf(Blocks.OBSIDIAN)) return false;
+            if (mc.level.getBlockState(pos).is(Blocks.OBSIDIAN)) return false;
         }
         return true;
     }
 
     private boolean isMineableBlock(BlockState state, BlockPos pos) {
-        if (state.isAir() || state.isReplaceable()) return true;
-        if (state.isOf(Blocks.BEDROCK) || state.isOf(Blocks.OBSIDIAN) || state.isOf(Blocks.CRYING_OBSIDIAN)) return false;
-        return state.getHardness(mc.world, pos) >= 0;
+        if (state.isAir() || state.canBeReplaced()) return true;
+        if (state.is(Blocks.BEDROCK) || state.is(Blocks.OBSIDIAN) || state.is(Blocks.CRYING_OBSIDIAN)) return false;
+        return state.getDestroySpeed(mc.level, pos) >= 0;
     }
 
     private void openSection(BlockPos center, SampleSnapshot snapshot) {
@@ -1065,8 +1070,8 @@ public class HighwayTools extends Module {
             .append(snapshot.center().getX()).append(',')
             .append(snapshot.center().getY()).append(',')
             .append(snapshot.center().getZ()).append(',')
-            .append(new ChunkPos(snapshot.center()).x).append(',')
-            .append(new ChunkPos(snapshot.center()).z).append(',')
+            .append(ChunkPos.containing(snapshot.center()).x()).append(',')
+            .append(ChunkPos.containing(snapshot.center()).z()).append(',')
             .append(String.format(Locale.ROOT, "%.3f", snapshot.playerPos().x)).append(',')
             .append(String.format(Locale.ROOT, "%.3f", snapshot.playerPos().y)).append(',')
             .append(String.format(Locale.ROOT, "%.3f", snapshot.playerPos().z)).append(',')
@@ -1202,16 +1207,16 @@ public class HighwayTools extends Module {
         if (notifyDesktop.get()) THMUtils.Notify("Highway Checker", message);
     }
 
-    private int countObsidianInChunk(ClientPlayerEntity player) {
-        ChunkPos chunkPos = new ChunkPos(player.getBlockPos());
-        WorldChunk chunk = mc.world.getChunk(chunkPos.x, chunkPos.z);
+    private int countObsidianInChunk(LocalPlayer player) {
+        ChunkPos chunkPos = ChunkPos.containing(player.blockPosition());
+        LevelChunk chunk = mc.level.getChunk(chunkPos.x(), chunkPos.z());
 
-        int minX = chunkPos.getStartX();
-        int minZ = chunkPos.getStartZ();
-        int maxX = chunkPos.getEndX();
-        int maxZ = chunkPos.getEndZ();
-        int minY = mc.world.getBottomY();
-        int maxY = mc.world.getBottomY() + mc.world.getHeight();
+        int minX = chunkPos.getMinBlockX();
+        int minZ = chunkPos.getMinBlockZ();
+        int maxX = chunkPos.getMaxBlockX();
+        int maxZ = chunkPos.getMaxBlockZ();
+        int minY = mc.level.getMinY();
+        int maxY = mc.level.getMinY() + mc.level.getHeight();
         int count = 0;
 
         for (int x = minX; x <= maxX; x++) {
@@ -1230,52 +1235,28 @@ public class HighwayTools extends Module {
     }
 
     private void disconnectPlayer() {
-        if (mc.getNetworkHandler() != null) {
+        if (mc.getConnection() != null) {
             toggle();
 
-            MutableText text = Text.literal("[")
-                .styled(style -> style.withColor(Formatting.WHITE))
-                .append(Text.literal("HighwayFinder").styled(style -> style.withColor(Formatting.BLUE)))
-                .append(Text.literal("] ").styled(style -> style.withColor(Formatting.WHITE)))
-                .append(Text.literal("Highway boundary reached.").styled(style -> style.withColor(Formatting.RED)));
+            MutableComponent text = Component.literal("[")
+                .withStyle(style -> style.withColor(ChatFormatting.WHITE))
+                .append(Component.literal("HighwayFinder").withStyle(style -> style.withColor(ChatFormatting.BLUE)))
+                .append(Component.literal("] ").withStyle(style -> style.withColor(ChatFormatting.WHITE)))
+                .append(Component.literal("Highway boundary reached.").withStyle(style -> style.withColor(ChatFormatting.RED)));
 
-            mc.getNetworkHandler().getConnection().disconnect(text);
+            mc.getConnection().getConnection().disconnect(text);
         }
     }
 
     private void sendWebhookAsync(String message, String kind) {
         if (!webhookEnabled.get()) return;
-        if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;
-        if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(message)) return;
         String url = webhookUrl.get().trim();
         if (url.isEmpty()) return;
-        String payload = "{\"content\":\"" + escapeJson(message) + "\"}";
-
         new Thread(() -> {
-            try {
-                @SuppressWarnings("deprecation")
-                HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-                connection.setRequestMethod("POST");
-                connection.setRequestProperty("Content-Type", "application/json");
-                connection.setDoOutput(true);
-                byte[] data = payload.getBytes(StandardCharsets.UTF_8);
-                connection.setFixedLengthStreamingMode(data.length);
-                connection.getOutputStream().write(data);
-                connection.getOutputStream().flush();
-                connection.getOutputStream().close();
-                connection.getInputStream().close();
-            } catch (Exception e) {
-                debug("webhook", "send-failed kind=%s msg=%s", kind, e.getMessage());
-            }
+            boolean ok = xyz.thm.addon.utils.TrustedHttp.postJson(
+                url, xyz.thm.addon.utils.TrustedHttp.jsonContent(message), xyz.thm.addon.utils.TrustedHttp.Kind.USER_WEBHOOK, null);
+            if (!ok) debug("webhook", "send-failed kind=%s", kind);
         }, "HighwayCheckerWebhook").start();
-    }
-
-    private static String escapeJson(String input) {
-        return input
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r");
     }
 
     private void fail(String format, Object... args) {
@@ -1291,13 +1272,13 @@ public class HighwayTools extends Module {
         if (mc.player == null || line == null) return;
 
         double[] projected = projectToLine(mc.player.getX(), mc.player.getZ(), line);
-        mc.player.setVelocity(0.0, mc.player.getVelocity().y, 0.0);
-        mc.player.setPosition(projected[0], mc.player.getY(), projected[1]);
-        mc.player.setYaw(yawForStep(direction.dx, direction.dz));
+        mc.player.setDeltaMovement(0.0, mc.player.getDeltaMovement().y, 0.0);
+        mc.player.setPos(projected[0], mc.player.getY(), projected[1]);
+        mc.player.setYRot(yawForStep(direction.dx, direction.dz));
     }
 
     private BlockPos currentCenterBlock() {
-        if (mc.player == null || line == null) return BlockPos.ORIGIN;
+        if (mc.player == null || line == null) return BlockPos.ZERO;
         double[] projected = projectToLine(mc.player.getX(), mc.player.getZ(), line);
         return new BlockPos(floorToBlock(projected[0]), SAMPLE_Y_LOW, floorToBlock(projected[1]));
     }
@@ -1327,7 +1308,7 @@ public class HighwayTools extends Module {
     }
 
     private static int floorToBlock(double value) {
-        return MathHelper.floor(value);
+        return Mth.floor(value);
     }
 
     private static long pack(int x, int z) {
@@ -1355,7 +1336,7 @@ public class HighwayTools extends Module {
     }
 
     private static String blockId(BlockState state) {
-        return Registries.BLOCK.getId(state.getBlock()).toString();
+        return BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
     }
 
     private static String formatPos(BlockPos pos) {
@@ -1364,13 +1345,13 @@ public class HighwayTools extends Module {
 
     private void stopMovementKeys() {
         if (mc.options == null) return;
-        mc.options.forwardKey.setPressed(false);
-        mc.options.backKey.setPressed(false);
-        mc.options.leftKey.setPressed(false);
-        mc.options.rightKey.setPressed(false);
-        mc.options.jumpKey.setPressed(false);
-        mc.options.sprintKey.setPressed(false);
-        mc.options.sneakKey.setPressed(false);
+        mc.options.keyUp.setDown(false);
+        mc.options.keyDown.setDown(false);
+        mc.options.keyLeft.setDown(false);
+        mc.options.keyRight.setDown(false);
+        mc.options.keyJump.setDown(false);
+        mc.options.keySprint.setDown(false);
+        mc.options.keyShift.setDown(false);
     }
 
     public enum CheckerMode {
@@ -1478,7 +1459,7 @@ public class HighwayTools extends Module {
     private record SampleSnapshot(
         boolean trusted,
         BlockPos center,
-        Vec3d playerPos,
+        Vec3 playerPos,
         boolean startsSection,
         boolean stopsSection,
         List<String> y118Blocks,

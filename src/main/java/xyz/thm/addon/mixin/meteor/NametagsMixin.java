@@ -16,18 +16,18 @@ import meteordevelopment.meteorclient.systems.modules.player.NameProtect;
 import meteordevelopment.meteorclient.systems.modules.render.Nametags;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.resource.Resource;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.packs.resources.Resource;
+import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import xyz.thm.addon.compat.ClientFonts;
 import xyz.thm.addon.system.THMSystem;
 import xyz.thm.addon.utils.ThmMembers;
 import xyz.thm.addon.utils.TotemTracker;
@@ -38,6 +38,8 @@ import java.util.Optional;
 import static xyz.thm.addon.utils.ThmMembers.isIgnore;
 import static xyz.thm.addon.utils.ThmMembers.isKillOnSight;
 
+import com.mojang.blaze3d.platform.NativeImage;
+
 @Mixin(value = Nametags.class, priority = 1001)
 public abstract class NametagsMixin extends Module {
     public NametagsMixin(Category category, String name, String description, String... aliases) {
@@ -45,9 +47,9 @@ public abstract class NametagsMixin extends Module {
     }
 
     // Adding the icons to select them later
-    @Unique private static final Identifier THM_ICON_OBBY = Identifier.of("icon", "obby.webp");
-    @Unique private static final Identifier THM_ICON_TRANSPARENT_WHITE = Identifier.of("icon", "whitetransparent.webp");
-    @Unique private static final Identifier THM_ICON_TRANSPARENT_BLACK = Identifier.of("icon", "blacktransparent.webp");
+    @Unique private static final Identifier THM_ICON_OBBY = Identifier.fromNamespaceAndPath("icon", "obby.webp");
+    @Unique private static final Identifier THM_ICON_TRANSPARENT_WHITE = Identifier.fromNamespaceAndPath("icon", "whitetransparent.webp");
+    @Unique private static final Identifier THM_ICON_TRANSPARENT_BLACK = Identifier.fromNamespaceAndPath("icon", "blacktransparent.webp");
 
     @Unique private static final Color THM_TOTEM_COLOR = new Color(255, 205, 60);
 
@@ -56,23 +58,23 @@ public abstract class NametagsMixin extends Module {
     @Unique private static int thm$iconHeight = 64;
     @Unique private static boolean thm$iconSizeResolved;
 
-    @Unique private DrawContext thm$drawContext;
-    @Unique private PlayerEntity thm$player;
+    @Unique private GuiGraphicsExtractor thm$drawContext;
+    @Unique private Player thm$player;
 
     @Inject(method = "renderNametagPlayer", at = @At("HEAD"))
-    private void thmAddon$captureContext(Render2DEvent event, PlayerEntity player, boolean shadow, CallbackInfo ci) {
-        thm$drawContext = event.drawContext;
+    private void thmAddon$captureContext(Render2DEvent event, Player player, boolean shadow, CallbackInfo ci) {
+        thm$drawContext = event.graphics;
         thm$player = player;
     }
 
     @Inject(method = "renderNametagPlayer", at = @At("RETURN"))
-    private void thmAddon$clearContext(Render2DEvent event, PlayerEntity player, boolean shadow, CallbackInfo ci) {
+    private void thmAddon$clearContext(Render2DEvent event, Player player, boolean shadow, CallbackInfo ci) {
         thm$drawContext = null;
         thm$player = null;
     }
 
-    @Redirect(method = "renderNametagPlayer", at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/player/PlayerUtils;getPlayerColor(Lnet/minecraft/entity/player/PlayerEntity;Lmeteordevelopment/meteorclient/utils/render/color/Color;)Lmeteordevelopment/meteorclient/utils/render/color/Color;"))
-    private Color thmAddon$overrideNameColor(PlayerEntity player, Color originalColor) {
+    @Redirect(method = "renderNametagPlayer", at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/player/PlayerUtils;getPlayerColor(Lnet/minecraft/world/entity/player/Player;Lmeteordevelopment/meteorclient/utils/render/color/Color;)Lmeteordevelopment/meteorclient/utils/render/color/Color;"))
+    private Color thmAddon$overrideNameColor(Player player, Color originalColor) {
         Color baseColor = PlayerUtils.getPlayerColor(player, originalColor);
 
         if (Friends.get().isFriend(player)) return baseColor;
@@ -113,7 +115,7 @@ public abstract class NametagsMixin extends Module {
             // Getting the right icon for the type selected
             Identifier iconId = thm$getIconForMember(thm$player);
 
-            thm$drawContext.drawTexture(
+            thm$drawContext.blit(
                 RenderPipelines.GUI_TEXTURED,
                 iconId,
                 ix,
@@ -132,8 +134,8 @@ public abstract class NametagsMixin extends Module {
         return text.render(string, x + iconWidth + THM_ICON_PAD, y, color, shadow);
     }
 
-    @Inject(method = "renderNametagPlayer", at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/render/NametagUtils;end(Lnet/minecraft/client/gui/DrawContext;)V"))
-    private void thmAddon$renderTotemCounter(Render2DEvent event, PlayerEntity player, boolean shadow, CallbackInfo ci) {
+    @Inject(method = "renderNametagPlayer", at = @At(value = "INVOKE", target = "Lmeteordevelopment/meteorclient/utils/render/NametagUtils;end(Lnet/minecraft/client/gui/GuiGraphicsExtractor;)V"))
+    private void thmAddon$renderTotemCounter(Render2DEvent event, Player player, boolean shadow, CallbackInfo ci) {
         THMSystem system = THMSystem.get();
         if (system == null || !system.showTotemCounter.get()) return;
 
@@ -148,7 +150,7 @@ public abstract class NametagsMixin extends Module {
         double drawX = -width / 2;
         double drawY = heightDown + 2;
 
-        text.beginBig();
+        ClientFonts.beginBig(text, event.graphics);
         text.render(totemText, drawX, drawY, THM_TOTEM_COLOR, shadow);
         text.end();
     }
@@ -162,14 +164,14 @@ public abstract class NametagsMixin extends Module {
     }
 
     @Unique
-    private String thm$getDisplayName(PlayerEntity player) {
+    private String thm$getDisplayName(Player player) {
         if (player == null) return "";
         if (player == meteordevelopment.meteorclient.MeteorClient.mc.player) return Modules.get().get(NameProtect.class).getName(player.getName().getString());
         return player.getName().getString();
     }
 
     @Unique
-    private Identifier thm$getIconForMember(PlayerEntity player) {
+    private Identifier thm$getIconForMember(Player player) {
         THMSystem system = THMSystem.get();
         if (system == null || player == null) return THM_ICON_OBBY;
 
@@ -200,7 +202,7 @@ public abstract class NametagsMixin extends Module {
         try {
             Optional<Resource> resource = meteordevelopment.meteorclient.MeteorClient.mc.getResourceManager().getResource(THM_ICON_OBBY);
             if (resource.isEmpty()) return;
-            try (InputStream input = resource.get().getInputStream()) {
+            try (InputStream input = resource.get().open()) {
                 NativeImage image = NativeImage.read(input);
                 thm$iconWidth = Math.max(1, image.getWidth());
                 thm$iconHeight = Math.max(1, image.getHeight());
@@ -218,7 +220,7 @@ public abstract class NametagsMixin extends Module {
     }
 
     @Unique
-    private ThmMembers.Member thm$getEligibleMember(PlayerEntity player, THMSystem system) {
+    private ThmMembers.Member thm$getEligibleMember(Player player, THMSystem system) {
         if (player == null) return null;
         ThmMembers.Member member = ThmMembers.getMemberByMcName(player.getGameProfile().name());
         if (member == null) return null;

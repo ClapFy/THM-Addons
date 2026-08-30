@@ -11,9 +11,9 @@ import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.gui.hud.MessageIndicator;
-import net.minecraft.client.network.PlayerListEntry;
-import net.minecraft.world.GameMode;
+import net.minecraft.client.multiplayer.chat.GuiMessageTag;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.world.level.GameType;
 import xyz.thm.addon.THMAddon;
 
 import java.util.*;
@@ -288,10 +288,10 @@ public final class ServerStatusHandler {
         }
     }
 
-    private static boolean isSystemIndicator(MessageIndicator indicator) {
+    private static boolean isSystemIndicator(GuiMessageTag indicator) {
         if (indicator == null) return false;
         try {
-            return indicator == MessageIndicator.system();
+            return indicator == GuiMessageTag.system();
         } catch (Throwable ignored) {
             return false;
         }
@@ -412,7 +412,7 @@ public final class ServerStatusHandler {
 
         // Deterministic commit policy: self PlayerListEntry gamemode and the live dimension are
         // authoritative. Trusted cracked-auth evidence only disambiguates Adventure + End.
-        GameMode gm = resolvePlayerListGameMode();
+        GameType gm = resolvePlayerListGameMode();
         if (gm == null) {
             score.reasons.add("strict:missing-player-list-gamemode");
             return score;
@@ -420,14 +420,14 @@ public final class ServerStatusHandler {
         String gmSource = "player-list";
 
         String dimensionId = "";
-        if (mc != null && mc.world != null && mc.world.getRegistryKey() != null) {
+        if (mc != null && mc.level != null && mc.level.dimension() != null) {
             try {
-                dimensionId = String.valueOf(mc.world.getRegistryKey().getValue());
+                dimensionId = String.valueOf(mc.level.dimension().identifier());
             } catch (Throwable ignored) {
             }
         }
 
-        boolean crackedAdventureEnd = gm == GameMode.ADVENTURE && "minecraft:the_end".equals(dimensionId);
+        boolean crackedAdventureEnd = gm == GameType.ADVENTURE && "minecraft:the_end".equals(dimensionId);
         boolean postLoginTeleported = hasMetPostLoginTeleportGate();
 
         if (crackedPromptSeenThisConnection && crackedAdventureEnd && !postLoginTeleported) {
@@ -450,19 +450,19 @@ public final class ServerStatusHandler {
             return score;
         }
 
-        if (gm == GameMode.ADVENTURE && "minecraft:overworld".equals(dimensionId)) {
+        if (gm == GameType.ADVENTURE && "minecraft:overworld".equals(dimensionId)) {
             score.lobby = 100;
             score.reasons.add("strict:gamemode:ADVENTURE+dimension:overworld->main-lobby+gm-source:" + gmSource);
             return score;
         }
 
-        if (gm == GameMode.SPECTATOR) {
+        if (gm == GameType.SPECTATOR) {
             score.transfer = 100;
             score.reasons.add("strict:gamemode:SPECTATOR->transfer+gm-source:" + gmSource);
             return score;
         }
 
-        if (gm == GameMode.SURVIVAL) {
+        if (gm == GameType.SURVIVAL) {
             score.main = 100;
             score.reasons.add("strict:gamemode:SURVIVAL->main+gm-source:" + gmSource);
             return score;
@@ -471,7 +471,7 @@ public final class ServerStatusHandler {
         // ponytail: creative is never a lobby/transfer state, so it counts as the main server. Without this
         // it scores UNKNOWN and every server-state-gated module (HighwayBuilder) pauses forever. Creative
         // sessions are barred from reporting anything, so this can't be used to fake stats.
-        if (gm == GameMode.CREATIVE) {
+        if (gm == GameType.CREATIVE) {
             score.main = 100;
             score.reasons.add("strict:gamemode:CREATIVE->main+gm-source:" + gmSource);
             return score;
@@ -481,10 +481,10 @@ public final class ServerStatusHandler {
         return score;
     }
 
-    private GameMode resolvePlayerListGameMode() {
-        if (mc == null || mc.player == null || mc.getNetworkHandler() == null) return null;
+    private GameType resolvePlayerListGameMode() {
+        if (mc == null || mc.player == null || mc.getConnection() == null) return null;
         try {
-            PlayerListEntry selfEntry = mc.getNetworkHandler().getPlayerListEntry(mc.player.getUuid());
+            PlayerInfo selfEntry = mc.getConnection().getPlayerInfo(mc.player.getUUID());
             if (selfEntry == null) return null;
             return selfEntry.getGameMode();
         } catch (Throwable ignored) {

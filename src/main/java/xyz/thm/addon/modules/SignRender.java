@@ -16,15 +16,16 @@ import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.HangingSignBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.HangingSignBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientFonts;
 
 import java.util.*;
 public class SignRender extends Module {
@@ -193,7 +194,7 @@ public class SignRender extends Module {
         final BlockPos pos;
         final List<String> lines;
         final String fullText;
-        final Vec3d worldPos;
+        final Vec3 worldPos;
         double distance;
         double screenX, screenY;
         boolean onScreen = false;
@@ -201,7 +202,7 @@ public class SignRender extends Module {
         double renderHeight;
         double scale;
         Color color;
-        SignRenderData(BlockPos pos, List<String> lines, Vec3d worldPos) {
+        SignRenderData(BlockPos pos, List<String> lines, Vec3 worldPos) {
             this.pos = pos;
             this.lines = new ArrayList<>(lines);
             this.fullText = String.join(" ", lines).trim();
@@ -255,12 +256,14 @@ public class SignRender extends Module {
     private int updateTicker = 0;
     private int globalCycleIndex = 0;
     private long lastGlobalCycleTime = 0;
+    private net.minecraft.client.gui.GuiGraphicsExtractor graphics;
     public SignRender() {
         super(THMAddon.MAIN, "sign-render", "Renders sign text through walls with advanced clustering.");
     }
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (mc.world == null || mc.player == null) return;
+        graphics = event.graphics;
+        if (mc.level == null || mc.player == null) return;
         updateTicker++;
         boolean fullUpdate = !cacheSignText.get() || updateTicker >= updateInterval.get();
         if (fullUpdate) {
@@ -277,7 +280,7 @@ public class SignRender extends Module {
     private void collectSigns() {
         allSigns.clear();
         signCache.clear();
-        Vec3d playerPos = mc.player.getEntityPos();
+        Vec3 playerPos = mc.player.position();
         double maxDist = maxDistance.get();
         List<SignRenderData> tempSignList = new ArrayList<>();
         for (BlockEntity blockEntity : Utils.blockEntities()) {
@@ -286,8 +289,8 @@ public class SignRender extends Module {
                     !(blockEntity instanceof HangingSignBlockEntity)) {
                     continue;
                 }
-                BlockPos signPos = blockEntity.getPos();
-                Vec3d signVec = Vec3d.ofCenter(signPos);
+                BlockPos signPos = blockEntity.getBlockPos();
+                Vec3 signVec = Vec3.atCenterOf(signPos);
                 double distance = playerPos.distanceTo(signVec);
                 if (distance > maxDist) continue;
                 List<String> lines = extractSignLines(blockEntity);
@@ -315,7 +318,7 @@ public class SignRender extends Module {
     }
     private void updateSignPositions() {
         if (mc.player == null) return;
-        Vec3d playerPos = mc.player.getEntityPos();
+        Vec3 playerPos = mc.player.position();
         Iterator<SignRenderData> iterator = allSigns.iterator();
         while (iterator.hasNext()) {
             SignRenderData sign = iterator.next();
@@ -402,7 +405,7 @@ public class SignRender extends Module {
             if (currentSign.onScreen) {
                 renderSignAtPosition(currentSign, textRenderer, currentSign.screenX, currentSign.screenY);
                 if (showClusterCount.get() && allSigns.size() > 1) {
-                    textRenderer.begin(currentSign.scale, false, true);
+                    ClientFonts.begin(textRenderer, graphics, currentSign.scale, false, true);
                     double lineHeight = textRenderer.getHeight();
                     textRenderer.end();
                     double signHeight = (multilineDisplay.get() && !currentSign.lines.isEmpty()) ?
@@ -436,7 +439,7 @@ public class SignRender extends Module {
             if (count >= maxClusterDisplay.get()) break;
             renderSignAtPosition(sign, textRenderer, baseX, baseY + offsetY);
             rendered.add(sign);
-            textRenderer.begin(sign.scale, false, true);
+            ClientFonts.begin(textRenderer, graphics, sign.scale, false, true);
             double lineHeight = textRenderer.getHeight();
             textRenderer.end();
             double signHeight = (multilineDisplay.get() && !sign.lines.isEmpty()) ?
@@ -462,7 +465,7 @@ public class SignRender extends Module {
             renderSignAtPosition(currentSign, textRenderer, cluster.centerX, cluster.centerY);
             rendered.addAll(cluster.signs);
             if (showClusterCount.get() && cluster.signs.size() > 1) {
-                textRenderer.begin(currentSign.scale, false, true);
+                ClientFonts.begin(textRenderer, graphics, currentSign.scale, false, true);
                 double lineHeight = textRenderer.getHeight();
                 textRenderer.end();
                 double signHeight = (multilineDisplay.get() && !currentSign.lines.isEmpty()) ?
@@ -485,7 +488,7 @@ public class SignRender extends Module {
         renderSignAtPosition(primary, textRenderer, cluster.centerX, cluster.centerY);
         rendered.addAll(cluster.signs);
         if (cluster.signs.size() > 1) {
-            textRenderer.begin(primary.scale, false, true);
+            ClientFonts.begin(textRenderer, graphics, primary.scale, false, true);
             double lineHeight = textRenderer.getHeight();
             textRenderer.end();
             double signHeight = (multilineDisplay.get() && !primary.lines.isEmpty()) ?
@@ -540,7 +543,7 @@ public class SignRender extends Module {
         }
     }
     private void renderMultilineSign(SignRenderData sign, TextRenderer textRenderer, double centerX, double centerY) {
-        textRenderer.begin(sign.scale, false, true);
+        ClientFonts.begin(textRenderer, graphics, sign.scale, false, true);
         double lineHeight = textRenderer.getHeight();
         List<Double> lineWidths = new ArrayList<>();
         double maxWidth = 0;
@@ -567,7 +570,7 @@ public class SignRender extends Module {
             Renderer2D.COLOR.quad(bgLeft, bgTop, bgWidth, bgHeight, bgColor);
             Renderer2D.COLOR.render();
         }
-        textRenderer.begin(sign.scale, false, true);
+        ClientFonts.begin(textRenderer, graphics, sign.scale, false, true);
         for (int i = 0; i < sign.lines.size(); i++) {
             String line = sign.lines.get(i);
             if (!line.isEmpty()) {
@@ -583,7 +586,7 @@ public class SignRender extends Module {
         renderTextAtScreenPos(sign.fullText, centerX, centerY, sign.scale, sign.color, textRenderer);
     }
     private void renderTextAtScreenPos(String text, double screenX, double screenY, double scale, Color color, TextRenderer textRenderer) {
-        textRenderer.begin(scale, false, true);
+        ClientFonts.begin(textRenderer, graphics, scale, false, true);
         double textWidth = textRenderer.getWidth(text);
         double textHeight = textRenderer.getHeight();
         double bgPadding = 4;
@@ -603,7 +606,7 @@ public class SignRender extends Module {
             Renderer2D.COLOR.quad(elementLeft, elementTop, elementWidth, elementHeight, bgColor);
             Renderer2D.COLOR.render();
         }
-        textRenderer.begin(scale, false, true);
+        ClientFonts.begin(textRenderer, graphics, scale, false, true);
         textRenderer.render(text, elementLeft + bgPadding, elementTop + bgPadding, color);
         textRenderer.end();
     }
@@ -637,9 +640,9 @@ public class SignRender extends Module {
     private List<String> extractTextLines(SignText signText) {
         List<String> lines = new ArrayList<>();
         try {
-            Text[] messages = signText.getMessages(false);
+            Component[] messages = signText.getMessages(false);
             if (messages != null) {
-                for (Text message : messages) {
+                for (Component message : messages) {
                     if (message == null) continue;
                     String line = safeExtractString(message);
                     if (!line.isEmpty()) {
@@ -650,7 +653,7 @@ public class SignRender extends Module {
         } catch (Exception ignored) {}
         return lines;
     }
-    private String safeExtractString(Text text) {
+    private String safeExtractString(Component text) {
         if (text == null) return "";
         try {
             String result = text.getString();
@@ -658,7 +661,7 @@ public class SignRender extends Module {
             return cleanSignText(result);
         } catch (Exception e) {
             try {
-                String literal = text.getLiteralString();
+                String literal = text.tryCollapseToString();
                 if (literal != null) {
                     return cleanSignText(literal);
                 }

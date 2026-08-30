@@ -1,3 +1,9 @@
+/*
+ * This file is part of THM Addons — https://github.com/Leonn170709/THM-Addons
+ * Copyright (c) THM Addons contributors. Credit the devs, keep the link.
+ * By using this code you agree to the license terms and to keep your repo public.
+ */
+
 package xyz.thm.addon.gui;
 
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -16,11 +22,11 @@ import java.util.function.Function;
 
 /**
  * Reusable searchable single-select picker screen (like PaketLimiter's packet list, but one pick).
- * Open with {@code mc.setScreen(...)}; the callback fires with the chosen option and the screen closes.
+ * Open with {@code ClientGui.setScreen(mc, ...)}; the callback fires with the chosen option and the screen closes.
  *
  * <pre>{@code
- * mc.setScreen(SelectScreen.of(theme, "Select Packet", names, name -> { selected = name; refresh(); }));
- * mc.setScreen(new SelectScreen<>(theme, "Select Home", homes, Home::name, home -> ...));
+ * ClientGui.setScreen(mc, SelectScreen.of(theme, "Select Packet", names, name -> { selected = name; refresh(); }));
+ * ClientGui.setScreen(mc, new SelectScreen<>(theme, "Select Home", homes, Home::name, home -> ...));
  * }</pre>
  */
 public class SelectScreen<T> extends WindowScreen {
@@ -62,7 +68,7 @@ public class SelectScreen<T> extends WindowScreen {
             WButton b = listWidget.add(theme.button(name)).expandX().widget();
             b.action = () -> {
                 onSelect.accept(opt);
-                close();
+                onClose();
             };
         }
         listWidget.invalidate();

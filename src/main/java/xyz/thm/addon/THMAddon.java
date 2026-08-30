@@ -26,7 +26,7 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.metadata.ModMetadata;
 import net.minecraft.SharedConstants;
-import net.minecraft.item.Items;
+import net.minecraft.world.item.Items;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 import org.slf4j.Logger;
 import xyz.thm.addon.commands.*;
@@ -59,8 +59,8 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
 
     static {METADATA = FabricLoader.getInstance().getModContainer(MOD_ID).orElseThrow().getMetadata();
         VERSION = METADATA.getVersion().getFriendlyString();
-        MAIN = new Category("THM Highway", Items.OBSIDIAN.getDefaultStack());
-        PVP = new Category("THM PVP", Items.END_CRYSTAL.getDefaultStack());}
+        MAIN = new Category("THM Highway", () -> Items.OBSIDIAN.getDefaultInstance());
+        PVP = new Category("THM PVP", () -> Items.END_CRYSTAL.getDefaultInstance());}
 
     public static File GetConfigFile(String key, String filename) {
         return new File(new File(new File(new File(MeteorClient.FOLDER, "thm"), key), Utils.getFileWorldName()), filename);
@@ -69,7 +69,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
     public void onInitializeClient() {
         if (!FabricLoader.getInstance().isModLoaded("anarchymod")) {
             try {
-                PayloadTypeRegistry.playC2S().register(JoinPayload.ID, JoinPayload.CODEC);
+                PayloadTypeRegistry.serverboundPlay().register(JoinPayload.ID, JoinPayload.CODEC);
                 ClientPlayConnectionEvents.JOIN.register((listener, sender, client) -> {
                     if (!THMUtils.isNot6B6T()) {
                         sender.sendPacket(new JoinPayload());
@@ -91,7 +91,7 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
 
         record ModOption(String modId, String displayName, String url) {}
         record RequiredMod(String groupName, String downloadUrl, ModOption... options) {}
-        String Version = SharedConstants.getGameVersion().name();
+        String Version = SharedConstants.getCurrentVersion().name();
 
         List<RequiredMod> required = List.of(
             new RequiredMod("Baritone",
@@ -143,15 +143,15 @@ public class THMAddon extends MeteorAddon implements ClientModInitializer {
             // here (confirmed by crash log). Swing only works in Main.java's standalone double-click
             // launch, which is a separate JVM without that flag. TinyFileDialogs can't set custom
             // button captions, so "Download"/"No thanks" live in the message text instead.
-            boolean openDownload = TinyFileDialogs.tinyfd_messageBox(
+            int openDownload = TinyFileDialogs.tinyfd_messageBox(
                 "THM Addon - Missing Dependencies",
                 msg.toString(),
                 hasDownload ? "okcancel" : "ok",
                 "error",
-                true
+                1
             );
 
-            if (hasDownload && openDownload) {
+            if (hasDownload && openDownload == 1) {
                 for (String url : downloadUrls) {
                     try {
                         String os = System.getProperty("os.name").toLowerCase();

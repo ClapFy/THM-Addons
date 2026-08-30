@@ -6,18 +6,18 @@
 
 package xyz.thm.addon.mixin.accessor;
 
-import net.minecraft.entity.LivingEntity;
+import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 @Mixin(LivingEntity.class)
 public interface LivingEntityRotationAccessor {
-    @Accessor("lastBodyYaw")
+    @Accessor("yBodyRotO")
     void thm$setLastBodyYaw(float value);
 
-    @Accessor("headYaw")
+    @Accessor("yHeadRot")
     void thm$setHeadYaw(float value);
 
-    @Accessor("lastHeadYaw")
+    @Accessor("yHeadRotO")
     void thm$setLastHeadYaw(float value);
 }

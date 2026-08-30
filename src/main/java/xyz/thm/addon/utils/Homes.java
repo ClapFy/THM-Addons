@@ -13,14 +13,14 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.CommandExecutionC2SPacket;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.gui.HomesMeteorScreen;
 import xyz.thm.addon.gui.HomesScreen;
@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import xyz.thm.addon.compat.ClientGui;
 
 /**
  * Turns the chat output of the server's own {@code /homes} command into a clickable screen. Nothing about
@@ -90,7 +91,7 @@ public class Homes {
     @EventHandler
     private void onPacketSend(PacketEvent.Send event) {
         if (!enabled()) return;
-        if (!(event.packet instanceof CommandExecutionC2SPacket packet)) return;
+        if (!(event.packet instanceof ServerboundChatCommandPacket packet)) return;
         String command = packet.command().toLowerCase();
         if (!command.equals("homes") && !command.startsWith("homes ")) return;
         homes.clear();
@@ -118,10 +119,10 @@ public class Homes {
      * own {@code homes (x/y):} header rather than "text after the first colon" — that earlier version
      * turned a chat prefix into a colon of its own and read "Your" and "homes" as home names.
      */
-    private static List<String> parse(Text message) {
+    private static List<String> parse(Component message) {
         List<String> found = new ArrayList<>();
 
-        String raw = Formatting.strip(message.getString());
+        String raw = ChatFormatting.stripFormatting(message.getString());
         if (raw == null) return found;
 
         Matcher matcher = HOMES_LINE.matcher(raw);
@@ -140,8 +141,8 @@ public class Homes {
 
     public void open() {
         if (homes.isEmpty()) return;
-        if (THMSystem.get().homesGuiStyle.get() == GuiStyle.Meteor) mc.setScreen(new HomesMeteorScreen(GuiThemes.get(), this));
-        else mc.setScreen(new HomesScreen(this));
+        if (THMSystem.get().homesGuiStyle.get() == GuiStyle.Meteor) ClientGui.setScreen(mc, new HomesMeteorScreen(GuiThemes.get(), this));
+        else ClientGui.setScreen(mc, new HomesScreen(this));
     }
 
     public List<String> homes() {
@@ -150,20 +151,20 @@ public class Homes {
 
     public ItemStack icon(String home) {
         String id = icons.get(home);
-        Item item = id == null ? null : Registries.ITEM.get(Identifier.of(id));
+        Item item = id == null ? null : BuiltInRegistries.ITEM.getValue(Identifier.parse(id));
         return new ItemStack(item == null || item == Items.AIR ? DEFAULT_ICON : item);
     }
 
     /** Null resets the home to the default icon. */
     public void setIcon(String home, Item item) {
         if (item == null || item == Items.AIR) icons.remove(home);
-        else icons.put(home, Registries.ITEM.getId(item).toString());
+        else icons.put(home, BuiltInRegistries.ITEM.getKey(item).toString());
         saveIcons();
     }
 
     public void teleport(String home) {
         sendCommand("home " + home);
-        if (mc.currentScreen != null) mc.currentScreen.close();
+        if (ClientGui.screen(mc) != null) ClientGui.screen(mc).onClose();
     }
 
     public void delete(String home) {
@@ -174,7 +175,7 @@ public class Homes {
     private void sendCommand(String command) {
         // ponytail: /home and /delhome are the Essentials-style names /homes itself implies. Two string
         // settings if a server ever uses different ones.
-        if (mc.getNetworkHandler() != null) mc.getNetworkHandler().sendChatCommand(command);
+        if (mc.getConnection() != null) mc.getConnection().sendCommand(command);
     }
 
     // Icon storage

@@ -13,12 +13,14 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.hud.ChatHud;
-import net.minecraft.client.gui.hud.ChatHudLine;
-import net.minecraft.client.gui.hud.MessageIndicator;
-import net.minecraft.text.Text;
+import net.minecraft.client.multiplayer.chat.GuiMessage;
+import net.minecraft.client.multiplayer.chat.GuiMessageSource;
+import net.minecraft.client.multiplayer.chat.GuiMessageTag;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.ChatComponent;
+import net.minecraft.network.chat.Component;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.compat.ClientGui;
 import xyz.thm.addon.mixin.accessor.ChatHudAccessor;
 
 import java.util.ArrayDeque;
@@ -70,7 +72,7 @@ public final class StatsScreenshotChatGuard {
         if (captureDeadlines.isEmpty() || event.isCancelled()) return;
         if (isLocalAddonOutput(event.getMessage())) return;
 
-        Text message = event.getMessage();
+        Component message = event.getMessage();
         if (message != null && bufferedMessages.size() < MAX_BUFFERED_MESSAGES) {
             bufferedMessages.addLast(new BufferedMessage(message.copy(), event.getIndicator()));
         } else {
@@ -105,17 +107,18 @@ public final class StatsScreenshotChatGuard {
     }
 
     private void replayBufferedMessages() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        ChatHud chatHud = mc.inGameHud == null ? null : mc.inGameHud.getChatHud();
+        Minecraft mc = Minecraft.getInstance();
+        ChatComponent chatHud = ClientGui.chat(mc);
 
         if (chatHud != null) {
-            int creationTick = mc.inGameHud.getTicks();
+            int creationTick = ClientGui.guiTicks(mc);
             while (!bufferedMessages.isEmpty()) {
                 BufferedMessage buffered = bufferedMessages.removeFirst();
-                ((ChatHudAccessor) chatHud).thm$addMessage(new ChatHudLine(
+                ((ChatHudAccessor) chatHud).thm$addMessage(new GuiMessage(
                     creationTick,
                     buffered.message(),
                     null,
+                    GuiMessageSource.SYSTEM_SERVER,
                     buffered.indicator()
                 ));
             }
@@ -131,7 +134,7 @@ public final class StatsScreenshotChatGuard {
     }
 
     /** True for chat lines this addon printed itself — those aren't server output, so they don't need buffering. */
-    private static boolean isLocalAddonOutput(Text message) {
+    private static boolean isLocalAddonOutput(Component message) {
         if (message == null) return false;
 
         String trimmed = message.getString().stripLeading();
@@ -147,6 +150,6 @@ public final class StatsScreenshotChatGuard {
             || lower.startsWith("[elytra route]");
     }
 
-    private record BufferedMessage(Text message, MessageIndicator indicator) {
+    private record BufferedMessage(Component message, GuiMessageTag indicator) {
     }
 }

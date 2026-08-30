@@ -6,11 +6,11 @@
 
 package xyz.thm.addon.mixin;
 
-import net.minecraft.client.network.AbstractClientPlayerEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.world.World;
+import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.level.Level;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -26,7 +26,7 @@ public abstract class WaveyCapesEntityMixin extends Entity implements CapeHolder
     @Unique private BasicSimulation thm$simulation;
     @Unique private boolean thm$dirty;
 
-    public WaveyCapesEntityMixin(EntityType<?> type, World world) {
+    public WaveyCapesEntityMixin(EntityType<?> type, Level world) {
         super(type, world);
     }
 
@@ -36,8 +36,8 @@ public abstract class WaveyCapesEntityMixin extends Entity implements CapeHolder
 
     @Inject(method = "tick", at = @At("TAIL"))
     private void thm$wavyCapesTick(CallbackInfo ci) {
-        if (!((Object) this instanceof AbstractClientPlayerEntity)) return;
-        AbstractClientPlayerEntity player = (AbstractClientPlayerEntity) (Object) this;
+        if (!((Object) this instanceof AbstractClientPlayer)) return;
+        AbstractClientPlayer player = (AbstractClientPlayer) (Object) this;
         if (!WaveyCapesConfig.enabled) return;
         if (player.getSkin().cape() == null) return;
 

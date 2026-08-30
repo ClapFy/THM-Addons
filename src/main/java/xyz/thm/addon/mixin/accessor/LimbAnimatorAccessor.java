@@ -6,21 +6,21 @@
 
 package xyz.thm.addon.mixin.accessor;
 
-import net.minecraft.entity.LimbAnimator;
+import net.minecraft.world.entity.WalkAnimationState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
-@Mixin(LimbAnimator.class)
+@Mixin(WalkAnimationState.class)
 public interface LimbAnimatorAccessor {
-    @Accessor("lastSpeed")
+    @Accessor("speedOld")
     void thm$setLastSpeed(float value);
 
     @Accessor("speed")
     void thm$setSpeedInternal(float value);
 
-    @Accessor("animationProgress")
+    @Accessor("position")
     void thm$setAnimationProgress(float value);
 
-    @Accessor("timeScale")
+    @Accessor("positionScale")
     void thm$setTimeScale(float value);
 }

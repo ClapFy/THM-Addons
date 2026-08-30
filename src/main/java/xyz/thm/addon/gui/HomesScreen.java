@@ -6,17 +6,18 @@
 
 package xyz.thm.addon.gui;
 
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import xyz.thm.addon.compat.DyedItems;
 import xyz.thm.addon.utils.Homes;
 
 import java.util.List;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
@@ -30,7 +31,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
  * edge from the very bottom of the texture; that is how a chest with fewer than six rows gets drawn at all.
  */
 public class HomesScreen extends Screen {
-    private static final Identifier TEXTURE = Identifier.ofVanilla("textures/gui/container/generic_54.png");
+    private static final Identifier TEXTURE = Identifier.withDefaultNamespace("textures/gui/container/generic_54.png");
     private static final int TEX_SIZE = 256;
     private static final int PANEL_WIDTH = 176;
     private static final int COLUMNS = 9;
@@ -61,7 +62,7 @@ public class HomesScreen extends Screen {
     private int x, y;
 
     public HomesScreen(Homes module) {
-        super(Text.literal("Homes"));
+        super(Component.literal("Homes"));
         this.module = module;
     }
 
@@ -104,32 +105,32 @@ public class HomesScreen extends Screen {
         return switch (column) {
             case PREV -> page > 0 ? new ItemStack(Items.GLASS_PANE) : ItemStack.EMPTY;
             case NEXT -> page < pageCount() - 1 ? new ItemStack(Items.GLASS_PANE) : ItemStack.EMPTY;
-            case TELEPORT -> new ItemStack(Items.GREEN_CONCRETE);
-            case DELETE -> new ItemStack(Items.RED_CONCRETE);
+            case TELEPORT -> new ItemStack(DyedItems.greenConcrete());
+            case DELETE -> new ItemStack(DyedItems.redConcrete());
             default -> ItemStack.EMPTY;
         };
     }
 
-    private Text controlTooltip(int column) {
+    private Component controlTooltip(int column) {
         return switch (column) {
-            case PREV -> Text.literal("Previous page");
-            case NEXT -> Text.literal("Next page");
-            case TELEPORT -> Text.literal(selected == null ? "Select a home first" : "Teleport to " + selected);
-            case DELETE -> Text.literal(selected == null ? "Select a home first"
+            case PREV -> Component.literal("Previous page");
+            case NEXT -> Component.literal("Next page");
+            case TELEPORT -> Component.literal(selected == null ? "Select a home first" : "Teleport to " + selected);
+            case DELETE -> Component.literal(selected == null ? "Select a home first"
                 : confirmDelete ? "Click again to delete " + selected : "Delete " + selected);
             default -> null;
         };
     }
 
     @Override
-    public boolean mouseClicked(Click click, boolean doubled) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubled) {
         int slot = slotAt(click.x(), click.y());
         if (slot < 0) return super.mouseClicked(click, doubled);
 
         String home = homeAt(slot);
         if (home != null) {
             if (click.button() == GLFW_MOUSE_BUTTON_RIGHT) {
-                ItemStack held = mc.player == null ? ItemStack.EMPTY : mc.player.getMainHandStack();
+                ItemStack held = mc.player == null ? ItemStack.EMPTY : mc.player.getMainHandItem();
                 module.setIcon(home, held.isEmpty() ? null : held.getItem());
             } else {
                 selected = home.equals(selected) ? null : home;
@@ -169,21 +170,21 @@ public class HomesScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
-        super.render(context, mouseX, mouseY, deltaTicks);
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks) {
+        super.extractRenderState(context, mouseX, mouseY, deltaTicks);
 
         int body = HEADER + ROWS * SLOT;
-        context.drawTexture(RenderPipelines.GUI_TEXTURED, TEXTURE, x, y, 0f, 0f,
+        context.blit(RenderPipelines.GUI_TEXTURED, TEXTURE, x, y, 0f, 0f,
             PANEL_WIDTH, body, PANEL_WIDTH, body, TEX_SIZE, TEX_SIZE);
-        context.drawTexture(RenderPipelines.GUI_TEXTURED, TEXTURE, x, y + body, 0f, TRIM_V,
+        context.blit(RenderPipelines.GUI_TEXTURED, TEXTURE, x, y + body, 0f, TRIM_V,
             PANEL_WIDTH, TRIM, PANEL_WIDTH, TRIM, TEX_SIZE, TEX_SIZE);
 
         String heading = pageCount() > 1 ? "Homes (" + (page + 1) + "/" + pageCount() + ")" : "Homes";
-        context.drawText(textRenderer, heading, x + 8, y + 6, TEXT, false);
+        context.text(font, heading, x + 8, y + 6, TEXT, false);
         // a grid of identical dirt blocks is unreadable otherwise - the tooltip only covers hover
         if (selected != null) {
-            context.drawText(textRenderer, selected,
-                x + PANEL_WIDTH - 8 - textRenderer.getWidth(selected), y + 6, TEXT, false);
+            context.text(font, selected,
+                x + PANEL_WIDTH - 8 - font.width(selected), y + 6, TEXT, false);
         }
 
         int hovered = slotAt(mouseX, mouseY);
@@ -192,7 +193,7 @@ public class HomesScreen extends Screen {
             String home = homeAt(slot);
             if (home == null) continue;
             int sx = slotX(slot), sy = slotY(slot);
-            context.drawItem(module.icon(home), sx, sy);
+            context.item(module.icon(home), sx, sy);
             if (home.equals(selected)) context.fill(sx, sy, sx + 16, sy + 16, SELECTED);
             else if (hovered == slot) context.fill(sx, sy, sx + 16, sy + 16, HOVER);
         }
@@ -202,24 +203,24 @@ public class HomesScreen extends Screen {
             if (stack.isEmpty()) continue;
             int slot = PAGE_SIZE + column;
             int sx = slotX(slot), sy = slotY(slot);
-            context.drawItem(stack, sx, sy);
+            context.item(stack, sx, sy);
             if (column == DELETE && confirmDelete) context.fill(sx, sy, sx + 16, sy + 16, ARMED);
             else if (hovered == slot) context.fill(sx, sy, sx + 16, sy + 16, HOVER);
         }
 
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Right-click a home to use your held item as its icon"),
+        context.centeredText(font, Component.literal("Right-click a home to use your held item as its icon"),
             x + PANEL_WIDTH / 2, y + PANEL_HEIGHT + 6, 0xFFFFFFFF);
 
         if (hovered < 0) return;
         String home = homeAt(hovered);
-        if (home != null) context.drawTooltip(textRenderer, Text.literal(home), mouseX, mouseY);
+        if (home != null) context.setTooltipForNextFrame(font, Component.literal(home), mouseX, mouseY);
         else if (hovered >= PAGE_SIZE && !controlItem(hovered - PAGE_SIZE).isEmpty()) {
-            context.drawTooltip(textRenderer, controlTooltip(hovered - PAGE_SIZE), mouseX, mouseY);
+            context.setTooltipForNextFrame(font, controlTooltip(hovered - PAGE_SIZE), mouseX, mouseY);
         }
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 }

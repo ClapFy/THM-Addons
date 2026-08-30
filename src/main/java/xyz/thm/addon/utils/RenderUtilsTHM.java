@@ -14,29 +14,29 @@ import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.systems.modules.render.blockesp.ESPBlockData;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.world.Dir;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.BufferAllocator;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.entity.Entity;
-import net.minecraft.util.math.*;
-import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.NotNull;
+import xyz.thm.addon.compat.ClientText;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+
 /**
  * Preferred render utility for all THM addon rendering.
  * Use this instead of calling event.renderer directly.
  */
 public class RenderUtilsTHM {
-    private static final VertexConsumerProvider.Immediate vertex =
-        VertexConsumerProvider.immediate(new BufferAllocator(2048));
-
     private RenderUtilsTHM() {}
 
     // =========================================================
@@ -53,16 +53,16 @@ public class RenderUtilsTHM {
         var iter = set.longIterator();
         while (iter.hasNext()) {
             long encoded = iter.nextLong();
-            int x = BlockPos.unpackLongX(encoded);
-            int y = BlockPos.unpackLongY(encoded);
-            int z = BlockPos.unpackLongZ(encoded);
+            int x = BlockPos.getX(encoded);
+            int y = BlockPos.getY(encoded);
+            int z = BlockPos.getZ(encoded);
 
             int excludeDir = 0;
             for (Direction side : Direction.values()) {
                 if (set.contains(BlockPos.asLong(
-                        x + side.getOffsetX(),
-                        y + side.getOffsetY(),
-                        z + side.getOffsetZ()))) {
+                        x + side.getStepX(),
+                        y + side.getStepY(),
+                        z + side.getStepZ()))) {
                     excludeDir |= Dir.get(side);
                 }
             }
@@ -100,20 +100,20 @@ public class RenderUtilsTHM {
     // =========================================================
 
     /** The block's outline shape as world-space boxes. Falls back to a full unit cube if the shape is empty (e.g. air-like blocks). */
-    public static List<Box> getBlockShapeBoxes(BlockPos pos, BlockState state) {
-        VoxelShape shape = state.getOutlineShape(mc.world, pos);
-        List<Box> boxes = shape.isEmpty() ? List.of(new Box(0, 0, 0, 1, 1, 1)) : shape.getBoundingBoxes();
-        if (boxes.isEmpty()) boxes = List.of(new Box(0, 0, 0, 1, 1, 1));
+    public static List<AABB> getBlockShapeBoxes(BlockPos pos, BlockState state) {
+        VoxelShape shape = state.getShape(mc.level, pos);
+        List<AABB> boxes = shape.isEmpty() ? List.of(new AABB(0, 0, 0, 1, 1, 1)) : shape.toAabbs();
+        if (boxes.isEmpty()) boxes = List.of(new AABB(0, 0, 0, 1, 1, 1));
 
-        List<Box> worldBoxes = new ArrayList<>(boxes.size());
-        for (Box box : boxes) worldBoxes.add(box.offset(pos));
+        List<AABB> worldBoxes = new ArrayList<>(boxes.size());
+        for (AABB box : boxes) worldBoxes.add(box.move(pos));
         return worldBoxes;
     }
 
     /** Renders every box of the block's actual shape (e.g. a sign renders its post + plank, not a full cube). */
     public static void renderBlockShape(Render3DEvent event, BlockPos pos, BlockState state,
                                         Color sideColor, Color lineColor, ShapeMode shapeMode) {
-        for (Box box : getBlockShapeBoxes(pos, state)) {
+        for (AABB box : getBlockShapeBoxes(pos, state)) {
             event.renderer.box(box, sideColor, lineColor, shapeMode, 0);
         }
     }
@@ -121,19 +121,19 @@ public class RenderUtilsTHM {
     /** Like {@link #renderBlockShape}, but each shape box is scaled toward its own center by {@code scale} (1.0 = full size, 0.0 = a point). Useful for mining-progress shrink effects on non-cube blocks. */
     public static void renderBlockShapeScaled(Render3DEvent event, BlockPos pos, BlockState state, double scale,
                                               Color sideColor, Color lineColor, ShapeMode shapeMode) {
-        for (Box box : getBlockShapeBoxes(pos, state)) {
+        for (AABB box : getBlockShapeBoxes(pos, state)) {
             event.renderer.box(scaleTowardCenter(box, scale), sideColor, lineColor, shapeMode, 0);
         }
     }
 
-    private static Box scaleTowardCenter(Box box, double scale) {
+    private static AABB scaleTowardCenter(AABB box, double scale) {
         double centerX = (box.minX + box.maxX) / 2.0;
         double centerY = (box.minY + box.maxY) / 2.0;
         double centerZ = (box.minZ + box.maxZ) / 2.0;
         double halfX = (box.maxX - box.minX) / 2.0 * scale;
         double halfY = (box.maxY - box.minY) / 2.0 * scale;
         double halfZ = (box.maxZ - box.minZ) / 2.0 * scale;
-        return new Box(centerX - halfX, centerY - halfY, centerZ - halfZ, centerX + halfX, centerY + halfY, centerZ + halfZ);
+        return new AABB(centerX - halfX, centerY - halfY, centerZ - halfZ, centerX + halfX, centerY + halfY, centerZ + halfZ);
     }
 
     // =========================================================
@@ -147,7 +147,7 @@ public class RenderUtilsTHM {
         event.renderer.box(x1, y1, z1, x2, y2, z2, sideColor, lineColor, shapeMode, 0);
     }
 
-    public static void renderBox(Render3DEvent event, Box box,
+    public static void renderBox(Render3DEvent event, AABB box,
                                  Color sideColor, Color lineColor, ShapeMode shapeMode) {
         event.renderer.box(box, sideColor, lineColor, shapeMode, 0);
     }
@@ -164,17 +164,17 @@ public class RenderUtilsTHM {
     public static void renderEntity(Render3DEvent event, Entity entity,
                                     Color sideColor, Color lineColor, ShapeMode shapeMode,
                                     RenderMode mode, long lastInteractMs, int durationMs) {
-        double x = MathHelper.lerp(event.tickDelta, entity.lastX, entity.getX());
-        double y = MathHelper.lerp(event.tickDelta, entity.lastY, entity.getY());
-        double z = MathHelper.lerp(event.tickDelta, entity.lastZ, entity.getZ());
-        Box box = entity.getBoundingBox()
-            .offset(-entity.getX(), -entity.getY(), -entity.getZ())
-            .offset(x, y, z);
+        double x = Mth.lerp(event.tickDelta, entity.xo, entity.getX());
+        double y = Mth.lerp(event.tickDelta, entity.yo, entity.getY());
+        double z = Mth.lerp(event.tickDelta, entity.zo, entity.getZ());
+        AABB box = entity.getBoundingBox()
+            .move(-entity.getX(), -entity.getY(), -entity.getZ())
+            .move(x, y, z);
 
         if (mode == RenderMode.Shrink) {
-            double expansion = 0.1 * (1.0 - MathHelper.clamp(
+            double expansion = 0.1 * (1.0 - Mth.clamp(
                 (System.currentTimeMillis() - lastInteractMs) / (double) durationMs, 0.0, 1.0));
-            box = box.expand(expansion);
+            box = box.inflate(expansion);
         }
 
         event.renderer.box(box,
@@ -195,14 +195,14 @@ public class RenderUtilsTHM {
 
     /** Tracer from screen centre to the centre of a block. */
     public static void renderTracerTo(Render3DEvent event, @NotNull BlockPos pos, Color color) {
-        Vec3d c = pos.toCenterPos();
-        Vec3d src = meteordevelopment.meteorclient.utils.render.RenderUtils.center;
+        Vec3 c = Vec3.atCenterOf(pos);
+        Vec3 src = meteordevelopment.meteorclient.utils.render.RenderUtils.center;
         event.renderer.line(src.x, src.y, src.z, c.x, c.y, c.z, color);
     }
 
     /** Tracer from screen centre to an arbitrary world position. */
-    public static void renderTracerToVec(Render3DEvent event, Vec3d target, Color color) {
-        Vec3d src = meteordevelopment.meteorclient.utils.render.RenderUtils.center;
+    public static void renderTracerToVec(Render3DEvent event, Vec3 target, Color color) {
+        Vec3 src = meteordevelopment.meteorclient.utils.render.RenderUtils.center;
         event.renderer.line(src.x, src.y, src.z, target.x, target.y, target.z, color);
     }
 
@@ -243,7 +243,7 @@ public class RenderUtilsTHM {
         return switch (mode) {
             case Solid, Shrink -> base;
             case Fade -> {
-                float t = 1f - MathHelper.clamp(
+                float t = 1f - Mth.clamp(
                     (System.currentTimeMillis() - lastInteractMs) / (float) durationMs, 0f, 1f);
                 yield withAlpha(base, Math.max(0, (int) (base.a * t)));
             }
@@ -262,10 +262,10 @@ public class RenderUtilsTHM {
     /** Linearly interpolates between two colors component-wise. */
     public static Color lerp(Color a, Color b, float t) {
         return new Color(
-            (int) MathHelper.lerp(t, a.r, b.r),
-            (int) MathHelper.lerp(t, a.g, b.g),
-            (int) MathHelper.lerp(t, a.b, b.b),
-            (int) MathHelper.lerp(t, a.a, b.a)
+            (int) Mth.lerpInt(t, a.r, b.r),
+            (int) Mth.lerpInt(t, a.g, b.g),
+            (int) Mth.lerpInt(t, a.b, b.b),
+            (int) Mth.lerpInt(t, a.a, b.a)
         );
     }
 
@@ -273,11 +273,8 @@ public class RenderUtilsTHM {
     // 2D text (drawn into 3D world via matrix stack)
     // =========================================================
 
-    public static void text(String text, MatrixStack stack, float x, float y, int color) {
-        mc.textRenderer.draw(text, x, y, color, false,
-            stack.peek().getPositionMatrix(), vertex,
-            TextRenderer.TextLayerType.NORMAL, 0, 15728880);
-        vertex.draw();
+    public static void text(String text, PoseStack stack, float x, float y, int color) {
+        ClientText.draw(text, stack, x, y, color);
     }
 
     // =========================================================
@@ -291,14 +288,14 @@ public class RenderUtilsTHM {
      */
     public static void renderAndPruneBlockSet(Render3DEvent event, LongOpenHashSet set,
                                               Color sideColor, Color lineColor, ShapeMode shapeMode) {
-        if (set.isEmpty() || mc.world == null) return;
+        if (set.isEmpty() || mc.level == null) return;
         LongIterator iter = set.longIterator();
         while (iter.hasNext()) {
             long key = iter.nextLong();
-            if (!mc.world.getBlockState(new BlockPos(
-                    BlockPos.unpackLongX(key),
-                    BlockPos.unpackLongY(key),
-                    BlockPos.unpackLongZ(key))).isReplaceable()) {
+            if (!mc.level.getBlockState(new BlockPos(
+                    BlockPos.getX(key),
+                    BlockPos.getY(key),
+                    BlockPos.getZ(key))).canBeReplaced()) {
                 iter.remove();
             }
         }
@@ -365,7 +362,7 @@ public class RenderUtilsTHM {
 
             if (keySet.isEmpty()) return;
 
-            float fade = MathHelper.clamp((minExpiry - now) / (float) durationMs, 0f, 1f);
+            float fade = Mth.clamp((minExpiry - now) / (float) durationMs, 0f, 1f);
             renderBlockSet(event, keySet,
                 withAlpha(sideColor, Math.max(1, (int) (sideColor.a * fade))),
                 withAlpha(lineColor, Math.max(1, (int) (lineColor.a * fade))),

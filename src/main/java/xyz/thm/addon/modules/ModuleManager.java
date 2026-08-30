@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.*;
+import xyz.thm.addon.compat.ClientGui;
 
 public class ModuleManager extends Module {
     private static final String DEBUG_FILE_NAME = "module-manager-debug.log";
@@ -501,10 +502,10 @@ public class ModuleManager extends Module {
     private boolean hasLiveServerConnectionForManagedCache() {
         return mc != null
             && mc.player != null
-            && mc.world != null
-            && mc.getNetworkHandler() != null
-            && mc.getNetworkHandler().getConnection() != null
-            && mc.getNetworkHandler().getConnection().isOpen();
+            && mc.level != null
+            && mc.getConnection() != null
+            && mc.getConnection().getConnection() != null
+            && mc.getConnection().getConnection().isConnected();
     }
 
     private boolean canCaptureReconnectModuleCacheFromLiveState() {
@@ -663,7 +664,7 @@ public class ModuleManager extends Module {
     private String formatEventLine(String eventType, String detail, Module module, List<String> leaseLabels, String stack) {
         String moduleName = module == null ? "none" : module.name;
         String moduleTitle = module == null ? "none" : module.title;
-        String screenName = mc == null || mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName();
+        String screenName = mc == null || ClientGui.screen(mc) == null ? "none" : ClientGui.screen(mc).getClass().getSimpleName();
         String serverState = String.valueOf(getCommittedServerState());
         boolean builderActive = isModuleActive(HighwayBuilderTHM.class);
         boolean monitorActive = isModuleActive(THMHwyMonitor.class);
@@ -679,7 +680,7 @@ public class ModuleManager extends Module {
             safeValue(detail),
             safeValue(screenName),
             mc == null || mc.player == null,
-            mc == null || mc.world == null,
+            mc == null || mc.level == null,
             safeValue(serverState),
             builderActive,
             monitorActive,
@@ -725,8 +726,8 @@ public class ModuleManager extends Module {
     }
 
     private Path getDebugLogPath() {
-        if (mc == null || mc.runDirectory == null) return null;
-        return mc.runDirectory.toPath().resolve("logs").resolve(DEBUG_FILE_NAME);
+        if (mc == null || mc.gameDirectory == null) return null;
+        return mc.gameDirectory.toPath().resolve("logs").resolve(DEBUG_FILE_NAME);
     }
 
     private void writeDebugLine(String line) {
