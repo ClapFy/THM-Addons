@@ -21,7 +21,7 @@ public final class ClientText {
     private ClientText() {}
 
     public static void draw(String text, PoseStack stack, float x, float y, int color) {
-        if (mc == null) return;
+        if (mc == null || text == null || stack == null) return;
         mc.font.drawInBatch(
             text, x, y, color, false,
             stack.last().pose(), VERTEX,

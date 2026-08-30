@@ -55,7 +55,7 @@ public final class TrustedHttp {
         try {
             URI uri = parseAllowedUri(url, kind);
             if (uri == null) return null;
-            return exchange("GET", uri, kind, null, null, maxBytes, false);
+            return exchange("GET", uri, kind, null, null, maxBytes, false, null);
         } catch (Exception e) {
             THMAddon.LOG.warn("Trusted HTTP GET failed: {}", e.getMessage());
             return null;
@@ -71,7 +71,7 @@ public final class TrustedHttp {
                 THMAddon.LOG.warn("Refusing oversized JSON POST ({} bytes)", body.length);
                 return false;
             }
-            exchange("POST", uri, kind, "application/json", body, MAX_JSON_BYTES, true);
+            exchange("POST", uri, kind, "application/json", body, MAX_JSON_BYTES, true, bearerToken);
             return true;
         } catch (Exception e) {
             THMAddon.LOG.warn("Trusted HTTP POST failed: {}", e.getMessage());
@@ -87,7 +87,7 @@ public final class TrustedHttp {
                 THMAddon.LOG.warn("Refusing oversized multipart POST ({} bytes)", body.length);
                 return false;
             }
-            exchange("POST", uri, kind, contentType, body, 4096, true);
+            exchange("POST", uri, kind, contentType, body, 4096, true, null);
             return true;
         } catch (Exception e) {
             THMAddon.LOG.warn("Trusted HTTP multipart POST failed: {}", e.getMessage());
@@ -237,59 +237,75 @@ public final class TrustedHttp {
         String contentType,
         byte[] requestBody,
         int maxResponseBytes,
-        boolean discardBody
+        boolean discardBody,
+        String bearerToken
     ) throws Exception {
         URI current = start;
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
-            HttpURLConnection cn = (HttpURLConnection) current.toURL().openConnection();
-            cn.setInstanceFollowRedirects(false);
-            cn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            cn.setReadTimeout(READ_TIMEOUT_MS);
-            cn.setRequestMethod(method);
-            cn.setUseCaches(false);
-            if (contentType != null) cn.setRequestProperty("Content-Type", contentType);
-            if (kind == Kind.API && "POST".equals(method)) {
-                String token = apiToken();
-                if (!token.isEmpty()) cn.setRequestProperty("Authorization", "Bearer " + token);
-            }
-            if (requestBody != null) {
-                cn.setDoOutput(true);
-                cn.setFixedLengthStreamingMode(requestBody.length);
-                try (var os = cn.getOutputStream()) {
-                    os.write(requestBody);
-                }
-            }
-
-            int code = cn.getResponseCode();
-            if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP
-                || code == HttpURLConnection.HTTP_SEE_OTHER || code == 307 || code == 308) {
-                String location = cn.getHeaderField("Location");
-                cn.disconnect();
-                URI next = current.resolve(location == null ? "" : location);
-                URI allowed = parseAllowedUri(next.toString(), kind);
-                if (allowed == null) return null;
-                if (!current.getHost().equalsIgnoreCase(allowed.getHost())) {
-                    THMAddon.LOG.warn("Rejected cross-host HTTP redirect from {} to {}", current.getHost(), allowed.getHost());
-                    return null;
-                }
-                current = allowed;
-                continue;
-            }
-
-            InputStream stream = code >= 400 ? cn.getErrorStream() : cn.getInputStream();
-            byte[] body = stream == null ? new byte[0] : readLimited(stream, maxResponseBytes);
-            cn.disconnect();
-            if (discardBody) {
-                if (code != 200 && code != 204) {
-                    THMAddon.LOG.warn("HTTP {} {} returned {}", method, current.getHost(), code);
-                }
-                return body;
-            }
-            if (code != 200) {
-                THMAddon.LOG.warn("HTTP GET {} returned {}", current.getHost(), code);
+            if (current.getHost() == null || !isPublicHostname(current.getHost())) {
+                THMAddon.LOG.warn("Rejected URL host that resolves to a private or local address");
                 return null;
             }
-            return body;
+
+            HttpURLConnection cn = (HttpURLConnection) current.toURL().openConnection();
+            try {
+                cn.setInstanceFollowRedirects(false);
+                cn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+                cn.setReadTimeout(READ_TIMEOUT_MS);
+                cn.setRequestMethod(method);
+                cn.setUseCaches(false);
+                if (contentType != null) cn.setRequestProperty("Content-Type", contentType);
+                if (kind == Kind.API && "POST".equals(method)) {
+                    String token = bearerToken != null && !bearerToken.isBlank() ? bearerToken : apiToken();
+                    if (!token.isEmpty()) cn.setRequestProperty("Authorization", "Bearer " + token);
+                }
+                if (requestBody != null) {
+                    cn.setDoOutput(true);
+                    cn.setFixedLengthStreamingMode(requestBody.length);
+                    try (var os = cn.getOutputStream()) {
+                        os.write(requestBody);
+                    }
+                }
+
+                int code = cn.getResponseCode();
+                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP
+                    || code == HttpURLConnection.HTTP_SEE_OTHER || code == 307 || code == 308) {
+                    String location = cn.getHeaderField("Location");
+                    if (location == null || location.isBlank()) {
+                        THMAddon.LOG.warn("HTTP redirect without Location from {}", current.getHost());
+                        return null;
+                    }
+                    URI allowed = parseAllowedUri(current.resolve(location).toString(), kind);
+                    if (allowed == null) return null;
+                    if (!current.getHost().equalsIgnoreCase(allowed.getHost())) {
+                        THMAddon.LOG.warn("Rejected cross-host HTTP redirect from {} to {}", current.getHost(), allowed.getHost());
+                        return null;
+                    }
+                    current = allowed;
+                    continue;
+                }
+
+                InputStream raw = code >= 400 ? cn.getErrorStream() : cn.getInputStream();
+                byte[] body = new byte[0];
+                if (raw != null) {
+                    try (InputStream stream = raw) {
+                        body = readLimited(stream, maxResponseBytes);
+                    }
+                }
+                if (discardBody) {
+                    if (code != 200 && code != 204) {
+                        throw new java.io.IOException("HTTP " + method + " " + current.getHost() + " returned " + code);
+                    }
+                    return body;
+                }
+                if (code != 200) {
+                    THMAddon.LOG.warn("HTTP GET {} returned {}", current.getHost(), code);
+                    return null;
+                }
+                return body;
+            } finally {
+                cn.disconnect();
+            }
         }
         THMAddon.LOG.warn("Too many HTTP redirects");
         return null;

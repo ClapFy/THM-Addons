@@ -31,7 +31,6 @@
     "accessor.ChatHudAccessor",
     "accessor.ClientPlayerInteractionManagerTHMAccessor",
     "accessor.EntityPositionAccessor",
-    "accessor.ExplosionS2CPacketAccessor",
     "accessor.LimbAnimatorAccessor",
     "accessor.LivingEntityAccessor",
     "accessor.LivingEntityRotationAccessor",

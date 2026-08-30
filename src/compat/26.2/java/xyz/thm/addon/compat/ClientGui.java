@@ -17,11 +17,11 @@ public final class ClientGui {
     private ClientGui() {}
 
     public static Screen screen(Minecraft mc) {
-        return mc == null ? null : mc.gui.screen();
+        return mc == null || mc.gui == null ? null : mc.gui.screen();
     }
 
     public static void setScreen(Minecraft mc, Screen screen) {
-        if (mc != null) mc.gui.setScreen(screen);
+        if (mc != null && mc.gui != null) mc.gui.setScreen(screen);
     }
 
     public static ChatComponent chat(Minecraft mc) {

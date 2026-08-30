@@ -104,7 +104,6 @@ val generateAPIUtils = tasks.register("generateAPIUtils") {
 
     inputs.file(activeSecretsFile)
     outputs.file(outputFile)
-    outputs.upToDateWhen { false }
 
     doLast {
         file("src/main/java/xyz/thm/addon/utils/password.java").delete()
@@ -136,7 +135,9 @@ val generateAPIUtils = tasks.register("generateAPIUtils") {
         }
 
         val rng = SecureRandom()
-        val password = ByteArray(32).also { rng.nextBytes(it) }.joinToString("") { "%02x".format(it) }
+        val password = MessageDigest.getInstance("SHA-256")
+            .digest(("thm-local-stats-v1\n" + urls.values.joinToString("\n")).toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
         val masterKey = MessageDigest.getInstance("SHA-256").digest(password.toByteArray(Charsets.UTF_8))
         val keyA = ByteArray(32).also { rng.nextBytes(it) }
         val keyB = ByteArray(32) { (masterKey[it].toInt() xor keyA[it].toInt()).toByte() }

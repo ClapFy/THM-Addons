@@ -54,12 +54,15 @@ public final class Vp8LDecoder {
         while (pos + 8 <= file.length) {
             String fourCc = new String(file, pos, 4, java.nio.charset.StandardCharsets.US_ASCII);
             long size = readUint32LE(file, pos + 4);
-            int dataStart = pos + 8;
+            long dataStart = pos + 8L;
+            long remaining = file.length - dataStart;
+            if (size > remaining) return null;
+            long next = dataStart + size + (size & 1);
+            if (next > file.length || next <= pos) return null;
             if (fourCc.equals("VP8L")) {
-                int len = (int) Math.min(size, file.length - dataStart);
-                return decodeVp8l(file, dataStart, len);
+                return decodeVp8l(file, (int) dataStart, (int) size);
             }
-            pos = dataStart + (int) size + ((size & 1) != 0 ? 1 : 0);
+            pos = (int) next;
         }
         return null;
     }
@@ -115,8 +118,13 @@ public final class Vp8LDecoder {
         java.util.List<Transform> transforms = new java.util.ArrayList<>();
 
         if (allowRecursion) {
+            boolean[] seen = new boolean[4];
+            int transformCount = 0;
             while (br.readBits(1) == 1) {
+                if (++transformCount > 4) throw new IllegalStateException("too many VP8L transforms");
                 int type = br.readBits(2);
+                if (seen[type]) throw new IllegalStateException("duplicate VP8L transform");
+                seen[type] = true;
                 switch (type) {
                     case 0 -> transforms.add(readBlockTransform(br, TransformKind.PREDICTOR, workWidth, height));
                     case 1 -> transforms.add(readBlockTransform(br, TransformKind.COLOR, workWidth, height));
@@ -397,6 +405,7 @@ public final class Vp8LDecoder {
         int cacheBits = 0;
         if (useColorCache) {
             cacheBits = br.readBits(4);
+            if (cacheBits < 1 || cacheBits > 11) throw new IllegalStateException("invalid VP8L color cache size");
         }
 
         int[] huffmanImage = null;
@@ -417,6 +426,9 @@ public final class Vp8LDecoder {
                 maxGroup = Math.max(maxGroup, group);
             }
             numGroups = maxGroup + 1;
+            if (numGroups > 256 || numGroups > prefixImageWidth * prefixImageHeight + 1) {
+                throw new IllegalStateException("too many VP8L Huffman groups");
+            }
         }
 
         int greenAlphabetSize = 256 + 24 + (useColorCache ? (1 << cacheBits) : 0);
@@ -511,9 +523,10 @@ public final class Vp8LDecoder {
         int decode(BitReader br) {
             if (soleSymbol >= 0) return soleSymbol;
             HuffmanNode n = root;
-            while (n.symbol < 0) {
+            while (n != null && n.symbol < 0) {
                 n = br.readBits(1) == 0 ? n.left : n.right;
             }
+            if (n == null) throw new IllegalStateException("invalid VP8L Huffman tree");
             return n.symbol;
         }
 

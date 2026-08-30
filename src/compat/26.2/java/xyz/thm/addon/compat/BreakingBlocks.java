@@ -23,7 +23,7 @@ public final class BreakingBlocks {
         List<BlockDestructionProgress> out = new ArrayList<>();
         for (SortedSet<BlockDestructionProgress> progresses : mc.level.destructionProgress().values()) {
             if (progresses == null || progresses.isEmpty()) continue;
-            out.add(progresses.last());
+            out.addAll(progresses);
         }
         return out;
     }

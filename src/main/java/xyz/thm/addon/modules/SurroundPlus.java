@@ -44,7 +44,6 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.compat.ClientEntities;
-import xyz.thm.addon.mixin.accessor.ExplosionS2CPacketAccessor;
 import xyz.thm.addon.utils.PlacementUtils;
 
 import java.util.*;
@@ -548,7 +547,7 @@ public class SurroundPlus extends Module {
         }
 
         if (packet instanceof ClientboundExplodePacket p && prePlaceExplosion.get()) {
-            Vec3 c = ((ExplosionS2CPacketAccessor) (Object) p).getCenter();
+            Vec3 c = p.center();
             BlockPos pos = BlockPos.containing(c.x, c.y, c.z);
             if (surroundCache.contains(pos)) placeFallbackDirect(pos);
             return;

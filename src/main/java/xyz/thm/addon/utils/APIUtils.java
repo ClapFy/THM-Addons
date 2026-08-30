@@ -71,13 +71,17 @@ public final class APIUtils {
 
             List<ThmMembers.Member> members = new ArrayList<>();
             for (int i = 0; i < jsonArray.size(); i++) {
-                JsonObject jsonObject = jsonArray.get(i).getAsJsonObject();
+                JsonElement element = jsonArray.get(i);
+                if (element == null || !element.isJsonObject()) continue;
+                JsonObject jsonObject = element.getAsJsonObject();
                 JsonArray usernamesArray = jsonObject.getAsJsonArray("usernames");
                 if (usernamesArray == null) continue;
                 int count = Math.min(usernamesArray.size(), MAX_USERNAMES_PER_MEMBER);
                 List<String> valid = new ArrayList<>(count);
                 for (int j = 0; j < count; j++) {
-                    String name = TrustedHttp.sanitizeDisplay(usernamesArray.get(j).getAsString(), 16);
+                    JsonElement nameEl = usernamesArray.get(j);
+                    if (nameEl == null || !nameEl.isJsonPrimitive()) continue;
+                    String name = TrustedHttp.sanitizeDisplay(nameEl.getAsString(), 16);
                     if (TrustedHttp.isMinecraftUsername(name)) valid.add(name);
                 }
                 if (valid.isEmpty()) continue;

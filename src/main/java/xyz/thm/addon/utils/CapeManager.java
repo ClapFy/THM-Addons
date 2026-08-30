@@ -13,10 +13,14 @@ import net.minecraft.resources.Identifier;
 import xyz.thm.addon.THMAddon;
 import com.mojang.blaze3d.platform.NativeImage;
 import java.io.File;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** Downloads THM capes listed in the API's cape index to disk and registers them as textures on demand. */
@@ -68,7 +72,18 @@ public final class CapeManager {
             File parent = file.getParentFile();
             if (parent == null) return;
             parent.mkdirs();
-            Files.write(file.toPath(), bytes);
+            Path target = file.toPath();
+            Path tmp = target.resolveSibling(entry.id() + ".webp.tmp");
+            try {
+                Files.write(tmp, bytes);
+                try {
+                    Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
             THMAddon.LOG.info("Downloaded cape '{}'", entry.id());
         } catch (Exception e) {
             THMAddon.LOG.warn("Failed to download cape '{}': {}", entry.id(), e.getMessage());
@@ -96,23 +111,34 @@ public final class CapeManager {
         File file = capeFile(id);
         if (file == null || !file.isFile()) return null;
 
+        NativeImage image = null;
         try {
             byte[] bytes = Files.readAllBytes(file.toPath());
-            if (bytes.length > TrustedHttp.MAX_IMAGE_BYTES) return null;
-            NativeImage image = NativeImage.read(bytes);
-            if (image.getWidth() > MAX_CAPE_WIDTH || image.getHeight() > MAX_CAPE_HEIGHT) {
-                image.close();
-                THMAddon.LOG.warn("Rejected cape texture '{}': dimensions too large", id);
+            if (bytes.length > TrustedHttp.MAX_IMAGE_BYTES || !looksLikeImage(bytes)) {
+                Files.deleteIfExists(file.toPath());
                 return null;
             }
-            Identifier textureId = Identifier.fromNamespaceAndPath("thm-addon", "cape/" + id.toLowerCase());
+            image = NativeImage.read(bytes);
+            if (image.getWidth() > MAX_CAPE_WIDTH || image.getHeight() > MAX_CAPE_HEIGHT) {
+                THMAddon.LOG.warn("Rejected cape texture '{}': dimensions too large", id);
+                Files.deleteIfExists(file.toPath());
+                return null;
+            }
+            Identifier textureId = Identifier.fromNamespaceAndPath("thm-addon", "cape/" + id.toLowerCase(Locale.ROOT));
             Minecraft.getInstance().getTextureManager().register(
                 textureId, new DynamicTexture(() -> "thm-cape/" + id, image)
             );
+            image = null;
             return textureId;
         } catch (Exception e) {
             THMAddon.LOG.warn("Failed to load cape texture '{}': {}", id, e.getMessage());
+            try {
+                Files.deleteIfExists(file.toPath());
+            } catch (Exception ignored) {
+            }
             return null;
+        } finally {
+            if (image != null) image.close();
         }
     }
 
