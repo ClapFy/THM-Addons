@@ -49,6 +49,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 import static meteordevelopment.meteorclient.utils.player.ChatUtils.error;
@@ -382,10 +388,47 @@ public class THMUtils {
     }
 
     //Server Check
+    // Seed/fallback list - kept in sync with https://www.6b6t.org/api/anarchy-mod.json in case the
+    // refresh below never completes (offline, blocked, endpoint down).
+    private static volatile Set<String> anarchyModDomains = Set.of(
+        "6b6t.org", "6b6t.cc", "6b6t.me", "7b7t.me", "8b8t.org", "8b8t.xyz",
+        "10b10t.org", "alacity.net", "anarchypvp.pw", "l2x9.org", "simpleanarchy.org"
+    );
+    private static final AtomicBoolean anarchyModDomainsRefreshStarted = new AtomicBoolean(false);
+
+    private static void refreshAnarchyModDomainsAsync() {
+        if (!anarchyModDomainsRefreshStarted.compareAndSet(false, true)) return;
+
+        Thread thread = new Thread(() -> {
+            try {
+                HttpRequest request = HttpRequest.newBuilder(URI.create("https://www.6b6t.org/api/anarchy-mod.json"))
+                    .GET()
+                    .build();
+                HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+                JsonObject root = new Gson().fromJson(response.body(), JsonObject.class);
+                JsonArray domainsJson = root == null ? null : root.getAsJsonArray("domains");
+                if (domainsJson == null) return;
+
+                Set<String> domains = new java.util.HashSet<>();
+                for (var element : domainsJson) {
+                    String domain = element.getAsString().trim().toLowerCase(Locale.ROOT);
+                    if (domain.startsWith("*.")) domain = domain.substring(2);
+                    if (!domain.isEmpty()) domains.add(domain);
+                }
+                if (!domains.isEmpty()) anarchyModDomains = Set.copyOf(domains);
+            } catch (Exception e) {
+                THMAddon.LOG.warn("[THM] Failed to refresh 6b6t anarchy-mod domain list, keeping cached list", e);
+            }
+        }, "thm-anarchy-mod-domains");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
     public static boolean isNot6B6T() {
         assert mc.world != null;
         if (FabricLoader.getInstance().isDevelopmentEnvironment()) return false; // Bypass check in dev environment
         if (mc.isIntegratedServerRunning()) return true;
+        refreshAnarchyModDomainsAsync();
         ServerInfo server = mc.getCurrentServerEntry();
         if (server == null) return false;
         String address = server.address == null ? "" : server.address.trim().toLowerCase(Locale.ROOT);
@@ -393,7 +436,8 @@ public class THMUtils {
         int colon = address.indexOf(':');
         String host = colon >= 0 ? address.substring(0, colon) : address;
         while (host.endsWith(".")) host = host.substring(0, host.length() - 1);
-        return !host.endsWith("6b6t.org");
+        String finalHost = host;
+        return anarchyModDomains.stream().noneMatch(finalHost::endsWith);
     }
     //Old pickup method
     public static void pickupAndReturn() {
