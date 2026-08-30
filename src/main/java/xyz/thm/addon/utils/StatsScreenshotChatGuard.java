@@ -66,6 +66,7 @@ public final class StatsScreenshotChatGuard {
 
     @EventHandler(priority = EventPriority.LOWEST)
     private void onReceiveMessage(ReceiveMessageEvent event) {
+        if (!PrivacyGuard.allowsChatAccess()) return;
         if (captureDeadlines.isEmpty() || event.isCancelled()) return;
         if (isLocalAddonOutput(event.getMessage())) return;
 

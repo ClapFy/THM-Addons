@@ -490,6 +490,10 @@ public class KitbotFrontend extends Module {
                 announceWarning("You must be in-game to use KitBot.");
                 return false;
             }
+            if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) {
+                announceWarning("KitBot summons are only allowed while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
+                return false;
+            }
 
             expireWindowIfNeeded(System.currentTimeMillis());
 
@@ -565,6 +569,7 @@ public class KitbotFrontend extends Module {
 
         @EventHandler
         private void onMessage(ReceiveMessageEvent event) {
+            if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
             String message = event.getMessage().getString();
             if (message == null || message.isBlank()) return;
 
@@ -926,7 +931,13 @@ public class KitbotFrontend extends Module {
 
         private void runPendingActions(PendingActions actions) {
             if (actions == null) return;
-            if (actions.chatCommand != null) ChatUtils.sendPlayerMsg(actions.chatCommand);
+            if (actions.chatCommand != null) {
+                if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) {
+                    announceWarning("KitBot summons are only allowed while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
+                } else {
+                    ChatUtils.sendPlayerMsg(actions.chatCommand);
+                }
+            }
             if (actions.info != null) announceInfo(actions.info);
             if (actions.warning != null) announceWarning(actions.warning);
             if (actions.event != null) fire(actions.event);

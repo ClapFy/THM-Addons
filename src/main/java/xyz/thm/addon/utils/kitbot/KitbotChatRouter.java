@@ -36,7 +36,6 @@ public final class KitbotChatRouter {
     @EventHandler
     private void onSendMessage(SendMessageEvent event) {
         if (!enabled) return;
-
         if (event.message == null) return;
         String message = event.message.trim();
         if (!message.startsWith("$")) return;
@@ -44,10 +43,16 @@ public final class KitbotChatRouter {
         KitbotChatCommandParser.ParseResult result = KitbotChatCommandParser.parse(message, KitbotChatCommandParser.getOnlinePlayerNames());
         if (!result.isRecognized()) return;
 
+        // Always swallow recognized $ commands so they never hit public chat.
         event.cancel();
 
         KitbotFrontend frontend = Modules.get().get(KitbotFrontend.class);
         if (frontend == null) return;
+
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) {
+            frontend.warning("KitBot commands are only allowed while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
+            return;
+        }
 
         if (!result.isValid()) {
             frontend.warning(result.errorMessage());

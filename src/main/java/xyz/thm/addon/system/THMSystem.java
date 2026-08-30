@@ -222,14 +222,14 @@ public class THMSystem extends System<THMSystem> {
     // API Token Settings
     private final Setting<String> apiToken = sgPrefix.add(new StringSetting.Builder()
         .name("api-token")
-        .description("Your personal API token (UUID) - sent with every status/statistics/cape request.")
+        .description("Your personal API token (UUID) - get one from the Discord bot's player panel.")
         .defaultValue("")
         .build()
     );
 
     private final Setting<String> crackedPassword = sgPrefix.add(new StringSetting.Builder()
         .name("cracked-password")
-        .description("Password used for cracked-account reconnect /login.")
+        .description("Password used for cracked-account reconnect /login. Never sent to the API, webhooks, or Discord.")
         .defaultValue("")
         .build()
     );
