@@ -29,6 +29,7 @@
     "WaveyCapesPlayerRendererMixin",
     "accessor.CameraAccessor",
     "accessor.ChatHudAccessor",
+    "accessor.DisconnectedScreenAccessor",
     "accessor.ClientPlayerInteractionManagerTHMAccessor",
     "accessor.EntityPositionAccessor",
     "accessor.LimbAnimatorAccessor",
@@ -71,6 +72,7 @@
   "client": [
     "BoatEatMixin",
     "DeathScreenChatMixin",
+    "DisconnectedScreenMixin",
     "InventoryScreenMixin",
     "PlayerListHudMixin"
   ]

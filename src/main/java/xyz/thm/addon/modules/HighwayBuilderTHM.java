@@ -1617,6 +1617,8 @@ public class HighwayBuilderTHM extends Module {
     private StatsArtifactIdentity loadedStatsArtifactIdentity;
     private final Set<String> consumedStatsArtifactKeys = new HashSet<>();
     private RetiredStatsReportSnapshot retiredStatsReportSnapshot;
+    private double lastKnownStatsDistance;
+    private boolean lastKnownStatsDistanceValid;
     private boolean resumeStatsSessionOnNextActivate;
     private boolean monitorPauseDeactivateArmed;
     private long nextStatsCheckpointAtMs;
@@ -4365,6 +4367,7 @@ public class HighwayBuilderTHM extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.level == null) return;
+        refreshCachedStatsDistance();
         safetyPlacedThisTick = false;
 
         maybeCheckpointStatsSession();
@@ -4892,6 +4895,7 @@ public class HighwayBuilderTHM extends Module {
     @EventHandler
     private void onGameLeave(GameLeftEvent event) {
         if (!isActive()) return;
+        refreshCachedStatsDistance();
         notifyDesktop(notifyDisconnect, "THM Highway Builder", "Disconnected while Highway Builder was active.");
         if (hasActiveInMemoryStatsSession() && !statsSessionTerminalOrFinalizing) {
             persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "game-leave");
@@ -8597,6 +8601,8 @@ public class HighwayBuilderTHM extends Module {
         clearPendingForwardBreakCredits();
         nextStatsCheckpointAtMs = 0L;
         loadedStatsArtifactIdentity = null;
+        lastKnownStatsDistance = 0.0;
+        lastKnownStatsDistanceValid = false;
     }
 
     private void loadStatsCacheFromDisk() {
@@ -8754,6 +8760,7 @@ public class HighwayBuilderTHM extends Module {
         activeStatsGeneration = 0L;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
+        refreshCachedStatsDistance();
         persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "fresh-activate");
     }
 
@@ -8771,6 +8778,7 @@ public class HighwayBuilderTHM extends Module {
         lastPrintedStatsSessionId = snapshot.printedToChat() ? snapshot.sessionId() : null;
         statsSessionDirty = false;
         clearPendingForwardBreakCredits();
+        refreshCachedStatsDistance();
         nextStatsCheckpointAtMs = snapshot.lastCheckpointAt() <= 0
             ? System.currentTimeMillis() + STATS_CHECKPOINT_INTERVAL_MS
             : snapshot.lastCheckpointAt() + STATS_CHECKPOINT_INTERVAL_MS;
@@ -9767,9 +9775,21 @@ public class HighwayBuilderTHM extends Module {
         }
     }
 
+    private void refreshCachedStatsDistance() {
+        if (!hasActiveInMemoryStatsSession() || mc == null || mc.player == null) return;
+        lastKnownStatsDistance = PlayerUtils.distanceTo(start);
+        lastKnownStatsDistanceValid = true;
+    }
+
+    private double resolveStatsDistance(Vec3 startPos) {
+        if (startPos == null) return 0.0;
+        if (mc != null && mc.player != null) return PlayerUtils.distanceTo(startPos);
+        if (lastKnownStatsDistanceValid && start != null && startPos.equals(start)) return lastKnownStatsDistance;
+        return 0.0;
+    }
+
     private StatsDisplaySnapshot createStatsDisplaySnapshot(Vec3 startPos, int broken, int placed) {
-        double distance = mc.player != null && startPos != null ? PlayerUtils.distanceTo(startPos) : 0.0;
-        return new StatsDisplaySnapshot(distance, broken, placed);
+        return new StatsDisplaySnapshot(resolveStatsDistance(startPos), broken, placed);
     }
 
     private MutableComponent createStatsText(Vec3 statsStart, int statsBroken, int statsPlaced) {
@@ -11438,6 +11458,47 @@ public class HighwayBuilderTHM extends Module {
         }
 
         return createStatsText(statsStart, statsBroken, statsPlaced);
+    }
+
+    /**
+     * Appends the live Highway Builder session stats to a vanilla disconnect reason so a dropped
+     * connection (timeout / internet loss) still shows Distance / blocks broken / placed.
+     * Intentional {@link #disconnect(String, Object...)} and HwyMonitor safety-stop screens already
+     * include these lines and are left unchanged.
+     */
+    public static Component appendActiveSessionStatsToDisconnectReason(Component reason) {
+        if (reason == null) return null;
+        try {
+            Modules modules = Modules.get();
+            if (modules == null) return reason;
+            HighwayBuilderTHM builder = modules.get(HighwayBuilderTHM.class);
+            if (builder == null) return reason;
+            return builder.appendActiveSessionStatsToDisconnectReasonInstance(reason);
+        } catch (Throwable ignored) {
+            return reason;
+        }
+    }
+
+    private Component appendActiveSessionStatsToDisconnectReasonInstance(Component reason) {
+        if (reason == null) return null;
+        if (!isActive()) return reason;
+        if (!hasActiveInMemoryStatsSession() && retiredStatsReportSnapshot == null) return reason;
+        if (disconnectReasonAlreadyIncludesHighwayStats(reason)) return reason;
+
+        MutableComponent statsText = getStatsText();
+        if (statsText == null || statsText.getString().isBlank()) return reason;
+
+        MutableComponent decorated = reason.copy();
+        decorated.append("\n").append(statsText);
+        return decorated;
+    }
+
+    static boolean disconnectReasonAlreadyIncludesHighwayStats(Component reason) {
+        if (reason == null) return false;
+        String text = reason.getString();
+        if (text == null || text.isBlank()) return false;
+        String lower = text.toLowerCase(Locale.ROOT);
+        return lower.contains("distance:") && lower.contains("blocks broken:");
     }
 
     public StatsDisconnectPresentation getReconnectSafetyStopPresentation(String reason, long reconnectCycleId) {
