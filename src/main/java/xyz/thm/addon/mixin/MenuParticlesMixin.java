@@ -6,9 +6,9 @@
 
 package xyz.thm.addon.mixin;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -25,11 +25,11 @@ import xyz.thm.addon.gui.MainMenuFx;
 @Mixin(Screen.class)
 public abstract class MenuParticlesMixin {
 
-    @Shadow @Final protected MinecraftClient client;
+    @Shadow @Final protected Minecraft minecraft;
 
     @Inject(method = "render", at = @At("TAIL"))
-    private void thm$renderMenuParticles(DrawContext context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
-        if (this.client.world != null) return;
+    private void thm$renderMenuParticles(GuiGraphics context, int mouseX, int mouseY, float deltaTicks, CallbackInfo ci) {
+        if (this.minecraft.level != null) return;
 
         MainMenuFx.tick(mouseX, mouseY);
         MainMenuFx.renderParticles(context);

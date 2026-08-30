@@ -6,10 +6,10 @@
 
 package xyz.thm.addon.mixin;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.DeathScreen;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.input.KeyInput;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.DeathScreen;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -24,12 +24,12 @@ import xyz.thm.addon.gui.DeathChatScreen;
 @Mixin(Screen.class)
 public class DeathScreenChatMixin {
     @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
-    private void thm$chatOnDeathScreen(KeyInput input, CallbackInfoReturnable<Boolean> cir) {
+    private void thm$chatOnDeathScreen(KeyEvent input, CallbackInfoReturnable<Boolean> cir) {
         if (!((Object) this instanceof DeathScreen)) return;
 
-        MinecraftClient mc = MinecraftClient.getInstance();
-        boolean command = mc.options.commandKey.matchesKey(input);
-        if (!command && !mc.options.chatKey.matchesKey(input)) return;
+        Minecraft mc = Minecraft.getInstance();
+        boolean command = mc.options.keyCommand.matches(input);
+        if (!command && !mc.options.keyChat.matches(input)) return;
 
         mc.setScreen(new DeathChatScreen((Screen) (Object) this, command ? "/" : ""));
         cir.setReturnValue(true);

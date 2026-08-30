@@ -62,7 +62,7 @@ public class SelectScreen<T> extends WindowScreen {
             WButton b = listWidget.add(theme.button(name)).expandX().widget();
             b.action = () -> {
                 onSelect.accept(opt);
-                close();
+                onClose();
             };
         }
         listWidget.invalidate();

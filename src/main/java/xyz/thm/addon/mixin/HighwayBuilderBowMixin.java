@@ -7,27 +7,27 @@
 package xyz.thm.addon.mixin;
 
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerInteractionManager;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import xyz.thm.addon.modules.HighwayBuilderTHM;
 
-@Mixin(MinecraftClient.class)
+@Mixin(Minecraft.class)
 public abstract class HighwayBuilderBowMixin {
     @Redirect(
-        method = "handleInputEvents",
+        method = "handleKeybinds",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/network/ClientPlayerInteractionManager;stopUsingItem(Lnet/minecraft/entity/player/PlayerEntity;)V"
+            target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;releaseUsingItem(Lnet/minecraft/world/entity/player/Player;)V"
         )
     )
-    private void thm$preserveHighwayBuilderBowDraw(ClientPlayerInteractionManager interactionManager, PlayerEntity player) {
+    private void thm$preserveHighwayBuilderBowDraw(MultiPlayerGameMode interactionManager, Player player) {
         HighwayBuilderTHM builder = Modules.get().get(HighwayBuilderTHM.class);
         if (builder != null && builder.isActive() && builder.drawingBow) return;
 
-        interactionManager.stopUsingItem(player);
+        interactionManager.releaseUsingItem(player);
     }
 }

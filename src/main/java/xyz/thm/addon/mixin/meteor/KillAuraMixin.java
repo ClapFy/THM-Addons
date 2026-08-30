@@ -20,22 +20,22 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.AttributeModifiersComponent;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.AxeItem;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.MaceItem;
-import net.minecraft.item.TridentItem;
-import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket;
-import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
-import net.minecraft.util.Hand;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.protocol.game.ServerboundInteractPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.AxeItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.MaceItem;
+import net.minecraft.world.item.TridentItem;
+import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.apache.commons.lang3.mutable.MutableDouble;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -202,7 +202,7 @@ public abstract class KillAuraMixin extends Module {
 
     @Inject(method = "onTick", at = @At("HEAD"), cancellable = true)
     private void onTickGuardDisconnectedState(CallbackInfo ci) {
-        if (mc.player != null && mc.world != null) return;
+        if (mc.player != null && mc.level != null) return;
 
         attacking = false;
         thm$silentRotations = null;
@@ -236,8 +236,8 @@ public abstract class KillAuraMixin extends Module {
             thm$silentRotations = null;
             return;
         }
-        if ((mc.player.isUsingItem() && mc.player.getActiveHand() == Hand.MAIN_HAND) ||
-            mc.options.attackKey.isPressed() || thm$isHotbarKeysPressed()) {
+        if ((mc.player.isUsingItem() && mc.player.getUsedItemHand() == InteractionHand.MAIN_HAND) ||
+            mc.options.keyAttack.isDown() || thm$isHotbarKeysPressed()) {
             thm$autoSwapTimer = System.currentTimeMillis();
         }
         int slot = thm$getBestWeaponSlot();
@@ -271,7 +271,7 @@ public abstract class KillAuraMixin extends Module {
             }
             return;
         }
-        Vec3d eyepos = mc.player.getEyePos();
+        Vec3 eyepos = mc.player.getEyePosition();
         if (!thm$isInAttackRange(target, eyepos)) {
             if (thm$silentSwapped) {
                 thm$inventoryManager.syncToClient();
@@ -289,7 +289,7 @@ public abstract class KillAuraMixin extends Module {
 
     @Inject(method = "entityCheck", at = @At("HEAD"), cancellable = true)
     private void thm$ignoreThmMembers(Entity entity, CallbackInfoReturnable<Boolean> cir) {
-        if (!(entity instanceof PlayerEntity player)) return;
+        if (!(entity instanceof Player player)) return;
         THMSystem system = THMSystem.get();
         if (system != null && system.ignoreThmMembers.get() && ThmMembers.isThmMember(player)) {
             cir.setReturnValue(false);
@@ -308,7 +308,7 @@ public abstract class KillAuraMixin extends Module {
     @EventHandler(priority = EventPriority.HIGHEST)
     private void onSendPacketHighest(PacketEvent.Send event) {
         if (!isActive() || mc.player == null) return;
-        if (event.packet instanceof UpdateSelectedSlotC2SPacket) {
+        if (event.packet instanceof ServerboundSetCarriedItemPacket) {
             thm$switchTimer = System.currentTimeMillis();
         }
     }
@@ -323,7 +323,7 @@ public abstract class KillAuraMixin extends Module {
     @Unique
     private boolean thm$isHotbarKeysPressed() {
         for (int i = 0; i < 9; i++) {
-            if (mc.options.hotbarKeys[i].isPressed()) {
+            if (mc.options.keyHotbarSlots[i].isDown()) {
                 return true;
             }
         }
@@ -331,7 +331,7 @@ public abstract class KillAuraMixin extends Module {
     }
     @Unique
     private void thm$handlePVPRotation(Entity target) {
-        float[] rotation = RotationUtils.getRotationsTo(mc.player.getEyePos(),
+        float[] rotation = RotationUtils.getRotationsTo(mc.player.getEyePosition(),
             thm$getAttackRotateVec(target));
         if (!thm$silentRotate.get() && thm$yawStep.get()) {
             float serverYaw = thm$rotationManager.getWrappedYaw();
@@ -357,24 +357,24 @@ public abstract class KillAuraMixin extends Module {
         if (thm$silentRotate.get()) {
             thm$silentRotations = rotation;
         } else {
-            mc.player.setYaw(rotation[0]);
-            mc.player.setPitch(MathHelper.clamp(rotation[1], -90.0f, 90.0f));
+            mc.player.setYRot(rotation[0]);
+            mc.player.setXRot(Mth.clamp(rotation[1], -90.0f, 90.0f));
         }
     }
     @Unique
-    private Vec3d thm$getAttackRotateVec(Entity entity) {
-        Vec3d feetPos = entity.getEntityPos();
+    private Vec3 thm$getAttackRotateVec(Entity entity) {
+        Vec3 feetPos = entity.position();
         return switch (thm$hitVector.get()) {
             case FEET -> feetPos;
-            case TORSO -> feetPos.add(0.0, entity.getHeight() / 2.0f, 0.0);
-            case EYES -> entity.getEyePos();
+            case TORSO -> feetPos.add(0.0, entity.getBbHeight() / 2.0f, 0.0);
+            case EYES -> entity.getEyePosition();
             case CLOSEST -> {
-                Vec3d eyePos = mc.player.getEyePos();
-                Vec3d torsoPos = feetPos.add(0.0, entity.getHeight() / 2.0f, 0.0);
-                Vec3d eyesPos = entity.getEyePos();
-                double feetDist = eyePos.squaredDistanceTo(feetPos);
-                double torsoDist = eyePos.squaredDistanceTo(torsoPos);
-                double eyesDist = eyePos.squaredDistanceTo(eyesPos);
+                Vec3 eyePos = mc.player.getEyePosition();
+                Vec3 torsoPos = feetPos.add(0.0, entity.getBbHeight() / 2.0f, 0.0);
+                Vec3 eyesPos = entity.getEyePosition();
+                double feetDist = eyePos.distanceToSqr(feetPos);
+                double torsoDist = eyePos.distanceToSqr(torsoPos);
+                double eyesDist = eyePos.distanceToSqr(eyesPos);
                 if (feetDist <= torsoDist && feetDist <= eyesDist) {
                     yield feetPos;
                 } else if (torsoDist <= eyesDist) {
@@ -386,13 +386,13 @@ public abstract class KillAuraMixin extends Module {
         };
     }
     @Unique
-    private boolean thm$isInAttackRange(Entity target, Vec3d eyepos) {
-        Vec3d targetEntityPos = thm$getAttackRotateVec(target);
+    private boolean thm$isInAttackRange(Entity target, Vec3 eyepos) {
+        Vec3 targetEntityPos = thm$getAttackRotateVec(target);
         return eyepos.distanceTo(targetEntityPos) <= range.get();
     }
     @Unique
     private boolean thm$isHoldingWeapon() {
-        ItemStack stack = mc.player.getMainHandStack();
+        ItemStack stack = mc.player.getMainHandItem();
         String itemName = stack.getItem().toString().toLowerCase();
         return itemName.contains("sword") ||
             stack.getItem() instanceof AxeItem ||
@@ -404,14 +404,14 @@ public abstract class KillAuraMixin extends Module {
         float bestDamage = 0.0f;
         int bestSlot = -1;
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (stack.isEmpty()) continue;
             MutableDouble damageMutable = new MutableDouble(0.0);
-            AttributeModifiersComponent attributeModifiers = stack.get(DataComponentTypes.ATTRIBUTE_MODIFIERS);
+            ItemAttributeModifiers attributeModifiers = stack.get(DataComponents.ATTRIBUTE_MODIFIERS);
             if (attributeModifiers != null) {
-                attributeModifiers.applyModifiers(EquipmentSlot.MAINHAND, (entry, modifier) -> {
-                    if (entry == EntityAttributes.ATTACK_DAMAGE) {
-                        damageMutable.add(modifier.value());
+                attributeModifiers.forEach(EquipmentSlot.MAINHAND, (entry, modifier) -> {
+                    if (entry == Attributes.ATTACK_DAMAGE) {
+                        damageMutable.add(modifier.amount());
                     }
                 });
             }
@@ -436,14 +436,14 @@ public abstract class KillAuraMixin extends Module {
         }
         int weaponSlot = thm$getBestWeaponSlot();
         int slotToUse = weaponSlot == -1 ? ((PlayerInventoryAccessor) mc.player.getInventory()).getSelectedSlot() : weaponSlot;
-        ItemStack weapon = mc.player.getInventory().getStack(slotToUse);
+        ItemStack weapon = mc.player.getInventory().getItem(slotToUse);
         MutableDouble attackSpeedAttr = new MutableDouble(
-            mc.player.getAttributeBaseValue(EntityAttributes.ATTACK_SPEED));
-        AttributeModifiersComponent attributeModifiers = weapon.get(DataComponentTypes.ATTRIBUTE_MODIFIERS);
+            mc.player.getAttributeBaseValue(Attributes.ATTACK_SPEED));
+        ItemAttributeModifiers attributeModifiers = weapon.get(DataComponents.ATTRIBUTE_MODIFIERS);
         if (attributeModifiers != null) {
-            attributeModifiers.applyModifiers(EquipmentSlot.MAINHAND, (entry, modifier) -> {
-                if (entry.equals(EntityAttributes.ATTACK_SPEED)) {
-                    attackSpeedAttr.add(modifier.value());
+            attributeModifiers.forEach(EquipmentSlot.MAINHAND, (entry, modifier) -> {
+                if (entry.equals(Attributes.ATTACK_SPEED)) {
+                    attackSpeedAttr.add(modifier.amount());
                 }
             });
         }
@@ -467,9 +467,9 @@ public abstract class KillAuraMixin extends Module {
         if (thm$silentRotate.get() && thm$silentRotations != null) {
             thm$rotationManager.setRotationSilent(thm$silentRotations[0], thm$silentRotations[1]);
         }
-        PlayerInteractEntityC2SPacket packet = PlayerInteractEntityC2SPacket.attack(entity, mc.player.isSneaking());
-        mc.getNetworkHandler().sendPacket(packet);
-        mc.player.swingHand(Hand.MAIN_HAND);
+        ServerboundInteractPacket packet = ServerboundInteractPacket.createAttackPacket(entity, mc.player.isShiftKeyDown());
+        mc.getConnection().send(packet);
+        mc.player.swing(InteractionHand.MAIN_HAND);
         if (thm$silentRotate.get()) {
             thm$rotationManager.setRotationSilentSync();
         }
@@ -489,16 +489,16 @@ public abstract class KillAuraMixin extends Module {
         Entity target = targets.get(0);
         if (target == null || !target.isAlive()) return;
         if (!(thm$isHoldingWeapon() || thm$swapMode.get() == SwapMode.Silent)) return;
-        double x = MathHelper.lerp(event.tickDelta, target.lastX, target.getX());
-        double y = MathHelper.lerp(event.tickDelta, target.lastY, target.getY());
-        double z = MathHelper.lerp(event.tickDelta, target.lastZ, target.getZ());
-        Box box = target.getBoundingBox().offset(-target.getX(), -target.getY(), -target.getZ()).offset(x, y, z);
+        double x = Mth.lerp(event.tickDelta, target.xo, target.getX());
+        double y = Mth.lerp(event.tickDelta, target.yo, target.getY());
+        double z = Mth.lerp(event.tickDelta, target.zo, target.getZ());
+        AABB box = target.getBoundingBox().move(-target.getX(), -target.getY(), -target.getZ()).move(x, y, z);
         Color sideColor;
         Color lineColor;
         switch (thm$renderMode.get()) {
             case Fade -> {
                 long timeSinceAttack = System.currentTimeMillis() - thm$lastAttackTime;
-                float fade = 1.0f - MathHelper.clamp(timeSinceAttack / 1000.0f, 0.0f, 1.0f);
+                float fade = 1.0f - Mth.clamp(timeSinceAttack / 1000.0f, 0.0f, 1.0f);
                 int sideAlpha = (int) (thm$sideColor.get().a * fade);
                 int lineAlpha = (int) (thm$lineColor.get().a * fade);
                 sideColor = new Color(
@@ -533,9 +533,9 @@ public abstract class KillAuraMixin extends Module {
             }
             case Shrink -> {
                 long timeSinceAttack = System.currentTimeMillis() - thm$lastAttackTime;
-                float shrink = MathHelper.clamp(timeSinceAttack / 500.0f, 0.0f, 1.0f);
+                float shrink = Mth.clamp(timeSinceAttack / 500.0f, 0.0f, 1.0f);
                 double expansion = 0.1 * (1.0 - shrink);
-                box = box.expand(expansion);
+                box = box.inflate(expansion);
                 sideColor = thm$sideColor.get();
                 lineColor = thm$lineColor.get();
             }

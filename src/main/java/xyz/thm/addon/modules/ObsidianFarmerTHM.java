@@ -22,24 +22,32 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.*;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.*;
-import net.minecraft.block.enums.ChestType;
-import net.minecraft.block.enums.DoubleBlockHalf;
-import net.minecraft.client.gui.screen.ingame.GenericContainerScreen;
-import net.minecraft.client.gui.screen.ingame.HopperScreen;
-import net.minecraft.client.gui.screen.ingame.ShulkerBoxScreen;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.tag.ItemTags;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.text.Text;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.gui.screens.inventory.ContainerScreen;
+import net.minecraft.client.gui.screens.inventory.HopperScreen;
+import net.minecraft.client.gui.screens.inventory.ShulkerBoxScreen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.BarrelBlock;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.EnderChestBlock;
+import net.minecraft.world.level.block.HopperBlock;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.level.block.TrappedChestBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
 import xyz.thm.addon.utils.server.ServerStatusHandler;
 import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
@@ -431,7 +439,7 @@ public class ObsidianFarmerTHM extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (mc.player == null || mc.world == null) {
+        if (mc.player == null || mc.level == null) {
             disableWorker("player-or-world-missing");
             return;
         }
@@ -519,7 +527,7 @@ public class ObsidianFarmerTHM extends Module {
                 return;
             }
 
-            if (storageChestFullOfShulkers && mc.world.getTime() < nextStorageRecheckAtTick) {
+            if (storageChestFullOfShulkers && mc.level.getGameTime() < nextStorageRecheckAtTick) {
                 state = FarmerState.WaitingForStorage;
                 disableWorker("storage-full");
                 return;
@@ -562,8 +570,8 @@ public class ObsidianFarmerTHM extends Module {
         if (isWorkerActive() && !isAtPose(getFarmingPose(), FARM_YAW, FARM_PITCH)) {
             traceDebug("worker-pose-drift detected while active; disabling worker current=%s yaw=%.2f pitch=%.2f",
                 formatPlayerPosSafe(),
-                mc.player.getYaw(),
-                mc.player.getPitch()
+                mc.player.getYRot(),
+                mc.player.getXRot()
             );
             disableWorker("farming-pose-drift");
             actionDelayTicks = Math.max(actionDelayTicks, 1);
@@ -666,7 +674,7 @@ public class ObsidianFarmerTHM extends Module {
                 resumeStep = ResumeStep.WaitingForPathing;
             }
             case WaitingForPathing -> {
-                if (mc.player.getBlockPos().equals(startingPathBlock.get())) {
+                if (mc.player.blockPosition().equals(startingPathBlock.get())) {
                     traceDebug("resume-pathing reached start block");
                     cancelBaritonePathing();
                     resumeStep = ResumeStep.SnapAndResume;
@@ -788,8 +796,8 @@ public class ObsidianFarmerTHM extends Module {
 
     private boolean hasCompletelyEmptyShulkerInInventory() {
         if (mc.player == null) return false;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!Utils.isShulker(stack.getItem())) continue;
             if (isShulkerItemEmpty(stack)) return true;
         }
@@ -809,8 +817,8 @@ public class ObsidianFarmerTHM extends Module {
     private boolean isInventoryActuallyFull() {
         if (mc.player == null) return false;
         if (countLooseObsidianInInventory() <= 0) return false;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            if (mc.player.getInventory().getStack(i).isEmpty()) return false;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            if (mc.player.getInventory().getItem(i).isEmpty()) return false;
         }
         return true;
     }
@@ -894,7 +902,7 @@ public class ObsidianFarmerTHM extends Module {
 
     private void snapToFarmingPose() {
         if (mc.player == null) return;
-        Vec3d target = getFarmingPose();
+        Vec3 target = getFarmingPose();
         snapPlayerTo(target, FARM_YAW, FARM_PITCH);
     }
 
@@ -941,7 +949,7 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private void closeHandledScreen() {
-        if (mc.player != null && mc.currentScreen != null) mc.player.closeHandledScreen();
+        if (mc.player != null && mc.screen != null) mc.player.closeContainer();
     }
 
     private boolean isExecutionAllowedOnCurrentServer() {
@@ -1022,7 +1030,7 @@ public class ObsidianFarmerTHM extends Module {
 
                 boolean fullOfShulkers = true;
                 for (int i = 0; i < slots; i++) {
-                    ItemStack stack = mc.player.currentScreenHandler.slots.get(i).getStack();
+                    ItemStack stack = mc.player.containerMenu.slots.get(i).getItem();
                     if (stack.isEmpty() || !Utils.isShulker(stack.getItem())) {
                         fullOfShulkers = false;
                         break;
@@ -1031,7 +1039,7 @@ public class ObsidianFarmerTHM extends Module {
 
                 storageChestFullOfShulkers = fullOfShulkers;
                 storageRecheckGeneration++;
-                nextStorageRecheckAtTick = mc.world.getTime() + STORAGE_RECHECK_INTERVAL_TICKS;
+                nextStorageRecheckAtTick = mc.level.getGameTime() + STORAGE_RECHECK_INTERVAL_TICKS;
                 pendingDepositAfterStorageCheck = !fullOfShulkers && shouldHandleDepositNow();
                 traceDebug("storage-check result fullOfShulkers=%s slots=%d pendingDeposit=%s nextRecheckTick=%d generation=%d",
                     fullOfShulkers,
@@ -1045,7 +1053,7 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Close;
             }
             case Close -> {
-                if (mc.currentScreen != null) {
+                if (mc.screen != null) {
                     traceDebug("storage-check waiting for chest screen to close screen=%s", formatCurrentScreenSafe());
                     closeHandledScreen();
                     actionDelayTicks = Math.max(actionDelayTicks, 1);
@@ -1071,7 +1079,7 @@ public class ObsidianFarmerTHM extends Module {
         if (!ensureContainerScreenOpen(activeContainerPos)) return;
         if (getOpenedContainerSlotCount() <= 0) return;
 
-        if (shiftClickPlayerInventoryItems(stack -> stack.isOf(Items.OBSIDIAN), 1)) {
+        if (shiftClickPlayerInventoryItems(stack -> stack.is(Items.OBSIDIAN), 1)) {
             actionDelayTicks = inventoryDelay.get();
             return;
         }
@@ -1109,12 +1117,12 @@ public class ObsidianFarmerTHM extends Module {
 
                 if (!ensureContainerScreenOpen(activeContainerPos)) return;
 
-                if (shiftClickContainerItems(stack -> stack.isOf(Items.OBSIDIAN), 1)) {
+                if (shiftClickContainerItems(stack -> stack.is(Items.OBSIDIAN), 1)) {
                     actionDelayTicks = inventoryDelay.get();
                     return;
                 }
 
-                if (hasMatchingContainerItem(stack -> stack.isOf(Items.OBSIDIAN))) {
+                if (hasMatchingContainerItem(stack -> stack.is(Items.OBSIDIAN))) {
                     traceDebug("loose-obsidian-pickup incomplete: loose obsidian still remains in source");
                     closeHandledScreen();
                     containerMode = ContainerMode.None;
@@ -1129,7 +1137,7 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Close;
             }
             case Close -> {
-                if (mc.currentScreen != null) {
+                if (mc.screen != null) {
                     traceDebug("loose-obsidian-pickup waiting for screen close screen=%s", formatCurrentScreenSafe());
                     closeHandledScreen();
                     actionDelayTicks = Math.max(actionDelayTicks, 1);
@@ -1176,51 +1184,51 @@ public class ObsidianFarmerTHM extends Module {
 
     private BlockPos resolveGuardedDoorBasePos() {
         BlockPos configured = guardedDoorLocation.get();
-        if (mc.world == null) return null;
+        if (mc.level == null) return null;
 
-        BlockState state = mc.world.getBlockState(configured);
+        BlockState state = mc.level.getBlockState(configured);
         if (!(state.getBlock() instanceof DoorBlock)) return null;
-        if (state.contains(DoorBlock.HALF) && state.get(DoorBlock.HALF) == DoubleBlockHalf.UPPER) {
-            BlockPos lower = configured.down();
-            BlockState lowerState = mc.world.getBlockState(lower);
+        if (state.hasProperty(DoorBlock.HALF) && state.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER) {
+            BlockPos lower = configured.below();
+            BlockState lowerState = mc.level.getBlockState(lower);
             if (lowerState.getBlock() instanceof DoorBlock) return lower;
         }
         return configured;
     }
 
     private boolean isDoorBlock(BlockPos pos) {
-        return mc.world != null && mc.world.getBlockState(pos).getBlock() instanceof DoorBlock;
+        return mc.level != null && mc.level.getBlockState(pos).getBlock() instanceof DoorBlock;
     }
 
     private boolean isDoorOpen(BlockPos pos) {
         if (!isDoorBlock(pos)) return false;
-        BlockState state = mc.world.getBlockState(pos);
-        return state.contains(DoorBlock.OPEN) && state.get(DoorBlock.OPEN);
+        BlockState state = mc.level.getBlockState(pos);
+        return state.hasProperty(DoorBlock.OPEN) && state.getValue(DoorBlock.OPEN);
     }
 
     private void interactBlock(BlockPos pos) {
-        if (mc.player == null || mc.interactionManager == null || pos == null) return;
-        mc.interactionManager.interactBlock(
+        if (mc.player == null || mc.gameMode == null || pos == null) return;
+        mc.gameMode.useItemOn(
             mc.player,
-            Hand.MAIN_HAND,
-            new BlockHitResult(Vec3d.ofCenter(pos), Direction.UP, pos, false)
+            InteractionHand.MAIN_HAND,
+            new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false)
         );
     }
 
     private boolean isShulkerBlock(BlockPos pos) {
-        return mc.world != null && mc.world.getBlockState(pos).getBlock() instanceof ShulkerBoxBlock;
+        return mc.level != null && mc.level.getBlockState(pos).getBlock() instanceof ShulkerBoxBlock;
     }
 
     private boolean isChestBlock(BlockPos pos) {
-        if (pos == null || mc.world == null) return false;
-        if (mc.world == null) return false;
-        Block block = mc.world.getBlockState(pos).getBlock();
+        if (pos == null || mc.level == null) return false;
+        if (mc.level == null) return false;
+        Block block = mc.level.getBlockState(pos).getBlock();
         return block instanceof ChestBlock || block instanceof TrappedChestBlock;
     }
 
     private boolean isInspectableStorageBlock(BlockPos pos) {
-        if (pos == null || mc.world == null) return false;
-        Block block = mc.world.getBlockState(pos).getBlock();
+        if (pos == null || mc.level == null) return false;
+        Block block = mc.level.getBlockState(pos).getBlock();
         return block instanceof ChestBlock
             || block instanceof TrappedChestBlock
             || block instanceof BarrelBlock
@@ -1228,9 +1236,9 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private boolean isUsableContainerBlock(BlockPos pos) {
-        if (pos == null || mc.world == null) return false;
-        if (mc.world == null) return false;
-        Block block = mc.world.getBlockState(pos).getBlock();
+        if (pos == null || mc.level == null) return false;
+        if (mc.level == null) return false;
+        Block block = mc.level.getBlockState(pos).getBlock();
         return block instanceof ShulkerBoxBlock
             || block instanceof ChestBlock
             || block instanceof TrappedChestBlock
@@ -1261,14 +1269,14 @@ public class ObsidianFarmerTHM extends Module {
             && countUsefulUnitsInShulkerItem(stack, task) > 0;
     }
 
-    private Vec3d getFarmingPose() {
+    private Vec3 getFarmingPose() {
         BlockPos start = startingPathBlock.get();
-        return new Vec3d(start.getX() + 0.7, start.getY() + 1.0, start.getZ() + 0.3);
+        return new Vec3(start.getX() + 0.7, start.getY() + 1.0, start.getZ() + 0.3);
     }
 
-    private Vec3d getStartCenterPose() {
+    private Vec3 getStartCenterPose() {
         BlockPos start = startingPathBlock.get();
-        return new Vec3d(start.getX() + 0.5, start.getY() + 1.0, start.getZ() + 0.5);
+        return new Vec3(start.getX() + 0.5, start.getY() + 1.0, start.getZ() + 0.5);
     }
 
     private float getLocalRestockYaw() {
@@ -1281,34 +1289,34 @@ public class ObsidianFarmerTHM extends Module {
         return (float) Rotations.getPitch(target);
     }
 
-    private Vec3d getKitbotRestockPose() {
+    private Vec3 getKitbotRestockPose() {
         BlockPos start = startingPathBlock.get();
-        return new Vec3d(start.getX() + 1.0, start.getY() + 1.0, start.getZ());
+        return new Vec3(start.getX() + 1.0, start.getY() + 1.0, start.getZ());
     }
 
     private BlockPos getLocalRestockContainerPos() {
-        return startingPathBlock.get().add(0, 1, -1);
+        return startingPathBlock.get().offset(0, 1, -1);
     }
 
-    private Vec3d getDoublePlacementPose() {
-        BlockPos start = startingPathBlock.get().add(0, 0, -1);
-        return new Vec3d(start.getX() + 0.5, start.getY() + 1.0, start.getZ() + 0.5);
+    private Vec3 getDoublePlacementPose() {
+        BlockPos start = startingPathBlock.get().offset(0, 0, -1);
+        return new Vec3(start.getX() + 0.5, start.getY() + 1.0, start.getZ() + 0.5);
     }
 
     private BlockPos getSingleFallbackContainerPos() {
-        return startingPathBlock.get().add(-1, 1, 0);
+        return startingPathBlock.get().offset(-1, 1, 0);
     }
 
     private BlockPos getDoubleFallbackContainerPos() {
-        return startingPathBlock.get().add(-1, 1, -1);
+        return startingPathBlock.get().offset(-1, 1, -1);
     }
 
-    private void snapPlayerTo(Vec3d position, float yaw, float pitch) {
+    private void snapPlayerTo(Vec3 position, float yaw, float pitch) {
         if (mc.player == null || position == null) return;
-        mc.player.setVelocity(0.0, 0.0, 0.0);
-        mc.player.setPosition(position.x, position.y, position.z);
-        mc.player.setYaw(yaw);
-        mc.player.setPitch(pitch);
+        mc.player.setDeltaMovement(0.0, 0.0, 0.0);
+        mc.player.setPos(position.x, position.y, position.z);
+        mc.player.setYRot(yaw);
+        mc.player.setXRot(pitch);
     }
 
     private void snapToSinglePlacementPose() {
@@ -1348,7 +1356,7 @@ public class ObsidianFarmerTHM extends Module {
 
         if (lastKitbotPoseSettledStage == activeRestockStage) return true;
 
-        Vec3d target = getKitbotRestockPose();
+        Vec3 target = getKitbotRestockPose();
         if (isWithinPositionTolerance(target, KITBOT_POSE_SETTLE_TOLERANCE)) {
             lastKitbotPoseSettledStage = activeRestockStage;
             return true;
@@ -1359,11 +1367,11 @@ public class ObsidianFarmerTHM extends Module {
             target.y,
             target.z,
             formatPlayerPosSafe(),
-            mc.player.getYaw(),
-            mc.player.getPitch(),
+            mc.player.getYRot(),
+            mc.player.getXRot(),
             activeRestockStage
         );
-        snapPlayerTo(target, mc.player.getYaw(), mc.player.getPitch());
+        snapPlayerTo(target, mc.player.getYRot(), mc.player.getXRot());
         actionDelayTicks = Math.max(actionDelayTicks, 1);
 
         if (isWithinPositionTolerance(target, KITBOT_POSE_SETTLE_TOLERANCE)) {
@@ -1374,7 +1382,7 @@ public class ObsidianFarmerTHM extends Module {
         return false;
     }
 
-    private boolean ensurePose(Vec3d position, float yaw, float pitch) {
+    private boolean ensurePose(Vec3 position, float yaw, float pitch) {
         if (mc.player == null || position == null) return false;
         if (isAtPose(position, yaw, pitch)) return true;
 
@@ -1385,8 +1393,8 @@ public class ObsidianFarmerTHM extends Module {
             yaw,
             pitch,
             formatPlayerPosSafe(),
-            mc.player.getYaw(),
-            mc.player.getPitch()
+            mc.player.getYRot(),
+            mc.player.getXRot()
         );
         snapPlayerTo(position, yaw, pitch);
         if (isAtPose(position, yaw, pitch)) return true;
@@ -1395,17 +1403,17 @@ public class ObsidianFarmerTHM extends Module {
         return false;
     }
 
-    private boolean isAtPose(Vec3d position, float yaw, float pitch) {
+    private boolean isAtPose(Vec3 position, float yaw, float pitch) {
         if (mc.player == null || position == null) return false;
 
         return Math.abs(mc.player.getX() - position.x) <= POSE_POSITION_TOLERANCE
             && Math.abs(mc.player.getY() - position.y) <= POSE_POSITION_TOLERANCE
             && Math.abs(mc.player.getZ() - position.z) <= POSE_POSITION_TOLERANCE
-            && Math.abs(MathHelper.wrapDegrees(mc.player.getYaw() - yaw)) <= POSE_ROTATION_TOLERANCE
-            && Math.abs(mc.player.getPitch() - pitch) <= POSE_ROTATION_TOLERANCE;
+            && Math.abs(Mth.wrapDegrees(mc.player.getYRot() - yaw)) <= POSE_ROTATION_TOLERANCE
+            && Math.abs(mc.player.getXRot() - pitch) <= POSE_ROTATION_TOLERANCE;
     }
 
-    private boolean isWithinPositionTolerance(Vec3d position, double tolerance) {
+    private boolean isWithinPositionTolerance(Vec3 position, double tolerance) {
         if (mc.player == null || position == null) return false;
 
         return Math.abs(mc.player.getX() - position.x) <= tolerance
@@ -1416,8 +1424,8 @@ public class ObsidianFarmerTHM extends Module {
     private int countInventoryItems(Predicate<ItemStack> predicate) {
         if (mc.player == null) return 0;
         int count = 0;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (predicate.test(stack)) count += stack.getCount();
         }
         return count;
@@ -1428,15 +1436,15 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private int countLoosePickaxesInInventory() {
-        return countInventoryItems(stack -> !stack.isEmpty() && stack.isIn(ItemTags.PICKAXES));
+        return countInventoryItems(stack -> !stack.isEmpty() && stack.is(ItemTags.PICKAXES));
     }
 
     private int countLooseInventoryEnderChests() {
-        return countInventoryItems(stack -> stack.isOf(Items.ENDER_CHEST));
+        return countInventoryItems(stack -> stack.is(Items.ENDER_CHEST));
     }
 
     private int countLooseObsidianInInventory() {
-        return countInventoryItems(stack -> stack.isOf(Items.OBSIDIAN));
+        return countInventoryItems(stack -> stack.is(Items.OBSIDIAN));
     }
 
     private boolean isConfiguredFoodStack(ItemStack stack) {
@@ -1484,8 +1492,8 @@ public class ObsidianFarmerTHM extends Module {
 
     private boolean hasTrashItemsInInventory() {
         if (mc.player == null) return false;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!stack.isEmpty() && trashItems.get().contains(stack.getItem())) return true;
         }
         return false;
@@ -1525,8 +1533,8 @@ public class ObsidianFarmerTHM extends Module {
             }
             case DropItems -> {
                 if (mc.player != null) {
-                    for (int i = mc.player.getInventory().getMainStacks().size() - 1; i >= 0; i--) {
-                        ItemStack stack = mc.player.getInventory().getStack(i);
+                    for (int i = mc.player.getInventory().getNonEquipmentItems().size() - 1; i >= 0; i--) {
+                        ItemStack stack = mc.player.getInventory().getItem(i);
                         if (stack.isEmpty() || !trashItems.get().contains(stack.getItem())) continue;
                         InvUtils.drop().slot(i);
                     }
@@ -1548,32 +1556,32 @@ public class ObsidianFarmerTHM extends Module {
 
     private boolean ensureContainerScreenOpen(BlockPos pos) {
         if (pos == null) return false;
-        if (mc.currentScreen instanceof GenericContainerScreen
-            || mc.currentScreen instanceof HopperScreen
-            || mc.currentScreen instanceof ShulkerBoxScreen) return true;
+        if (mc.screen instanceof ContainerScreen
+            || mc.screen instanceof HopperScreen
+            || mc.screen instanceof ShulkerBoxScreen) return true;
         interactBlock(pos);
         actionDelayTicks = inventoryDelay.get();
         return false;
     }
 
     private int getOpenedContainerSlotCount() {
-        if (mc.player == null || mc.player.currentScreenHandler == null) return 0;
-        return Math.max(mc.player.currentScreenHandler.slots.size() - 36, 0);
+        if (mc.player == null || mc.player.containerMenu == null) return 0;
+        return Math.max(mc.player.containerMenu.slots.size() - 36, 0);
     }
 
     private boolean shiftClickPlayerInventoryItems(Predicate<ItemStack> predicate, int maxMoves) {
-        if (mc.player == null || mc.player.currentScreenHandler == null) return false;
+        if (mc.player == null || mc.player.containerMenu == null) return false;
 
         boolean moved = false;
         int moves = 0;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size() && moves < maxMoves; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size() && moves < maxMoves; i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!predicate.test(stack)) continue;
-            mc.interactionManager.clickSlot(
-                mc.player.currentScreenHandler.syncId,
+            mc.gameMode.handleInventoryMouseClick(
+                mc.player.containerMenu.containerId,
                 SlotUtils.indexToId(i),
                 0,
-                SlotActionType.QUICK_MOVE,
+                ClickType.QUICK_MOVE,
                 mc.player
             );
             moved = true;
@@ -1583,12 +1591,12 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private boolean shiftClickContainerItems(Predicate<ItemStack> predicate, int maxMoves) {
-        if (mc.player == null || mc.player.currentScreenHandler == null) return false;
+        if (mc.player == null || mc.player.containerMenu == null) return false;
 
         boolean moved = false;
         int moves = 0;
         for (int i = 0; i < getOpenedContainerSlotCount() && moves < maxMoves; i++) {
-            ItemStack stack = mc.player.currentScreenHandler.slots.get(i).getStack();
+            ItemStack stack = mc.player.containerMenu.slots.get(i).getItem();
             if (!predicate.test(stack)) continue;
             if (!quickMoveContainerSlot(i)) continue;
             moved = true;
@@ -1598,17 +1606,17 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private boolean quickMoveContainerSlot(int slot) {
-        if (mc.player == null || mc.player.currentScreenHandler == null) return false;
+        if (mc.player == null || mc.player.containerMenu == null) return false;
         if (slot < 0 || slot >= getOpenedContainerSlotCount()) return false;
-        ItemStack before = mc.player.currentScreenHandler.slots.get(slot).getStack().copy();
-        mc.interactionManager.clickSlot(
-            mc.player.currentScreenHandler.syncId,
+        ItemStack before = mc.player.containerMenu.slots.get(slot).getItem().copy();
+        mc.gameMode.handleInventoryMouseClick(
+            mc.player.containerMenu.containerId,
             slot,
             0,
-            SlotActionType.QUICK_MOVE,
+            ClickType.QUICK_MOVE,
             mc.player
         );
-        ItemStack after = mc.player.currentScreenHandler.slots.get(slot).getStack();
+        ItemStack after = mc.player.containerMenu.slots.get(slot).getItem();
         return after.getCount() < before.getCount() || after.getItem() != before.getItem();
     }
 
@@ -1623,7 +1631,7 @@ public class ObsidianFarmerTHM extends Module {
             containerStep = ContainerStep.Prepare;
             traceDebug("inventory-source selected slot=%d usefulUnits=%d target=%s",
                 slot,
-                countUsefulUnitsInShulkerItem(mc.player.getInventory().getStack(slot), activeRestockTask),
+                countUsefulUnitsInShulkerItem(mc.player.getInventory().getItem(slot), activeRestockTask),
                 formatBlockPosSafe(activeContainerPos)
             );
             return;
@@ -1712,9 +1720,9 @@ public class ObsidianFarmerTHM extends Module {
         int target = Math.max(Math.min(minimumPickaxeRestock.get(), Math.max(countEmptySlotsInInventory(), 1)), 1);
         int movedCount = 0;
         while (movedCount < target) {
-            int slot = findFirstMatchingContainerSlot(stack -> !stack.isEmpty() && stack.isIn(ItemTags.PICKAXES));
+            int slot = findFirstMatchingContainerSlot(stack -> !stack.isEmpty() && stack.is(ItemTags.PICKAXES));
             if (slot == -1) break;
-            ItemStack stack = mc.player.currentScreenHandler.slots.get(slot).getStack();
+            ItemStack stack = mc.player.containerMenu.slots.get(slot).getItem();
             int count = Math.max(stack.getCount(), 1);
             if (!quickMoveContainerSlot(slot)) break;
             moved = true;
@@ -1728,9 +1736,9 @@ public class ObsidianFarmerTHM extends Module {
         boolean moved = false;
         int desired = Math.max(getEchestRestockTargetUnits(), (minimumEchests.get() + 3) - countLooseInventoryEnderChests());
         while (desired > 0) {
-            int slot = findFirstMatchingContainerSlot(stack -> stack.isOf(Items.ENDER_CHEST));
+            int slot = findFirstMatchingContainerSlot(stack -> stack.is(Items.ENDER_CHEST));
             if (slot == -1) break;
-            ItemStack stack = mc.player.currentScreenHandler.slots.get(slot).getStack();
+            ItemStack stack = mc.player.containerMenu.slots.get(slot).getItem();
             int count = stack.getCount();
             if (!quickMoveContainerSlot(slot)) break;
             moved = true;
@@ -1744,7 +1752,7 @@ public class ObsidianFarmerTHM extends Module {
         int bestSlot = -1;
         int bestCount = -1;
         for (int i = 0; i < getOpenedContainerSlotCount(); i++) {
-            ItemStack stack = mc.player.currentScreenHandler.slots.get(i).getStack();
+            ItemStack stack = mc.player.containerMenu.slots.get(i).getItem();
             if (!isConfiguredFoodStack(stack)) continue;
             if (stack.getCount() > bestCount) {
                 bestCount = stack.getCount();
@@ -1756,7 +1764,7 @@ public class ObsidianFarmerTHM extends Module {
 
     private int findFirstMatchingContainerSlot(Predicate<ItemStack> predicate) {
         for (int i = 0; i < getOpenedContainerSlotCount(); i++) {
-            if (predicate.test(mc.player.currentScreenHandler.slots.get(i).getStack())) return i;
+            if (predicate.test(mc.player.containerMenu.slots.get(i).getItem())) return i;
         }
         return -1;
     }
@@ -1769,7 +1777,7 @@ public class ObsidianFarmerTHM extends Module {
         int bestSlot = -1;
         int bestUnits = -1;
         for (int i = 0; i < getOpenedContainerSlotCount(); i++) {
-            ItemStack stack = mc.player.currentScreenHandler.slots.get(i).getStack();
+            ItemStack stack = mc.player.containerMenu.slots.get(i).getItem();
             int useful = countUsefulUnitsInShulkerItem(stack, task);
             if (useful <= 0) continue;
             if (bestSlot == -1
@@ -1788,8 +1796,8 @@ public class ObsidianFarmerTHM extends Module {
 
         int bestSlot = -1;
         int bestUnits = -1;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             int useful = countUsefulUnitsInShulkerItem(stack, task);
             if (useful <= 0) continue;
             if (bestSlot == -1
@@ -1816,10 +1824,10 @@ public class ObsidianFarmerTHM extends Module {
                     if (isConfiguredFoodStack(item)) count += item.getCount();
                 }
                 case Pickaxe -> {
-                    if (item.isIn(ItemTags.PICKAXES)) count += item.getCount();
+                    if (item.is(ItemTags.PICKAXES)) count += item.getCount();
                 }
                 case Echest -> {
-                    if (item.isOf(Items.ENDER_CHEST)) count += item.getCount();
+                    if (item.is(Items.ENDER_CHEST)) count += item.getCount();
                 }
             }
         }
@@ -1829,8 +1837,8 @@ public class ObsidianFarmerTHM extends Module {
     private int countMatchingInventoryShulkersForTask(RestockTask task) {
         if (mc.player == null) return 0;
         int count = 0;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            if (countUsefulUnitsInShulkerItem(mc.player.getInventory().getStack(i), task) > 0) count++;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            if (countUsefulUnitsInShulkerItem(mc.player.getInventory().getItem(i), task) > 0) count++;
         }
         return count;
     }
@@ -1913,7 +1921,7 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private void handleLocalSourceShulkerMode() {
-        if (pendingUsefulShulkerInventorySlot < 0 || pendingUsefulShulkerInventorySlot >= mc.player.getInventory().size()) {
+        if (pendingUsefulShulkerInventorySlot < 0 || pendingUsefulShulkerInventorySlot >= mc.player.getInventory().getContainerSize()) {
             containerMode = ContainerMode.None;
             startInventorySourceAttemptOrAdvance();
             return;
@@ -1923,7 +1931,7 @@ public class ObsidianFarmerTHM extends Module {
             case Prepare -> {
                 if (!ensureLocalRestockPose()) return;
 
-                BlockState targetState = mc.world.getBlockState(activeContainerPos);
+                BlockState targetState = mc.level.getBlockState(activeContainerPos);
                 if (targetState.getBlock() instanceof EnderChestBlock) {
                     traceDebug("local-source prepare clearing stray echest at %s before restock",
                         formatBlockPosSafe(activeContainerPos)
@@ -1938,7 +1946,7 @@ public class ObsidianFarmerTHM extends Module {
                     return;
                 }
 
-                ItemStack expectedSourceStack = mc.player.getInventory().getStack(pendingUsefulShulkerInventorySlot).copy();
+                ItemStack expectedSourceStack = mc.player.getInventory().getItem(pendingUsefulShulkerInventorySlot).copy();
                 if (!isUsefulLocalSourceShulkerStack(expectedSourceStack, activeRestockTask)) {
                     currentLocalSourceHotbarSlot = -1;
                     traceDebug("local-source prepare source slot %d invalid before hotbar move stack=%s task=%s",
@@ -1956,7 +1964,7 @@ public class ObsidianFarmerTHM extends Module {
                     return;
                 }
 
-                ItemStack actualHotbarStack = mc.player.getInventory().getStack(currentLocalSourceHotbarSlot).copy();
+                ItemStack actualHotbarStack = mc.player.getInventory().getItem(currentLocalSourceHotbarSlot).copy();
                 if (!isUsefulLocalSourceShulkerStack(actualHotbarStack, activeRestockTask)
                     || actualHotbarStack.getItem() != expectedSourceStack.getItem()) {
                     int mismatchedHotbarSlot = currentLocalSourceHotbarSlot;
@@ -1981,12 +1989,12 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Open;
             }
             case Open -> {
-                if (mc.currentScreen instanceof ShulkerBoxScreen) {
+                if (mc.screen instanceof ShulkerBoxScreen) {
                     containerStep = ContainerStep.Transfer;
                     return;
                 }
 
-                BlockState targetState = mc.world.getBlockState(activeContainerPos);
+                BlockState targetState = mc.level.getBlockState(activeContainerPos);
                 if (targetState.getBlock() instanceof ShulkerBoxBlock) {
                     if (!ensureContainerScreenOpen(activeContainerPos)) return;
                     return;
@@ -2021,7 +2029,7 @@ public class ObsidianFarmerTHM extends Module {
             case Break -> {
                 if (!ensureLocalRestockPose()) return;
 
-                if (mc.world.getBlockState(activeContainerPos).isAir()) {
+                if (mc.level.getBlockState(activeContainerPos).isAir()) {
                     genericWaitTicks = PICKUP_WAIT_TICKS;
                     containerStep = ContainerStep.WaitPickup;
                     return;
@@ -2057,7 +2065,7 @@ public class ObsidianFarmerTHM extends Module {
             }
             case Open -> {
                 if (!ensureContainerScreenOpen(getSingleFallbackContainerPos())) return;
-                if (mc.currentScreen instanceof GenericContainerScreen) containerStep = ContainerStep.Transfer;
+                if (mc.screen instanceof ContainerScreen) containerStep = ContainerStep.Transfer;
             }
             case Transfer -> {
                 fallbackRecoveredLooseItems = transferFromOpenedContainerForActiveTask(true);
@@ -2084,7 +2092,7 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Break;
             }
             case Break -> {
-                if (mc.world.getBlockState(getSingleFallbackContainerPos()).isAir()) {
+                if (mc.level.getBlockState(getSingleFallbackContainerPos()).isAir()) {
                     genericWaitTicks = PICKUP_WAIT_TICKS;
                     containerStep = ContainerStep.WaitPickup;
                     return;
@@ -2115,7 +2123,7 @@ public class ObsidianFarmerTHM extends Module {
             }
             case Open -> {
                 if (!ensureContainerScreenOpen(getSingleFallbackContainerPos())) return;
-                if (mc.currentScreen instanceof GenericContainerScreen) containerStep = ContainerStep.Transfer;
+                if (mc.screen instanceof ContainerScreen) containerStep = ContainerStep.Transfer;
             }
             case Transfer -> {
                 fallbackRecoveredLooseItems = transferFromOpenedContainerForActiveTask(true);
@@ -2142,8 +2150,8 @@ public class ObsidianFarmerTHM extends Module {
                 containerStep = ContainerStep.Break;
             }
             case Break -> {
-                boolean singleGone = mc.world.getBlockState(getSingleFallbackContainerPos()).isAir();
-                boolean doubleGone = mc.world.getBlockState(getDoubleFallbackContainerPos()).isAir();
+                boolean singleGone = mc.level.getBlockState(getSingleFallbackContainerPos()).isAir();
+                boolean doubleGone = mc.level.getBlockState(getDoubleFallbackContainerPos()).isAir();
                 if (singleGone && doubleGone) {
                     genericWaitTicks = PICKUP_WAIT_TICKS;
                     containerStep = ContainerStep.WaitPickup;
@@ -2167,7 +2175,7 @@ public class ObsidianFarmerTHM extends Module {
 
     private boolean ensureSingleFallbackPlaced() {
         BlockPos singlePos = getSingleFallbackContainerPos();
-        BlockState state = mc.world.getBlockState(singlePos);
+        BlockState state = mc.level.getBlockState(singlePos);
         if (state.getBlock() instanceof EnderChestBlock) {
             traceDebug("single-fallback reuse existing echest at %s", formatBlockPosSafe(singlePos));
             return true;
@@ -2197,7 +2205,7 @@ public class ObsidianFarmerTHM extends Module {
         BlockPos singlePos = getSingleFallbackContainerPos();
         BlockPos doublePos = getDoubleFallbackContainerPos();
 
-        BlockState singleState = mc.world.getBlockState(singlePos);
+        BlockState singleState = mc.level.getBlockState(singlePos);
         if (!(singleState.getBlock() instanceof EnderChestBlock)) {
             if (!singleState.isAir()) {
                 traceDebug("double-fallback failed: primary %s occupied by %s", formatBlockPosSafe(singlePos), singleState.getBlock());
@@ -2218,7 +2226,7 @@ public class ObsidianFarmerTHM extends Module {
             return true;
         }
 
-        BlockState doubleState = mc.world.getBlockState(doublePos);
+        BlockState doubleState = mc.level.getBlockState(doublePos);
         if (doubleState.getBlock() instanceof EnderChestBlock) {
             traceDebug("double-fallback reuse existing secondary echest at %s", formatBlockPosSafe(doublePos));
             return true;
@@ -2299,8 +2307,8 @@ public class ObsidianFarmerTHM extends Module {
         AutoReconnect autoReconnect = Modules.get().get(AutoReconnect.class);
         if (autoReconnect != null && autoReconnect.isActive()) autoReconnect.toggle();
 
-        if (mc.getNetworkHandler() != null && mc.getNetworkHandler().getConnection() != null) {
-            mc.getNetworkHandler().getConnection().disconnect(Text.literal("[ObsidianFarmerTHM] " + message));
+        if (mc.getConnection() != null && mc.getConnection().getConnection() != null) {
+            mc.getConnection().getConnection().disconnect(Component.literal("[ObsidianFarmerTHM] " + message));
         }
         toggle();
     }
@@ -2336,7 +2344,7 @@ public class ObsidianFarmerTHM extends Module {
     private int findHotbarSlotWithItem(Item item) {
         if (item == null || item == Items.AIR || mc.player == null) return -1;
         for (int i = 0; i < 9; i++) {
-            if (mc.player.getInventory().getStack(i).getItem() == item) return i;
+            if (mc.player.getInventory().getItem(i).getItem() == item) return i;
         }
         return -1;
     }
@@ -2344,7 +2352,7 @@ public class ObsidianFarmerTHM extends Module {
     private int verifyResolvedHotbarSlot(int sourceSlot, int hotbarSlot, Item expectedItem, String reason) {
         if (mc.player == null || hotbarSlot < 0 || hotbarSlot >= 9) return -1;
 
-        ItemStack actualStack = mc.player.getInventory().getStack(hotbarSlot);
+        ItemStack actualStack = mc.player.getInventory().getItem(hotbarSlot);
         if (!actualStack.isEmpty() && actualStack.getItem() == expectedItem) return hotbarSlot;
 
         traceDebug("hotbar-resolve mismatch reason=%s sourceSlot=%d targetHotbar=%d expected=%s actual=%s",
@@ -2364,7 +2372,7 @@ public class ObsidianFarmerTHM extends Module {
     private int moveInventorySlotToHotbar(int slot, boolean allowSameItemReuse, String reason) {
         if (slot < 0 || mc.player == null) return -1;
 
-        ItemStack sourceStack = mc.player.getInventory().getStack(slot);
+        ItemStack sourceStack = mc.player.getInventory().getItem(slot);
         if (sourceStack.isEmpty()) {
             traceDebug("hotbar-resolve failed reason=%s sourceSlot=%d expected=empty", reason, slot);
             return -1;
@@ -2427,15 +2435,15 @@ public class ObsidianFarmerTHM extends Module {
                 continue;
             }
 
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (stack.isEmpty()) return i;
         }
 
         for (int i = 0; i < 9; i++) {
             if (isHotbarSlotReservedByManager(i)) continue;
 
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (!stack.isIn(ItemTags.PICKAXES) && !stack.isOf(Items.ENDER_CHEST)) return i;
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (!stack.is(ItemTags.PICKAXES) && !stack.is(Items.ENDER_CHEST)) return i;
         }
 
         return -1;
@@ -2454,10 +2462,10 @@ public class ObsidianFarmerTHM extends Module {
 
     private boolean placeBlockFromHotbar(BlockPos pos, int hotbarSlot) {
         if (hotbarSlot < 0 || mc.player == null) return false;
-        ItemStack hotbarStack = mc.player.getInventory().getStack(hotbarSlot).copy();
+        ItemStack hotbarStack = mc.player.getInventory().getItem(hotbarSlot).copy();
         int prevSlot = mc.player.getInventory().getSelectedSlot();
         if (prevSlot != hotbarSlot) InvUtils.swap(hotbarSlot, false);
-        boolean placed = BlockUtils.place(pos, Hand.MAIN_HAND, hotbarSlot, false, 0, true, true, true);
+        boolean placed = BlockUtils.place(pos, InteractionHand.MAIN_HAND, hotbarSlot, false, 0, true, true, true);
         if (prevSlot != hotbarSlot) InvUtils.swap(prevSlot, false);
         traceDebug("place-block pos=%s hotbar=%d stack=%s placed=%s",
             formatBlockPosSafe(pos),
@@ -2469,14 +2477,14 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private void breakBlockAt(BlockPos pos) {
-        if (mc.world == null || mc.player == null || pos == null) return;
+        if (mc.level == null || mc.player == null || pos == null) return;
         HighwayBuilderTHM highwayBuilder = Modules.get().get(HighwayBuilderTHM.class);
         int toolSlot;
 
         if (highwayBuilder != null) {
             toolSlot = highwayBuilder.breakContainerBlockForSharedUtility(pos, false, false);
         } else {
-            toolSlot = ensureBestToolAvailableInHotbar(mc.world.getBlockState(pos));
+            toolSlot = ensureBestToolAvailableInHotbar(mc.level.getBlockState(pos));
             int prevSlot = mc.player.getInventory().getSelectedSlot();
             if (toolSlot != -1 && toolSlot != prevSlot) InvUtils.swap(toolSlot, false);
             Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), () -> BlockUtils.breakBlock(pos, true));
@@ -2486,7 +2494,7 @@ public class ObsidianFarmerTHM extends Module {
         traceDebug("break-block pos=%s toolHotbar=%d block=%s",
             formatBlockPosSafe(pos),
             toolSlot,
-            mc.world.getBlockState(pos).getBlock()
+            mc.level.getBlockState(pos).getBlock()
         );
     }
 
@@ -2500,9 +2508,9 @@ public class ObsidianFarmerTHM extends Module {
         if (mc.player == null || state == null) return -1;
         double best = -1.0;
         int bestSlot = -1;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            double score = stack.getMiningSpeedMultiplier(state);
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            double score = stack.getDestroySpeed(state);
             if (score > best) {
                 best = score;
                 bestSlot = i;
@@ -2516,8 +2524,8 @@ public class ObsidianFarmerTHM extends Module {
         double best = -1.0;
         int bestSlot = -1;
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            double score = stack.getMiningSpeedMultiplier(state);
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            double score = stack.getDestroySpeed(state);
             if (score > best) {
                 best = score;
                 bestSlot = i;
@@ -2529,8 +2537,8 @@ public class ObsidianFarmerTHM extends Module {
     private int countEmptySlotsInInventory() {
         if (mc.player == null) return 0;
         int count = 0;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            if (mc.player.getInventory().getStack(i).isEmpty()) count++;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            if (mc.player.getInventory().getItem(i).isEmpty()) count++;
         }
         return count;
     }
@@ -2583,9 +2591,9 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private BlockPos resolveUsableContainerInteractionPos(BlockPos configuredPos) {
-        if (configuredPos == null || mc.world == null) return null;
+        if (configuredPos == null || mc.level == null) return null;
 
-        BlockState state = mc.world.getBlockState(configuredPos);
+        BlockState state = mc.level.getBlockState(configuredPos);
         Block block = state.getBlock();
         if (block instanceof ChestBlock || block instanceof TrappedChestBlock) {
             return resolveCanonicalChestHalf(configuredPos, state);
@@ -2597,14 +2605,14 @@ public class ObsidianFarmerTHM extends Module {
     private BlockPos resolveCanonicalChestHalf(BlockPos pos, BlockState state) {
         if (pos == null || state == null) return pos;
         if (!(state.getBlock() instanceof ChestBlock || state.getBlock() instanceof TrappedChestBlock)) return pos;
-        if (!state.contains(ChestBlock.CHEST_TYPE) || !state.contains(ChestBlock.FACING)) return pos;
+        if (!state.hasProperty(ChestBlock.TYPE) || !state.hasProperty(ChestBlock.FACING)) return pos;
 
-        ChestType chestType = state.get(ChestBlock.CHEST_TYPE);
+        ChestType chestType = state.getValue(ChestBlock.TYPE);
         if (chestType == ChestType.SINGLE || chestType == ChestType.LEFT) return pos;
 
-        Direction facing = state.get(ChestBlock.FACING);
-        BlockPos otherHalf = pos.offset(facing.rotateYCounterclockwise());
-        BlockState otherState = mc.world.getBlockState(otherHalf);
+        Direction facing = state.getValue(ChestBlock.FACING);
+        BlockPos otherHalf = pos.relative(facing.getCounterClockWise());
+        BlockState otherState = mc.level.getBlockState(otherHalf);
         if (otherState.getBlock().getClass() == state.getBlock().getClass()) return otherHalf;
         return pos;
     }
@@ -2674,8 +2682,8 @@ public class ObsidianFarmerTHM extends Module {
         if (mc.player == null) return 0;
 
         int count = 0;
-        for (int i = 0; i < mc.player.getInventory().getMainStacks().size(); i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!stack.isEmpty() && trashItems.get().contains(stack.getItem())) count++;
         }
         return count;
@@ -2692,7 +2700,7 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private String formatCurrentScreenSafe() {
-        return mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName();
+        return mc.screen == null ? "none" : mc.screen.getClass().getSimpleName();
     }
 
     private String formatItemStackSafe(ItemStack stack) {
@@ -2702,8 +2710,8 @@ public class ObsidianFarmerTHM extends Module {
     }
 
     private Path getDebugLogPath() {
-        if (mc == null || mc.runDirectory == null) return null;
-        return mc.runDirectory.toPath().resolve("logs").resolve(DEBUG_LOG_FILE_NAME);
+        if (mc == null || mc.gameDirectory == null) return null;
+        return mc.gameDirectory.toPath().resolve("logs").resolve(DEBUG_LOG_FILE_NAME);
     }
 
     private void writeDebugLine(String line) {
@@ -2749,8 +2757,8 @@ public class ObsidianFarmerTHM extends Module {
                 genericWaitTicks,
                 postRestockResumeDelayTicks,
                 formatPlayerPosSafe(),
-                mc.player == null ? 0.0f : mc.player.getYaw(),
-                mc.player == null ? 0.0f : mc.player.getPitch(),
+                mc.player == null ? 0.0f : mc.player.getYRot(),
+                mc.player == null ? 0.0f : mc.player.getXRot(),
                 formatCurrentScreenSafe(),
                 message
             );

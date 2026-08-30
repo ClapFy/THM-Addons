@@ -17,7 +17,7 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.network.PacketUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
-import net.minecraft.network.packet.Packet;
+import net.minecraft.network.protocol.Packet;
 import xyz.thm.addon.THMAddon;
 
 import java.util.Set;
@@ -81,17 +81,17 @@ public class PaketLimiter extends Module {
 
     public void applyPresets() {
         bypass.get().clear();
-        bypass.get().add(net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.PositionAndOnGround.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.LookAndOnGround.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.Full.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.play.VehicleMoveC2SPacket.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.play.TeleportConfirmC2SPacket.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.common.KeepAliveC2SPacket.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.common.CommonPongC2SPacket.class);
-        bypass.get().add(net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket.class);
+        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.class);
+        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Pos.class);
+        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Rot.class);
+        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.PosRot.class);
+        bypass.get().add(net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket.class);
+        bypass.get().add(net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket.class);
+        bypass.get().add(net.minecraft.network.protocol.common.ServerboundKeepAlivePacket.class);
+        bypass.get().add(net.minecraft.network.protocol.common.ServerboundPongPacket.class);
+        bypass.get().add(net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket.class);
         alwaysBlock.get().clear();
-        alwaysBlock.get().add(net.minecraft.network.packet.c2s.play.HandSwingC2SPacket.class);
+        alwaysBlock.get().add(net.minecraft.network.protocol.game.ServerboundSwingPacket.class);
         if (!isActive()) toggle();
     }
 

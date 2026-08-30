@@ -6,8 +6,8 @@
 
 package xyz.thm.addon.mixin;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -17,13 +17,13 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  * while steering a boat with a movement key held — so item use in a moving boat is a client-side stop
  * only; the server accepts the packets fine.
  */
-@Mixin(MinecraftClient.class)
+@Mixin(Minecraft.class)
 public class BoatEatMixin {
     @Redirect(
-        method = "doItemUse",
-        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/network/ClientPlayerEntity;isRiding()Z")
+        method = "startUseItem",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;isHandsBusy()Z")
     )
-    private boolean thm$allowItemUseWhileRiding(ClientPlayerEntity player) {
+    private boolean thm$allowItemUseWhileRiding(LocalPlayer player) {
         return false;
     }
 }

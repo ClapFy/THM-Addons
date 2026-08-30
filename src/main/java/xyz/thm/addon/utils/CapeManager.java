@@ -7,12 +7,11 @@
 package xyz.thm.addon.utils;
 
 import meteordevelopment.meteorclient.MeteorClient;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.Identifier;
 import xyz.thm.addon.THMAddon;
-
+import com.mojang.blaze3d.platform.NativeImage;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -26,7 +25,7 @@ public final class CapeManager {
 
     private static volatile String[] availableIds = {"None"};
     private static final Map<String, Identifier> textureCache = new HashMap<>();
-    private static final Identifier MISSING = Identifier.of("thm-addon", "cape/missing");
+    private static final Identifier MISSING = Identifier.fromNamespaceAndPath("thm-addon", "cape/missing");
     private static final int MAX_CAPE_WIDTH = 512;
     private static final int MAX_CAPE_HEIGHT = 512;
 
@@ -106,9 +105,9 @@ public final class CapeManager {
                 THMAddon.LOG.warn("Rejected cape texture '{}': dimensions too large", id);
                 return null;
             }
-            Identifier textureId = Identifier.of("thm-addon", "cape/" + id.toLowerCase());
-            MinecraftClient.getInstance().getTextureManager().registerTexture(
-                textureId, new NativeImageBackedTexture(() -> "thm-cape/" + id, image)
+            Identifier textureId = Identifier.fromNamespaceAndPath("thm-addon", "cape/" + id.toLowerCase());
+            Minecraft.getInstance().getTextureManager().register(
+                textureId, new DynamicTexture(() -> "thm-cape/" + id, image)
             );
             return textureId;
         } catch (Exception e) {

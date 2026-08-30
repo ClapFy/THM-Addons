@@ -7,9 +7,9 @@
 package xyz.thm.addon.mixin.meteor;
 
 import meteordevelopment.meteorclient.systems.modules.render.LogoutSpots;
-import net.minecraft.entity.EntityPose;
-import net.minecraft.entity.LimbAnimator;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.WalkAnimationState;
+import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -32,19 +32,19 @@ public class LogoutSpotsEntryPoseMixin implements LogoutSpotsPoseData {
     @Unique private boolean thm$lowPose;
 
     @Inject(method = "<init>", at = @At("TAIL"))
-    private void thm$capturePose(LogoutSpots outer, PlayerEntity entity, CallbackInfo ci) {
-        LimbAnimator limbAnimator = ((LivingEntityAccessor) entity).thm$getLimbAnimator();
+    private void thm$capturePose(LogoutSpots outer, Player entity, CallbackInfo ci) {
+        WalkAnimationState limbAnimator = ((LivingEntityAccessor) entity).thm$getLimbAnimator();
 
         thm$name = entity.getName().getString();
-        thm$bodyYaw = entity.getBodyYaw();
-        thm$yaw = entity.getYaw();
-        thm$pitch = entity.getPitch();
-        thm$headYaw = entity.headYaw;
-        thm$limbPos = limbAnimator.getAnimationProgress();
-        thm$limbSpeed = limbAnimator.getSpeed();
-        thm$limbAmplitude = limbAnimator.getAmplitude(1);
-        thm$sneaking = entity.isSneaking();
-        thm$lowPose = entity.isCrawling() || entity.isSwimming() || entity.getPose() == EntityPose.SWIMMING;
+        thm$bodyYaw = entity.getVisualRotationYInDegrees();
+        thm$yaw = entity.getYRot();
+        thm$pitch = entity.getXRot();
+        thm$headYaw = entity.yHeadRot;
+        thm$limbPos = limbAnimator.position();
+        thm$limbSpeed = limbAnimator.speed();
+        thm$limbAmplitude = limbAnimator.speed(1);
+        thm$sneaking = entity.isShiftKeyDown();
+        thm$lowPose = entity.isVisuallyCrawling() || entity.isSwimming() || entity.getPose() == Pose.SWIMMING;
     }
 
     @Override

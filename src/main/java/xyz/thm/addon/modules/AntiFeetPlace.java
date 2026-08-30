@@ -15,18 +15,18 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Items;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import xyz.thm.addon.THMAddon;
 
 import java.util.ArrayList;
@@ -167,7 +167,7 @@ public class AntiFeetPlace extends Module {
     // -------------------- Event Handlers -------------------- //
     @EventHandler
     private void onTick(TickEvent.Post e) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         tickCounter++;
 
@@ -185,33 +185,33 @@ public class AntiFeetPlace extends Module {
 
     // -------------------- Stage Implementations -------------------- //
     private void selectStage() {
-        PlayerEntity target = nearestEnemy();
+        Player target = nearestEnemy();
         if (target == null) { resetAll(); return; }
 
-        BlockPos feet = target.getBlockPos();
+        BlockPos feet = target.blockPosition();
         Direction facingMe = dirTowardPlayer(feet);
-        BlockPos preferredSurround = feet.offset(facingMe);
+        BlockPos preferredSurround = feet.relative(facingMe);
 
         BlockPos best = null; double bestDist = Double.MAX_VALUE; Direction bestDir = null;
 
-        if (preferredSurround.getY() == feet.getY() && preferredSurround.getManhattanDistance(feet) == 1) {
-            BlockState s = mc.world.getBlockState(preferredSurround);
+        if (preferredSurround.getY() == feet.getY() && preferredSurround.distManhattan(feet) == 1) {
+            BlockState s = mc.level.getBlockState(preferredSurround);
             if (!s.isAir()) {
-                BlockPos below = preferredSurround.down();
-                BlockState bs = mc.world.getBlockState(below);
+                BlockPos below = preferredSurround.below();
+                BlockState bs = mc.level.getBlockState(below);
                 boolean ok = true;
 
-                if (bs.isOf(Blocks.ENDER_CHEST) && waitWhileChestPresent.get()) { best = preferredSurround; bestDir = facingMe; bestDist = 0; }
+                if (bs.is(Blocks.ENDER_CHEST) && waitWhileChestPresent.get()) { best = preferredSurround; bestDir = facingMe; bestDist = 0; }
                 else {
                     if (skipUnbreakableBelow.get()) {
-                        float hardness = bs.getHardness(mc.world, below);
-                        if (hardness < 0f && !bs.isOf(Blocks.BEDROCK)) ok = false;
+                        float hardness = bs.getDestroySpeed(mc.level, below);
+                        if (hardness < 0f && !bs.is(Blocks.BEDROCK)) ok = false;
                     }
-                    if (ok && skipHardBelow.get() && extraHard.get().contains(bs.getBlock()) && !bs.isOf(Blocks.BEDROCK)) ok = false;
-                    if (ok && bs.isOf(Blocks.BEDROCK) && allowBedrockBreak.get() && skipBedrockBottomLayer.get() && below.getY() <= mc.world.getBottomY()) ok = false;
+                    if (ok && skipHardBelow.get() && extraHard.get().contains(bs.getBlock()) && !bs.is(Blocks.BEDROCK)) ok = false;
+                    if (ok && bs.is(Blocks.BEDROCK) && allowBedrockBreak.get() && skipBedrockBottomLayer.get() && below.getY() <= mc.level.getMinY()) ok = false;
 
-                    Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
-                    double d = playerPos.squaredDistanceTo(Vec3d.ofCenter(preferredSurround));
+                    Vec3 playerPos = new Vec3(mc.player.getX(), mc.player.getY(), mc.player.getZ());
+                    double d = playerPos.distanceToSqr(Vec3.atCenterOf(preferredSurround));
                     if (ok && d <= range.get() * range.get()) { best = preferredSurround; bestDir = facingMe; bestDist = d; }
                 }
             }
@@ -220,24 +220,24 @@ public class AntiFeetPlace extends Module {
         if (best == null) {
             for (BlockPos p : surroundOf(feet)) {
                 if (p.getY() != feet.getY()) continue;
-                if (p.getManhattanDistance(feet) != 1) continue;
-                BlockState s = mc.world.getBlockState(p);
+                if (p.distManhattan(feet) != 1) continue;
+                BlockState s = mc.level.getBlockState(p);
                 if (s.isAir()) continue;
 
-                BlockPos below = p.down();
-                BlockState bs = mc.world.getBlockState(below);
+                BlockPos below = p.below();
+                BlockState bs = mc.level.getBlockState(below);
 
-                if (bs.isOf(Blocks.ENDER_CHEST) && waitWhileChestPresent.get()) { best = p; bestDir = dirFrom(feet, p); bestDist = 0; break; }
+                if (bs.is(Blocks.ENDER_CHEST) && waitWhileChestPresent.get()) { best = p; bestDir = dirFrom(feet, p); bestDist = 0; break; }
 
                 if (skipUnbreakableBelow.get()) {
-                    float hardness = bs.getHardness(mc.world, below);
-                    if (hardness < 0f && !bs.isOf(Blocks.BEDROCK)) continue;
+                    float hardness = bs.getDestroySpeed(mc.level, below);
+                    if (hardness < 0f && !bs.is(Blocks.BEDROCK)) continue;
                 }
-                if (skipHardBelow.get() && extraHard.get().contains(bs.getBlock()) && !bs.isOf(Blocks.BEDROCK)) continue;
-                if (bs.isOf(Blocks.BEDROCK) && allowBedrockBreak.get() && skipBedrockBottomLayer.get() && below.getY() <= mc.world.getBottomY()) continue;
+                if (skipHardBelow.get() && extraHard.get().contains(bs.getBlock()) && !bs.is(Blocks.BEDROCK)) continue;
+                if (bs.is(Blocks.BEDROCK) && allowBedrockBreak.get() && skipBedrockBottomLayer.get() && below.getY() <= mc.level.getMinY()) continue;
 
-                Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
-                double d = playerPos.squaredDistanceTo(Vec3d.ofCenter(p));
+                Vec3 playerPos = new Vec3(mc.player.getX(), mc.player.getY(), mc.player.getZ());
+                double d = playerPos.distanceToSqr(Vec3.atCenterOf(p));
                 if (d <= range.get() * range.get() && d < bestDist) { best = p; bestDir = dirFrom(feet, p); bestDist = d; }
             }
         }
@@ -245,17 +245,17 @@ public class AntiFeetPlace extends Module {
         if (best == null) { resetAll(); return; }
 
         surroundPos = best;
-        belowPos = best.down();
+        belowPos = best.below();
         outwardDir = bestDir;
         tapCounter = 0;
         ticksCounter = 0;
 
-        BlockState belowState = mc.world.getBlockState(belowPos);
+        BlockState belowState = mc.level.getBlockState(belowPos);
 
-        if (belowState.isOf(Blocks.ENDER_CHEST)) {
+        if (belowState.is(Blocks.ENDER_CHEST)) {
             stage = waitOrYieldAfterChest();
-        } else if (belowState.isOf(Blocks.BEDROCK) && allowBedrockBreak.get()) {
-            if (skipBedrockBottomLayer.get() && belowPos.getY() <= mc.world.getBottomY()) { stage = Stage.SELECT; return; }
+        } else if (belowState.is(Blocks.BEDROCK) && allowBedrockBreak.get()) {
+            if (skipBedrockBottomLayer.get() && belowPos.getY() <= mc.level.getMinY()) { stage = Stage.SELECT; return; }
             stage = Stage.BREAK_BEDROCK_HOLD;
         } else if (!belowState.isAir()) {
             stage = Stage.MINE_BELOW_TAP;
@@ -267,11 +267,11 @@ public class AntiFeetPlace extends Module {
     private void mineBelowTapStage() {
         if (!validTarget()) { stage = Stage.SELECT; return; }
 
-        BlockState bs = mc.world.getBlockState(belowPos);
-        if (bs.isOf(Blocks.ENDER_CHEST)) { stage = waitOrYieldAfterChest(); return; }
+        BlockState bs = mc.level.getBlockState(belowPos);
+        if (bs.is(Blocks.ENDER_CHEST)) { stage = waitOrYieldAfterChest(); return; }
         if (bs.isAir()) { tapCounter = 0; stage = Stage.RETARGET_SURROUND_TAP; return; }
-        if (bs.isOf(Blocks.BEDROCK) && allowBedrockBreak.get()) {
-            if (!(skipBedrockBottomLayer.get() && belowPos.getY() <= mc.world.getBottomY())) {
+        if (bs.is(Blocks.BEDROCK) && allowBedrockBreak.get()) {
+            if (!(skipBedrockBottomLayer.get() && belowPos.getY() <= mc.level.getMinY())) {
                 tapCounter = 0; stage = Stage.BREAK_BEDROCK_HOLD; return;
             } else { stage = Stage.SELECT; return; }
         }
@@ -286,10 +286,10 @@ public class AntiFeetPlace extends Module {
     private void breakBedrockHoldStage() {
         if (!validTarget()) { stage = Stage.SELECT; return; }
 
-        BlockState bs = mc.world.getBlockState(belowPos);
+        BlockState bs = mc.level.getBlockState(belowPos);
         if (bs.isAir()) { ticksCounter = 0; stage = Stage.RETARGET_SURROUND_TAP; return; }
-        if (bs.isOf(Blocks.ENDER_CHEST)) { stage = waitOrYieldAfterChest(); return; }
-        if (skipBedrockBottomLayer.get() && belowPos.getY() <= mc.world.getBottomY()) { stage = Stage.SELECT; return; }
+        if (bs.is(Blocks.ENDER_CHEST)) { stage = waitOrYieldAfterChest(); return; }
+        if (skipBedrockBottomLayer.get() && belowPos.getY() <= mc.level.getMinY()) { stage = Stage.SELECT; return; }
 
         mineOnce(belowPos);
         if (++ticksCounter >= bedrockHoldMaxTicks.get()) stage = Stage.SELECT;
@@ -308,8 +308,8 @@ public class AntiFeetPlace extends Module {
         if (!validTarget()) { stage = Stage.SELECT; return; }
 
         BlockPos placeAt = belowPos;
-        BlockState bs = mc.world.getBlockState(placeAt);
-        if (bs.isOf(Blocks.ENDER_CHEST)) { stage = placeBridge.get() ? Stage.PLACE_BRIDGE : waitOrYieldAfterChest(); return; }
+        BlockState bs = mc.level.getBlockState(placeAt);
+        if (bs.is(Blocks.ENDER_CHEST)) { stage = placeBridge.get() ? Stage.PLACE_BRIDGE : waitOrYieldAfterChest(); return; }
 
         FindItemResult chest = InvUtils.findInHotbar(Items.ENDER_CHEST);
         if (!chest.found()) chest = InvUtils.find(Items.ENDER_CHEST);
@@ -321,7 +321,7 @@ public class AntiFeetPlace extends Module {
         }
 
         if (rotate.get()) {
-            float[] yp = lookAt(Vec3d.ofCenter(placeAt));
+            float[] yp = lookAt(Vec3.atCenterOf(placeAt));
             Rotations.rotate(yp[0], yp[1], 25, () -> {});
         }
 
@@ -338,7 +338,7 @@ public class AntiFeetPlace extends Module {
             stage = waitOrYieldAfterChest(); return;
         }
 
-        if (!mc.world.getBlockState(belowPos).isOf(Blocks.ENDER_CHEST)) {
+        if (!mc.level.getBlockState(belowPos).is(Blocks.ENDER_CHEST)) {
             if (++ticksCounter < 5) return;
         }
         ticksCounter = 0;
@@ -347,18 +347,18 @@ public class AntiFeetPlace extends Module {
         Direction[] order = new Direction[] { bias, bias.getOpposite(), rotateLeft(bias), rotateRight(bias) };
 
         for (Direction d : order) {
-            BlockPos bridgeBase = belowPos.offset(d);
+            BlockPos bridgeBase = belowPos.relative(d);
 
-            if (mc.world.getBlockState(bridgeBase).isOf(Blocks.OBSIDIAN)) {
+            if (mc.level.getBlockState(bridgeBase).is(Blocks.OBSIDIAN)) {
                 stage = waitOrYieldAfterChest(); return;
             }
 
             if (ensureCrystalClearance.get()) {
-                if (!clearOrWait(bridgeBase.up(), bridgePrepMaxTicks.get())) return;
-                if (!clearOrWait(bridgeBase.up(2), bridgePrepMaxTicks.get())) return;
+                if (!clearOrWait(bridgeBase.above(), bridgePrepMaxTicks.get())) return;
+                if (!clearOrWait(bridgeBase.above(2), bridgePrepMaxTicks.get())) return;
             }
 
-            if (!mc.world.getBlockState(bridgeBase).isAir()) {
+            if (!mc.level.getBlockState(bridgeBase).isAir()) {
                 if (!bridgeMineIfBlocking.get()) continue;
                 if (!clearOrWait(bridgeBase, bridgePrepMaxTicks.get())) return;
             }
@@ -368,7 +368,7 @@ public class AntiFeetPlace extends Module {
             if (!obs.found()) { stage = waitOrYieldAfterChest(); return; }
 
             if (rotate.get()) {
-                float[] yp = lookAt(Vec3d.ofCenter(bridgeBase));
+                float[] yp = lookAt(Vec3.atCenterOf(bridgeBase));
                 Rotations.rotate(yp[0], yp[1], 25, () -> {});
             }
             if (BlockUtils.place(bridgeBase, obs, false, 50, renderPlace.get())) {
@@ -388,11 +388,11 @@ public class AntiFeetPlace extends Module {
     private void waitChestStage() {
         if (!validTarget()) { stage = Stage.SELECT; return; }
 
-        BlockState under = mc.world.getBlockState(belowPos);
-        boolean chestPresent = under.isOf(Blocks.ENDER_CHEST);
+        BlockState under = mc.level.getBlockState(belowPos);
+        boolean chestPresent = under.is(Blocks.ENDER_CHEST);
 
         if (retargetWhileChestPresent.get() && surroundPos != null) {
-            if (!mc.world.getBlockState(surroundPos).isAir()
+            if (!mc.level.getBlockState(surroundPos).isAir()
                 && (tickCounter % Math.max(1, waitRetargetInterval.get()) == 0)) {
                 tapBlockOnce(surroundPos);
             }
@@ -404,12 +404,12 @@ public class AntiFeetPlace extends Module {
         ticksCounter = 0;
         tapCounter = 0;
 
-        BlockState bs = mc.world.getBlockState(belowPos);
+        BlockState bs = mc.level.getBlockState(belowPos);
         if (bs.isAir()) stage = Stage.RETARGET_SURROUND_TAP;
-        else if (bs.isOf(Blocks.BEDROCK) && allowBedrockBreak.get()
-            && !(skipBedrockBottomLayer.get() && belowPos.getY() <= mc.world.getBottomY())) {
+        else if (bs.is(Blocks.BEDROCK) && allowBedrockBreak.get()
+            && !(skipBedrockBottomLayer.get() && belowPos.getY() <= mc.level.getMinY())) {
             stage = Stage.BREAK_BEDROCK_HOLD;
-        } else if (!bs.isAir() && !bs.isOf(Blocks.ENDER_CHEST)) {
+        } else if (!bs.isAir() && !bs.is(Blocks.ENDER_CHEST)) {
             stage = Stage.MINE_BELOW_TAP;
         } else stage = Stage.SELECT;
     }
@@ -442,42 +442,42 @@ public class AntiFeetPlace extends Module {
 
     private boolean inRange(BlockPos p) {
         double r = range.get() + 1.0;
-        Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
-        return playerPos.squaredDistanceTo(Vec3d.ofCenter(p)) <= r * r;
+        Vec3 playerPos = new Vec3(mc.player.getX(), mc.player.getY(), mc.player.getZ());
+        return playerPos.distanceToSqr(Vec3.atCenterOf(p)) <= r * r;
     }
 
     private void tapBlockOnce(BlockPos pos) {
         if (tickCounter < nextMineAllowedAt) return;
-        BlockState st = mc.world.getBlockState(pos);
-        if (st.isAir() || st.isOf(Blocks.ENDER_CHEST)) return;
+        BlockState st = mc.level.getBlockState(pos);
+        if (st.isAir() || st.is(Blocks.ENDER_CHEST)) return;
         if (rotate.get()) {
-            float[] yp = lookAt(Vec3d.ofCenter(pos));
+            float[] yp = lookAt(Vec3.atCenterOf(pos));
             Rotations.rotate(yp[0], yp[1], 25, () -> {});
         }
         Direction face = faceFor(pos);
         if (face == null) return;
-        mc.interactionManager.updateBlockBreakingProgress(pos, face);
-        mc.player.swingHand(Hand.MAIN_HAND);
+        mc.gameMode.continueDestroyBlock(pos, face);
+        mc.player.swing(InteractionHand.MAIN_HAND);
         nextMineAllowedAt = tickCounter + mineRateLimit.get();
     }
 
     private void mineOnce(BlockPos pos) {
         if (tickCounter < nextMineAllowedAt) return;
-        BlockState st = mc.world.getBlockState(pos);
-        if (st.isAir() || st.isOf(Blocks.ENDER_CHEST)) return;
+        BlockState st = mc.level.getBlockState(pos);
+        if (st.isAir() || st.is(Blocks.ENDER_CHEST)) return;
         if (rotate.get()) {
-            float[] yp = lookAt(Vec3d.ofCenter(pos));
+            float[] yp = lookAt(Vec3.atCenterOf(pos));
             Rotations.rotate(yp[0], yp[1], 25, () -> {});
         }
         Direction face = faceFor(pos);
         if (face == null) return;
-        mc.interactionManager.updateBlockBreakingProgress(pos, face);
-        mc.player.swingHand(Hand.MAIN_HAND);
+        mc.gameMode.continueDestroyBlock(pos, face);
+        mc.player.swing(InteractionHand.MAIN_HAND);
         nextMineAllowedAt = tickCounter + mineRateLimit.get();
     }
 
     private boolean clearOrWait(BlockPos pos, int maxTicks) {
-        if (mc.world.getBlockState(pos).isAir()) return true;
+        if (mc.level.getBlockState(pos).isAir()) return true;
         if (!bridgeMineIfBlocking.get()) return false;
         if (ticksCounter++ >= maxTicks) { ticksCounter = 0; stage = waitOrYieldAfterChest(); return false; }
         mineOnce(pos);
@@ -485,18 +485,18 @@ public class AntiFeetPlace extends Module {
     }
 
     private Direction faceFor(BlockPos pos) {
-        BlockHitResult bhr = mc.world.raycast(new RaycastContext(
-            mc.player.getEyePos(),
-            Vec3d.ofCenter(pos),
-            RaycastContext.ShapeType.OUTLINE,
-            RaycastContext.FluidHandling.NONE,
+        BlockHitResult bhr = mc.level.clip(new ClipContext(
+            mc.player.getEyePosition(),
+            Vec3.atCenterOf(pos),
+            ClipContext.Block.OUTLINE,
+            ClipContext.Fluid.NONE,
             mc.player
         ));
-        return bhr != null ? bhr.getSide() : Direction.UP;
+        return bhr != null ? bhr.getDirection() : Direction.UP;
     }
 
-    private float[] lookAt(Vec3d v) {
-        Vec3d eye = mc.player.getEyePos();
+    private float[] lookAt(Vec3 v) {
+        Vec3 eye = mc.player.getEyePosition();
         double dx = v.x - eye.x, dy = v.y - eye.y, dz = v.z - eye.z;
         double h = Math.sqrt(dx*dx + dz*dz);
         float yaw = (float)(Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
@@ -504,18 +504,18 @@ public class AntiFeetPlace extends Module {
         return new float[]{yaw, pitch};
     }
 
-    private PlayerEntity nearestEnemy() {
-        PlayerEntity best = null; double bestDist = Double.MAX_VALUE;
+    private Player nearestEnemy() {
+        Player best = null; double bestDist = Double.MAX_VALUE;
 
-        for (PlayerEntity p : mc.world.getPlayers()) {
+        for (Player p : mc.level.players()) {
             if (p == mc.player || !p.isAlive()) continue;
             if (ignoreFriends.get() && Friends.get().isFriend(p)) continue;
 
             if (ignoreNakeds.get()) {
-                if (p.getEquippedStack(EquipmentSlot.HEAD).isEmpty()
-                    && p.getEquippedStack(EquipmentSlot.CHEST).isEmpty()
-                    && p.getEquippedStack(EquipmentSlot.LEGS).isEmpty()
-                    && p.getEquippedStack(EquipmentSlot.FEET).isEmpty()) continue;
+                if (p.getItemBySlot(EquipmentSlot.HEAD).isEmpty()
+                    && p.getItemBySlot(EquipmentSlot.CHEST).isEmpty()
+                    && p.getItemBySlot(EquipmentSlot.LEGS).isEmpty()
+                    && p.getItemBySlot(EquipmentSlot.FEET).isEmpty()) continue;
             }
 
             double d = mc.player.distanceTo(p);
@@ -542,8 +542,8 @@ public class AntiFeetPlace extends Module {
     }
 
     private Direction dirTowardPlayer(BlockPos enemyFeet) {
-        Vec3d my = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
-        Vec3d tgt = Vec3d.ofCenter(enemyFeet);
+        Vec3 my = new Vec3(mc.player.getX(), mc.player.getY(), mc.player.getZ());
+        Vec3 tgt = Vec3.atCenterOf(enemyFeet);
         double dx = my.x - tgt.x, dz = my.z - tgt.z;
         if (Math.abs(dx) >= Math.abs(dz)) return dx >= 0 ? Direction.EAST : Direction.WEST;
         else return dz >= 0 ? Direction.SOUTH : Direction.NORTH;
