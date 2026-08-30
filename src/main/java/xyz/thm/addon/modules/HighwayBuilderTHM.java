@@ -4685,9 +4685,9 @@ public class HighwayBuilderTHM extends Module {
             return;
         }
 
-        String message = "Kitbot restock failed";
+        String message = "KitBot restock failed";
         if (kitbotOrderAcceptedAttempts >= KITBOT_MAX_ACCEPTED_ATTEMPTS && isRetryableKitbotRestockFailure(reason)) {
-            message += " after " + KITBOT_MAX_ACCEPTED_ATTEMPTS + " accepted attempts";
+            message += " after " + KITBOT_MAX_ACCEPTED_ATTEMPTS + " attempts";
         }
         message += ": " + describeKitbotFrontendFailure(reason, detail);
         failActiveKitbotRestock(message);
@@ -4702,8 +4702,21 @@ public class HighwayBuilderTHM extends Module {
     }
 
     private String describeKitbotFrontendFailure(KitbotFrontend.FailureReason reason, String detail) {
-        String safeDetail = detail == null || detail.isBlank() ? "no detail" : detail;
-        return reason == null ? safeDetail : reason + " - " + safeDetail;
+        if (reason == null) return detail == null || detail.isBlank() ? "unknown error" : detail;
+        String hint = switch (reason) {
+            case InsufficientTokens -> "not enough KitBot tokens";
+            case VoucherCredits -> "not enough voucher credits";
+            case OutOfStock -> "item is out of stock";
+            case InvalidKit -> "kit is invalid, check your KitBot kit settings";
+            case NotWhitelisted -> "you're not whitelisted for this kit";
+            case MaxOrderViolation -> "hit KitBot's max order limit";
+            case PermissionDenied -> "no permission for this kit";
+            case TimedOut -> "KitBot timed out";
+            case Disconnected -> "disconnected from KitBot";
+            case TransportFailure -> "KitBot connection issue";
+            case GenericError, UnableToFulfill -> "KitBot couldn't fulfill the order";
+        };
+        return detail == null || detail.isBlank() ? hint : hint + " (" + detail + ")";
     }
 
     private void scheduleKitbotRestockSubmitAfterWindow(long remainingWindowMs, String reason) {
@@ -4750,7 +4763,7 @@ public class HighwayBuilderTHM extends Module {
             if (restockDebugLog.get()) {
                 restockDebug("%s KitBot availability gate=%s; failing KitBot restock before entry.", reason, gate);
             }
-            failActiveKitbotRestock("KitBot is unavailable for restock.", allowEnderChestFallback);
+            failActiveKitbotRestock("KitBot is unavailable right now — wait for it to come back or disable KitBot restock.", allowEnderChestFallback);
             return true;
         }
 
@@ -7236,8 +7249,8 @@ public class HighwayBuilderTHM extends Module {
 
         private void beginRecovery(String reason) {
             if (retryCount >= RESTOCK_WATCHDOG_LOCAL_RETRY_MAX) {
-                String message = "Restock watchdog could not recover " + b.restockTask.item()
-                    + " after " + RESTOCK_WATCHDOG_LOCAL_RETRY_MAX + " local retries (" + reason + ").";
+                String message = "Restocking " + b.restockTask.item() + " kept failing (" + reason
+                    + ") after " + RESTOCK_WATCHDOG_LOCAL_RETRY_MAX + " retries. Check your restock source is reachable and not blocked.";
                 if (b.restockTask.tasksInactive()) {
                     b.notifyDesktop(b.notifyRestockIssues, "THM Highway Builder", message);
                     b.restockTask.finishSequence();
@@ -7280,8 +7293,8 @@ public class HighwayBuilderTHM extends Module {
 
             if (recoveryStartedAge > 0
                 && b.mc.player.age - recoveryStartedAge > RESTOCK_WATCHDOG_SETUP_TIMEOUT_TICKS) {
-                b.restockTask.failActiveTaskHard("Restock watchdog cleanup did not settle while recovering "
-                    + b.restockTask.item() + " (" + recoveryReason + ").");
+                b.restockTask.failActiveTaskHard("Couldn't clean up while recovering " + b.restockTask.item()
+                    + " restock (" + recoveryReason + "). Clear your cursor/open screens and try again.");
                 reset("cleanup-timeout");
                 return true;
             }
@@ -7359,15 +7372,15 @@ public class HighwayBuilderTHM extends Module {
             if (cleanupBreakStarted
                 && Objects.equals(cleanupBreakPos, sourcePos)
                 && b.mc.player.age > cleanupBreakDeadlineAge) {
-                b.restockTask.failActiveTaskHard("Restock watchdog could not clean up the placed "
-                    + sourceBlock.getName().getString() + " at " + b.formatBlockPos(sourcePos) + ".");
+                b.restockTask.failActiveTaskHard("Couldn't break the " + sourceBlock.getName().getString()
+                    + " it placed at " + b.formatBlockPos(sourcePos) + ". Break it yourself to continue.");
                 reset("cleanup-hard-fail");
                 return true;
             }
 
             if (!b.safeCanBreak(sourcePos, sourceState)) {
-                b.restockTask.failActiveTaskHard("Restock watchdog cannot recover because "
-                    + sourceBlock.getName().getString() + " at " + b.formatBlockPos(sourcePos) + " cannot be broken.");
+                b.restockTask.failActiveTaskHard("Can't break the " + sourceBlock.getName().getString()
+                    + " it placed at " + b.formatBlockPos(sourcePos) + " (protected area or wrong tool?). Clear it yourself to continue.");
                 reset("cleanup-unbreakable");
                 return true;
             }
@@ -11213,7 +11226,7 @@ public class HighwayBuilderTHM extends Module {
         if (!needsPickaxeRestock) return false;
 
         if (!hasPickaxeRestockSourceAvailable()) {
-            restockTask.failActiveTaskHard("Unable to prepare obsidian restock: e-chest mining needs a non-silk pickaxe with enough durability, but no pickaxe restock source is enabled.");
+            restockTask.failActiveTaskHard("Obsidian restock needs a non-silk pickaxe with durability left, but no pickaxe restock source is enabled. Enable one in Pickaxe Restock settings.");
             return true;
         }
 
@@ -15334,7 +15347,7 @@ public class HighwayBuilderTHM extends Module {
                         return true;
                     }
 
-                    b.restockTask.failActiveTaskHard("Unable to enter " + pathLabel + ": no eligible non-silk pickaxe is available, and no pickaxe restock source is available.");
+                    b.restockTask.failActiveTaskHard("Can't start " + pathLabel + ": no usable pickaxe and no pickaxe restock source enabled. Enable one or bring a spare pickaxe.");
                     return true;
                 }
 
@@ -15346,7 +15359,7 @@ public class HighwayBuilderTHM extends Module {
                     return true;
                 }
 
-                b.restockTask.failActiveTaskHard("Unable to enter " + pathLabel + ": no eligible non-silk pickaxe is available during pickaxe restock, and no unused KitBot pickaxe fallback remains.");
+                b.restockTask.failActiveTaskHard("Can't start " + pathLabel + ": out of usable pickaxes and no KitBot fallback left. Bring more pickaxes or check KitBot pickaxe restock.");
                 return true;
             }
 
@@ -19635,7 +19648,7 @@ public class HighwayBuilderTHM extends Module {
         }
 
         private String obsidianPickaxePreflightTopoffFailureMessage() {
-            return "Unable to prepare obsidian restock: e-chest mining needs one additional usable non-silk pickaxe, but no enabled source could provide it.";
+            return "Obsidian restock needs one more usable pickaxe, but no enabled restock source could provide it. Enable a pickaxe restock source or bring a spare.";
         }
 
         public boolean isObsidianPickaxePreflightTopoffActive() {
@@ -19714,7 +19727,7 @@ public class HighwayBuilderTHM extends Module {
             }
 
             String activeItem = item();
-            return failActiveTaskHard("Unable to perform restock for '" + activeItem + "'.");
+            return failActiveTaskHard("Couldn't restock '" + activeItem + "' — no source had it. Check your inventory, ender chest and shulker sources are set up.");
         }
 
         public boolean failActiveTaskHard(String message) {
