@@ -623,6 +623,14 @@ public class THMUtils {
     public static void sendToWebhookWithFile(String url, String message, Path file) {
         Thread thread = new Thread(() -> {
             try {
+                if (!PrivacyGuard.allowsRemoteExport()) {
+                    THMAddon.LOG.warn("[THM] Blocked webhook attachment: Highway Builder is not paving a main highway");
+                    return;
+                }
+                if (PrivacyGuard.containsSecrets(message)) {
+                    THMAddon.LOG.warn("[THM] Refusing webhook attachment whose text contains a local secret");
+                    return;
+                }
                 String boundary = "thm" + System.nanoTime();
                 byte[] sep = ("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8);
                 ByteArrayOutputStream body = new ByteArrayOutputStream();

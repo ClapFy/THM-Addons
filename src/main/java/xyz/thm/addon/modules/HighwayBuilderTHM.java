@@ -1355,7 +1355,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> sendStatisticsWebhhok = sgStatistics.add(new BoolSetting.Builder()
         .name("sends-statistics(Webhook)")
-        .description("Sends Highway Builder statistics to a webhook when the module is disabled.")
+        .description("Sends Highway Builder statistics to a webhook when the module is disabled. Only while paving a main highway, plus 5 seconds after disable. Never includes your cracked password or API token.")
         .defaultValue(false)
         .visible(printStatistics::get)
         .build()
@@ -1376,7 +1376,7 @@ public class HighwayBuilderTHM extends Module {
     );
     private final Setting<Boolean> sendStatisticsapi = sgStatistics.add(new BoolSetting.Builder()
         .name("sends-statistics(API)")
-        .description("Sends statistics to a Api when disabling Highway Builder.")
+        .description("Sends statistics to the THM API when disabling Highway Builder. Only while paving a main highway, plus 5 seconds after disable. Never includes your cracked password.")
         .defaultValue(false)
         .visible(printStatistics::get)
         .build()
@@ -2312,6 +2312,7 @@ public class HighwayBuilderTHM extends Module {
     }
     @Override
     public void onDeactivate() {
+        PrivacyGuard.onHighwayBuilderDeactivated();
         KitbotFrontend.removeLifecycleListener(kitbotRestockLifecycleListener);
         if (input != null) input.stop();
         restoreHotbarManagerAfterTrash("module-deactivate");
@@ -2433,7 +2434,7 @@ public class HighwayBuilderTHM extends Module {
                     double distFromOrigin = Math.hypot(mc.player.getX(), mc.player.getZ());
                     if (distFromOrigin < 10000) {
                         info("Too close to origin (%.0f blocks) - skipping KitBot $update.", distFromOrigin);
-                    } else {
+                    } else if (PrivacyGuard.allowsRemoteExport()) {
                         buildKitbotUpdateEnclosure();
                         ChatUtils.sendPlayerMsg("/msg KitBot1 $update " + kitbotDir);
                         info("Sent $update %s to KitBot1. Waiting up to 60s for teleport...", kitbotDir);
@@ -3001,6 +3002,11 @@ public class HighwayBuilderTHM extends Module {
         }
         String kitbotDir = directionToKitbotCommand(dir);
         if (kitbotDir == null) {
+            kitbotPeriodicUpdatePending = false;
+            kitbotPeriodicUpdateNextTick = mc.world.getTime() + KITBOT_PERIODIC_UPDATE_INTERVAL_TICKS;
+            return;
+        }
+        if (!PrivacyGuard.allowsRemoteExport()) {
             kitbotPeriodicUpdatePending = false;
             kitbotPeriodicUpdateNextTick = mc.world.getTime() + KITBOT_PERIODIC_UPDATE_INTERVAL_TICKS;
             return;
@@ -4593,19 +4599,22 @@ public class HighwayBuilderTHM extends Module {
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
+        if (!PrivacyGuard.allowsChatAccess()) return;
         if (!isExecutionAllowedOnCurrentServer(getCommittedServerState())) return;
 
         String msg = event.getMessage().getString();
 
         // Weird ahh fix to it never accepting
-        if (msg.contains(KITBOT_NAME + " wants to teleport to you")) {
+        if (PrivacyGuard.allowsRemoteExport()
+            && msg.contains(KITBOT_NAME + " wants to teleport to you")) {
             ChatUtils.sendPlayerMsg("/tpy " + KITBOT_NAME);
             kitbotUpdateOnFinishTpAccepted = true;
             info("Accepted " + KITBOT_NAME + " teleport request.");
         }
 
-        boolean youMayTeleport = msg.contains(KITBOT_NAME + " whispers: Bot has arrived at highway")
-            || msg.contains("you may teleport");
+        boolean youMayTeleport = msg.contains(KITBOT_NAME)
+            && msg.contains("Bot has arrived at highway")
+            && msg.contains("you may teleport");
         if (kitbotUpdateOnFinishActive) {
             if (youMayTeleport) {
                 info("KitBot1 has arrived. Disconnecting.");
@@ -4616,7 +4625,8 @@ public class HighwayBuilderTHM extends Module {
         }
 
         if (kitbotPeriodicUpdateActive) {
-            if (msg.contains(KITBOT_NAME + " wants to teleport to you")) {
+            if (PrivacyGuard.allowsRemoteExport()
+                && msg.contains(KITBOT_NAME + " wants to teleport to you")) {
                 ChatUtils.sendPlayerMsg("/tpy " + KITBOT_NAME);
                 kitbotPeriodicUpdateTpAccepted = true;
                 info("Accepted " + KITBOT_NAME + " teleport request (periodic update).");

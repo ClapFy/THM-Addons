@@ -229,7 +229,7 @@ public class THMSystem extends System<THMSystem> {
 
     private final Setting<String> crackedPassword = sgPrefix.add(new StringSetting.Builder()
         .name("cracked-password")
-        .description("Password used for cracked-account reconnect /login.")
+        .description("Password used for cracked-account reconnect /login. Never sent to the API, webhooks, or Discord.")
         .defaultValue("")
         .build()
     );

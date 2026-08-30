@@ -485,12 +485,14 @@ public class HighwayTools extends Module {
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
         if (mc.player == null) return;
         if (tpaSent) return;
 
         String msg = event.getMessage().getString();
 
         if (autoTp.get()
+            && xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()
             && msg.contains("KitBot1 whispers: Bot has arrived at highway")
             && msg.contains("you may teleport")) {
 
@@ -1243,6 +1245,8 @@ public class HighwayTools extends Module {
 
     private void sendWebhookAsync(String message, String kind) {
         if (!webhookEnabled.get()) return;
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;
+        if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(message)) return;
         String url = webhookUrl.get().trim();
         if (url.isEmpty()) return;
         String payload = "{\"content\":\"" + escapeJson(message) + "\"}";

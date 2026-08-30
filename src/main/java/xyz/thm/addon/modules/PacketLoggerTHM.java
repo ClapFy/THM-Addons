@@ -39,6 +39,7 @@ import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.c2s.play.*;
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerActionResponseS2CPacket;
+import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.network.packet.s2c.play.ScreenHandlerSlotUpdateS2CPacket;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKey;
@@ -242,6 +243,7 @@ public class PacketLoggerTHM extends Module {
 
     private void logPacket(String dir, String chatDir, Packet<?> packet) {
         if (!logToChat.get() && !logToFile.get()) return;
+        if (isLocationPacket(packet) && !xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport()) return;
 
         @SuppressWarnings("unchecked")
         Class<? extends Packet<?>> packetClass = (Class<? extends Packet<?>>) packet.getClass();
@@ -250,6 +252,11 @@ public class PacketLoggerTHM extends Module {
         long ordinal = ++ordinalCounter;
         if (logToChat.get()) logPacketToChat(chatDir, packetClass);
         if (logToFile.get()) writeJsonRecord(buildPacketRecord(dir, ordinal, packet));
+    }
+
+    private static boolean isLocationPacket(Packet<?> packet) {
+        return packet instanceof PlayerMoveC2SPacket
+            || packet instanceof PlayerPositionLookS2CPacket;
     }
 
     private void logPacketToChat(String direction, Class<? extends Packet<?>> packetClass) {
@@ -326,7 +333,13 @@ public class PacketLoggerTHM extends Module {
 
         if (captureRawToString.get()) {
             try {
-                record.addProperty("raw_to_string", String.valueOf(packet));
+                String raw = String.valueOf(packet);
+                if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(raw)
+                    || (!xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport() && isLocationPacket(packet))) {
+                    record.addProperty("raw_to_string", "<redacted>");
+                } else {
+                    record.addProperty("raw_to_string", raw);
+                }
             } catch (Exception e) {
                 record.addProperty("raw_to_string", "<toString failed: " + e.getClass().getSimpleName() + ">");
             }
@@ -449,9 +462,13 @@ public class PacketLoggerTHM extends Module {
             fields.addProperty("on_ground", p.isOnGround());
             fields.addProperty("horizontal_collision", p.horizontalCollision());
             if (p.changesPosition()) {
-                fields.addProperty("x", p.getX(Double.NaN));
-                fields.addProperty("y", p.getY(Double.NaN));
-                fields.addProperty("z", p.getZ(Double.NaN));
+                if (xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport()) {
+                    fields.addProperty("x", p.getX(Double.NaN));
+                    fields.addProperty("y", p.getY(Double.NaN));
+                    fields.addProperty("z", p.getZ(Double.NaN));
+                } else {
+                    fields.addProperty("redacted", true);
+                }
             }
             if (p.changesLook()) {
                 fields.addProperty("yaw", p.getYaw(Float.NaN));
@@ -596,6 +613,10 @@ public class PacketLoggerTHM extends Module {
 
     private JsonObject serializeBlockPos(BlockPos pos) {
         JsonObject json = new JsonObject();
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport()) {
+            json.addProperty("redacted", true);
+            return json;
+        }
         json.addProperty("x", pos.getX());
         json.addProperty("y", pos.getY());
         json.addProperty("z", pos.getZ());
@@ -604,6 +625,10 @@ public class PacketLoggerTHM extends Module {
 
     private JsonObject serializeVec3d(Vec3d vec) {
         JsonObject json = new JsonObject();
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport()) {
+            json.addProperty("redacted", true);
+            return json;
+        }
         json.addProperty("x", vec.x);
         json.addProperty("y", vec.y);
         json.addProperty("z", vec.z);
