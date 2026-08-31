@@ -31,6 +31,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.DisconnectedScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.DisconnectionDetails;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
@@ -38,6 +39,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.mixin.accessor.DisconnectedScreenAccessor;
 import xyz.thm.addon.utils.server.ServerReconnectService;
 import xyz.thm.addon.utils.server.ServerStatusHandler;
 import xyz.thm.addon.utils.server.ServerStatusHandler.ServerState;
@@ -524,7 +526,21 @@ public class THMHwyMonitor extends Module {
     private String readDisconnectedScreenReasonLower() {
         if (mc == null || !(ClientGui.screen(mc) instanceof DisconnectedScreen screen)) return "";
 
-        Component reason = null;
+        Component reason = readDisconnectedScreenReason(screen);
+        if (reason == null) return "";
+        return reason.getString().toLowerCase(Locale.ROOT);
+    }
+
+    private Component readDisconnectedScreenReason(DisconnectedScreen screen) {
+        try {
+            if (screen instanceof DisconnectedScreenAccessor accessor) {
+                DisconnectionDetails details = accessor.thm$details();
+                if (details != null && details.reason() != null) return details.reason();
+            }
+        } catch (Throwable ignored) {
+            // Fall through to the legacy field lookup used on older mappings.
+        }
+
         try {
             if (!disconnectedScreenReasonFieldResolved) {
                 disconnectedScreenReasonFieldResolved = true;
@@ -533,7 +549,7 @@ public class THMHwyMonitor extends Module {
                     disconnectedScreenReasonField.setAccessible(true);
                 } catch (NoSuchFieldException ignored) {
                     for (Field field : DisconnectedScreen.class.getDeclaredFields()) {
-                        if (Component.class.isAssignableFrom(field.getType())) {
+                        if (Component.class.isAssignableFrom(field.getType()) && !"buttonText".equals(field.getName())) {
                             field.setAccessible(true);
                             disconnectedScreenReasonField = field;
                             break;
@@ -544,14 +560,13 @@ public class THMHwyMonitor extends Module {
 
             if (disconnectedScreenReasonField != null) {
                 Object value = disconnectedScreenReasonField.get(screen);
-                if (value instanceof Component text) reason = text;
+                if (value instanceof Component text) return text;
             }
         } catch (Throwable ignored) {
             // If reflection fails we still have message-based restart evidence.
         }
 
-        if (reason == null) return "";
-        return reason.getString().toLowerCase(Locale.ROOT);
+        return null;
     }
 
     @Override
