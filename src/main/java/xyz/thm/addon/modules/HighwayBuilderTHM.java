@@ -1203,7 +1203,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Integer> minEmpty = sgInventory.add(new IntSetting.Builder()
         .name("minimum-empty-slots")
-        .description("The minimum amount of empty slots you want left after mining obsidian.")
+        .description("Empty slots to keep after mining obsidian so drops can still be picked up. The e-chest farm fills every other free slot.")
         .defaultValue(1)
         .sliderRange(0, 9)
         .min(0)
@@ -11131,6 +11131,33 @@ public class HighwayBuilderTHM extends Module {
         return count;
     }
 
+    private int countLooseObsidianTopOffItems() {
+        if (mc.player == null) return 0;
+
+        int topOff = 0;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (stack.getItem() == Items.OBSIDIAN && stack.getCount() > 0 && stack.getCount() < stack.getMaxStackSize()) {
+                topOff += stack.getMaxStackSize() - stack.getCount();
+            }
+        }
+        return topOff;
+    }
+
+    private boolean nextEchestMineFreesAnInventorySlot(int saveEchestReserve) {
+        if (mc.player == null) return false;
+
+        int total = 0;
+        boolean singleton = false;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (stack.getItem() != Items.ENDER_CHEST || stack.getCount() <= 0) continue;
+            total += stack.getCount();
+            if (stack.getCount() == 1) singleton = true;
+        }
+        return singleton && total > saveEchestReserve;
+    }
+
     private int countConfiguredFoodMergeCapacityInInventory() {
         if (mc.player == null) return 0;
 
@@ -13699,6 +13726,7 @@ public class HighwayBuilderTHM extends Module {
                 newBreakingMode = b.newBreaking.get();
                 session.refreshProgress();
                 b.restockTask.clampObsidianTargetToMineableEChests("mine-echests-start");
+                b.restockTask.expandObsidianTargetToEchestFarmFill("mine-echests-start");
                 session.refreshProgress();
                 targetEchestsToBreak = session.getTargetEchestsToBreak();
                 targetObsidianCount = session.getMiningGoalObsidianCount();
@@ -13779,9 +13807,21 @@ public class HighwayBuilderTHM extends Module {
                 }
                 lastObservedObsidianCount = obsidianCount;
 
-                if (obsidianCount >= targetObsidianCount) {
-                    if (b.restockTask.getSession() != null && b.restockTask.getSession().getRemainingObsidianItems() > targetEchestsToBreak * 8) {
-                        b.restockTask.getSession().markGreatestAvailable();
+                RestockTask.RestockSession liveSession = b.restockTask.getSession();
+                int saveReserve = liveSession != null ? liveSession.saveEchestsReserve : b.saveEchests.get();
+                int usableEchests = Math.max(countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) - saveReserve, 0);
+                int reservedEmpty = liveSession != null ? liveSession.getEchestFarmReservedEmptySlots() : 0;
+                boolean keepMining = HighwayEchestFarm.shouldMineAnotherEchest(
+                    b.countEmptyInventorySlotsInMainInventory(),
+                    b.minEmpty.get(),
+                    b.countLooseObsidianTopOffItems(),
+                    usableEchests,
+                    b.nextEchestMineFreesAnInventorySlot(saveReserve),
+                    reservedEmpty
+                );
+                if (!keepMining) {
+                    if (liveSession != null && liveSession.getRemainingObsidianItems() > targetEchestsToBreak * 8) {
+                        liveSession.markGreatestAvailable();
                     }
                     stopTimerEnabled = true;
                     stopTimer = 12;
@@ -18905,14 +18945,15 @@ public class HighwayBuilderTHM extends Module {
             }
 
             private int getLooseObsidianTopOffGoal() {
-                int topOff = 0;
-                for (int i = 0; i < b.mc.player.getInventory().getNonEquipmentItems().size(); i++) {
-                    ItemStack stack = b.mc.player.getInventory().getItem(i);
-                    if (stack.getItem() == Items.OBSIDIAN && stack.getCount() > 0 && stack.getCount() < stack.getMaxStackSize()) {
-                        topOff += stack.getMaxStackSize() - stack.getCount();
-                    }
-                }
-                return topOff;
+                return b.countLooseObsidianTopOffItems();
+            }
+
+            private int getEchestFarmReservedEmptySlots() {
+                int reserved = 0;
+                if (pendingPickaxes) reserved += getLooseInventoryPickaxeReserveSlots();
+                if (pendingFood) reserved += getMissingFoodSupportSlot();
+                if (pendingEnderChests) reserved += getMissingEChestSupportSlot();
+                return reserved;
             }
 
             private int getMissingFoodSupportSlot() {
@@ -19267,6 +19308,43 @@ public class HighwayBuilderTHM extends Module {
                 }
 
                 return true;
+            }
+
+            private boolean expandObsidianTargetToEchestFarmFill(String reason) {
+                if (!isObsidianTask() || !targetFrozen || b.mc.player == null) return false;
+
+                refreshProgress();
+                int fillCapacity = HighwayEchestFarm.fillCapacity(
+                    countEmptyInventorySlots(),
+                    b.minEmpty.get(),
+                    getLooseObsidianTopOffGoal(),
+                    getEchestFarmReservedEmptySlots()
+                );
+                int mineableObsidian = Math.max(usablePulledEchests, 0) * HighwayEchestFarm.OBSIDIAN_PER_ECHEST;
+                int fillRemaining = Math.min(fillCapacity, mineableObsidian);
+                int oldTarget = targetFinal;
+                int oldRemaining = remainingTarget;
+                targetFinal = obsidianItemsAcquired + fillRemaining;
+                targetInitialized = targetFinal > 0;
+                remainingTarget = Math.max(targetFinal - obsidianItemsAcquired, 0);
+
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug(
+                        "RestockSession e-chest farm fill target %s (reason=%s, oldTarget=%d, newTarget=%d, oldRemaining=%d, newRemaining=%d, progress=%d, fillCapacity=%d, usableEchests=%d, reservedEmpty=%d).",
+                        targetFinal > oldTarget ? "expanded" : targetFinal < oldTarget ? "clamped" : "kept",
+                        reason,
+                        oldTarget,
+                        targetFinal,
+                        oldRemaining,
+                        remainingTarget,
+                        obsidianItemsAcquired,
+                        fillCapacity,
+                        usablePulledEchests,
+                        getEchestFarmReservedEmptySlots()
+                    );
+                }
+
+                return remainingTarget > 0;
             }
 
             private int getMiningGoalObsidianCount() {
@@ -19946,6 +20024,10 @@ public class HighwayBuilderTHM extends Module {
 
         public boolean clampObsidianTargetToMineableEChests(String reason) {
             return session != null && session.clampObsidianTargetToMineableEChests(reason);
+        }
+
+        public boolean expandObsidianTargetToEchestFarmFill(String reason) {
+            return session != null && session.expandObsidianTargetToEchestFarmFill(reason);
         }
 
         public boolean needsMoreRawEchestsForSession() {
