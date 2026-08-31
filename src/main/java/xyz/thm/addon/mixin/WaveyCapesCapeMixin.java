@@ -16,7 +16,13 @@ import xyz.thm.addon.waveycapes.WaveyCapesConfig;
 @Mixin(CapeLayer.class)
 public class WaveyCapesCapeMixin {
 
-    @Inject(method = "render", at = @At("HEAD"), cancellable = true)
+    // 26.x renamed CapeLayer drawing from render to submit (extractor/submit pipeline).
+    // Targeting the old name fails mixin apply during avatar reload and leaves a black window.
+    @Inject(
+        method = "submit(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;ILnet/minecraft/client/renderer/entity/state/AvatarRenderState;FF)V",
+        at = @At("HEAD"),
+        cancellable = true
+    )
     private void thm$skipWhenWavyEnabled(CallbackInfo ci) {
         if (WaveyCapesConfig.enabled) ci.cancel();
     }

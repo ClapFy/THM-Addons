@@ -31,7 +31,19 @@ def scan_jar(jar: Path) -> list[str]:
             for needle in FORBIDDEN + FORBIDDEN_YARN:
                 if needle in data:
                     hits.append(f"{name}: {needle.decode('ascii')}")
+            if name.endswith("WaveyCapesCapeMixin.class") and b"submit(" not in data:
+                hits.append(f"{name}: CapeLayer inject must target submit(), not the old render name")
     return hits
+
+
+def scan_mixin_sources() -> list[str]:
+    cape = Path("src/main/java/xyz/thm/addon/mixin/WaveyCapesCapeMixin.java")
+    if not cape.exists():
+        return []
+    text = cape.read_text()
+    if 'method = "render"' in text:
+        return [f"{cape}: leftover CapeLayer.render inject (26.x uses submit)"]
+    return []
 
 
 def main() -> int:
@@ -41,6 +53,10 @@ def main() -> int:
         print("No THM-Addons jars in build/libs", file=sys.stderr)
         return 1
     failed = False
+    for hit in scan_mixin_sources():
+        print(f"ABI scan source: FAIL")
+        print(f"  {hit}", file=sys.stderr)
+        failed = True
     for jar in jars:
         hits = scan_jar(jar)
         print(f"ABI scan {jar.name}: {'OK' if not hits else 'FAIL'}")
