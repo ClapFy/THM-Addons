@@ -1662,6 +1662,7 @@ public class HighwayBuilderTHM extends Module {
     public boolean drawingBow;
     public DoubleMineBlock normalMining, packetMining;
     private final LongOpenHashSet renderPosSet = new LongOpenHashSet();
+    private final LongOpenHashSet placePreviewScratch = new LongOpenHashSet();
     final LongOpenHashSet placeTrail = new LongOpenHashSet();
 
     private int debugStateLastAge = -1;
@@ -4938,52 +4939,31 @@ public class HighwayBuilderTHM extends Module {
         }
 
         if (renderPlace.get()) {
-            render(event, blockPosProvider.getLiquids(), mBlockPos -> canPlace(mBlockPos, true), false);
+            renderPosSet.clear();
+            collectPlacePreview(blockPosProvider.getLiquids(), true);
 
             if (railings.get()) {
-                render(event, blockPosProvider.getRailings(0), mBlockPos -> canPlace(mBlockPos, false), false);
-
+                collectPlacePreview(blockPosProvider.getRailings(0), false);
                 if (cornerBlock.get()) {
-                    // make sure we only render corner support blocks if we are actually planning to place a block there
-                    render(event, blockPosProvider.getRailings(-1), mBlockPos -> {
-                        boolean valid = false;
-                        for (MBlockPos pos : blockPosProvider.getRailings(0)) {
-                            if (!blocksToPlace.get().contains(pos.getState().getBlock()) && pos.add(0, -1, 0).equals(mBlockPos)) {
-                                valid = true;
-                                break;
-                            }
-                        }
-
-                        return valid && canPlace(mBlockPos, false);
-                    }, false);
+                    collectCornerPlacePreview(blockPosProvider.getRailings(-1), blockPosProvider.getRailings(0));
                 }
             }
 
-            render(event, blockPosProvider.getFloor(), mBlockPos -> canPlace(mBlockPos, false), false);
+            collectPlacePreview(blockPosProvider.getFloor(), false);
             if (checkBehind.get()) {
                 if (railings.get()) {
-                    render(event, blockPosProvider.getBehindRailings(0), mBlockPos -> canPlace(mBlockPos, false), false);
-
+                    collectPlacePreview(blockPosProvider.getBehindRailings(0), false);
                     if (cornerBlock.get()) {
-                        render(event, blockPosProvider.getBehindRailings(-1), mBlockPos -> {
-                            boolean valid = false;
-                            for (MBlockPos pos : blockPosProvider.getBehindRailings(0)) {
-                                if (!blocksToPlace.get().contains(pos.getState().getBlock()) && pos.add(0, -1, 0).equals(mBlockPos)) {
-                                    valid = true;
-                                    break;
-                                }
-                            }
-
-                            return valid && canPlace(mBlockPos, false);
-                        }, false);
+                        collectCornerPlacePreview(blockPosProvider.getBehindRailings(-1), blockPosProvider.getBehindRailings(0));
                     }
                 }
-
-                render(event, blockPosProvider.getBehindFloor(), mBlockPos -> canPlace(mBlockPos, false), false);
+                collectPlacePreview(blockPosProvider.getBehindFloor(), false);
             }
             if (state == State.PlaceShulkerBlockade || state == State.PlaceEChestBlockade) {
-                render(event, blockPosProvider.getBlockade(false, getEffectiveBlockadeType()), mBlockPos -> canPlace(mBlockPos, false), false);
+                collectPlacePreview(blockPosProvider.getBlockade(false, getEffectiveBlockadeType()), false);
             }
+            collectSchedulerPlacePreview();
+            RenderUtilsTHM.renderBlockSet(event, renderPosSet, renderPlaceSideColor.get(), renderPlaceLineColor.get(), renderPlaceShape.get());
             RenderUtilsTHM.renderAndPruneBlockSet(event, placeTrail, renderPlaceSideColor.get(), renderPlaceLineColor.get(), renderPlaceShape.get());
         }
     }
@@ -4996,10 +4976,62 @@ public class HighwayBuilderTHM extends Module {
         // Collect all qualifying positions for O(1) neighbour lookup (avoids O(n²) nested iteration)
         renderPosSet.clear();
         for (MBlockPos pos : it) {
-            if (predicate.test(pos)) renderPosSet.add(BlockPos.asLong(pos.x, pos.y, pos.z));
+            int x = pos.x, y = pos.y, z = pos.z;
+            if (predicate.test(pos)) renderPosSet.add(BlockPos.asLong(x, y, z));
         }
 
         RenderUtilsTHM.renderBlockSet(event, renderPosSet, sideColor, lineColor, shapeMode);
+    }
+
+    private void collectPlacePreview(MBPIterator it, boolean liquids) {
+        if (it == null) return;
+        for (MBlockPos pos : it) {
+            int x = pos.x, y = pos.y, z = pos.z;
+            if (canHighlightPlace(pos, liquids)) renderPosSet.add(BlockPos.asLong(x, y, z));
+        }
+    }
+
+    /**
+     * Corner supports sit one block under a railing that still needs placing. Snapshot the railing
+     * cells first — both iterators share the same mutable {@code MBlockPos}, so nesting them used
+     * to clobber the corner coordinate and skip the overlay.
+     */
+    private void collectCornerPlacePreview(MBPIterator corners, MBPIterator railings) {
+        if (corners == null || railings == null) return;
+
+        placePreviewScratch.clear();
+        for (MBlockPos railing : railings) {
+            if (blocksToPlace.get().contains(railing.getState().getBlock())) continue;
+            placePreviewScratch.add(BlockPos.asLong(railing.x, railing.y - 1, railing.z));
+        }
+
+        for (MBlockPos corner : corners) {
+            int x = corner.x, y = corner.y, z = corner.z;
+            if (!placePreviewScratch.contains(BlockPos.asLong(x, y, z))) continue;
+            if (canHighlightPlace(corner, false)) renderPosSet.add(BlockPos.asLong(x, y, z));
+        }
+    }
+
+    private void collectSchedulerPlacePreview() {
+        if (!useForwardRowSchedulerMode()) return;
+        for (ForwardRowSchedule row : forwardSchedulerRuntime.rows) {
+            addSchedulerPlacePreview(row.placeQueue);
+            addSchedulerPlacePreview(row.conflictQueue);
+        }
+    }
+
+    private void addSchedulerPlacePreview(LinkedHashMap<BlockPos, ForwardTask> queue) {
+        if (queue == null || queue.isEmpty()) return;
+        for (ForwardTask task : queue.values()) {
+            if (task.type.mine) continue;
+            BlockState state = mc.level.getBlockState(task.pos);
+            if (!HighwayPreview.shouldHighlightPlace(
+                task.type.liquids(),
+                state.isAir() || state.canBeReplaced(),
+                !state.getFluidState().isEmpty()
+            )) continue;
+            renderPosSet.add(BlockPos.asLong(task.pos.getX(), task.pos.getY(), task.pos.getZ()));
+        }
     }
 
     private void updateVariables() {
@@ -5907,6 +5939,19 @@ public class HighwayBuilderTHM extends Module {
     private boolean canPlace(MBlockPos pos, boolean liquids) {
         if (!isWithinConfiguredForwardRange(pos.getBlockPos())) return false;
         return liquids ? !pos.getState().getFluidState().isEmpty() : BlockUtils.canPlace(pos.getBlockPos());
+    }
+
+    /**
+     * Overlay check for "blocks that will be placed". Unlike {@link #canPlace}, this ignores
+     * reach and entity collision so the highlighter still shows the planned highway cells.
+     */
+    private boolean canHighlightPlace(MBlockPos pos, boolean liquids) {
+        BlockState state = pos.getState();
+        return HighwayPreview.shouldHighlightPlace(
+            liquids,
+            state.isAir() || state.canBeReplaced(),
+            !state.getFluidState().isEmpty()
+        );
     }
 
     private void resetTpsThrottleRuntime() {
