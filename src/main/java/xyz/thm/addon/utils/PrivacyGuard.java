@@ -18,16 +18,21 @@ import xyz.thm.addon.system.THMSystem;
  * modules always run, including at a stash. Chat, coordinates, screenshots, webhooks,
  * API stats, packet-log positions, and KitBot may leave this client only while Highway
  * Builder is paving the official 6b6t nether highway, plus {@link #GRACE_MS} after it
- * turns off (so disable-time stats can still send while you are still on that highway).
+ * turns off (so disable-time webhooks can still send while you are still on that highway).
  *
- * <p>Position is read live and fails closed. A sticky "last on highway" flag would keep
- * exporting after {@code /home} to stash and could summon KitBot there. There is no opt-out.
+ * <p>Highway stats/status API posts are separate: an attested official-highway session may
+ * POST aggregate counts after {@code /home} or reconnect, matching the main repo send path.
+ * That path still refuses coordinate triples and never unlocks KitBot, Discord, or screenshots.
+ *
+ * <p>Position is read live and fails closed for everything that can leak a stash. A sticky
+ * "last on highway" flag would keep exporting after {@code /home} and could summon KitBot
+ * there. There is no opt-out.
  */
 public final class PrivacyGuard {
     public static final long GRACE_MS = 5_000L;
 
     public static final String REMOTE_EXPORT_BLOCKED =
-        "Chat, coordinates, webhooks, API stats, and KitBot only leave this client while Highway Builder is paving the official nether highway, plus 5 seconds after it turns off.";
+        "Chat, coordinates, webhooks, and KitBot only leave this client while Highway Builder is paving the official nether highway, plus 5 seconds after it turns off.";
 
     private static final PrivacyGuard INSTANCE = new PrivacyGuard();
 

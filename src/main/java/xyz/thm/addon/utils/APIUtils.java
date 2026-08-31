@@ -87,7 +87,7 @@ public final class APIUtils {
         }
     }
 
-    /** Same token the main repo attaches as {@code Authorization: Bearer} on API POSTs. */
+    /** Same token the main repo attaches as {@code Authorization: Bearer} on every API request. */
     private static String apiToken() {
         try {
             THMSystem system = THMSystem.get();
@@ -98,19 +98,19 @@ public final class APIUtils {
     }
 
     public static void sendStatus(String message) {
-        if (!PrivacyGuard.allowsRemoteExport()) {
-            THMAddon.LOG.warn("Blocked status API post: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
-            return;
-        }
-        postContent(GeneratedApiEndpoints.statusUrl(), message, "status");
+        sendStatus(message, false);
+    }
+
+    public static void sendStatus(String message, boolean officialHighwaySession) {
+        postHighwayContent(GeneratedApiEndpoints.statusUrl(), message, "status", officialHighwaySession);
     }
 
     public static void sendStatistics(String message) {
-        if (!PrivacyGuard.allowsRemoteExport()) {
-            THMAddon.LOG.warn("Blocked statistics API post: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
-            return;
-        }
-        postContent(GeneratedApiEndpoints.highwayUrl(), message, "statistics");
+        sendStatistics(message, false);
+    }
+
+    public static void sendStatistics(String message, boolean officialHighwaySession) {
+        postHighwayContent(GeneratedApiEndpoints.highwayUrl(), message, "statistics", officialHighwaySession);
     }
 
     public static void sendToWebhook(String url, String message) {
@@ -290,16 +290,35 @@ public final class APIUtils {
         }
     }
 
-    private static void postContent(String url, String message, String label) {
-        if (!PrivacyGuard.allowsRemoteExport()) return;
+    /**
+     * Main-repo send path: {@code {"content": "..."}} plus {@code Authorization: Bearer}.
+     * Live Highway Builder export is not required when {@code officialHighwaySession} is
+     * already attested — disable-time and reconnect-time stats would otherwise die after
+     * {@code /home}. Coordinate triples, the cracked password, and non-API destinations
+     * stay blocked in {@link TrustedHttp}.
+     */
+    private static void postHighwayContent(String url, String message, String label, boolean officialHighwaySession) {
+        boolean currentlyOnOfficialHighway = false;
+        try {
+            currentlyOnOfficialHighway = PrivacyGuard.allowsRemoteExport();
+        } catch (Throwable ignored) {
+            currentlyOnOfficialHighway = false;
+        }
+        if (!HighwayApiPolicy.allowsStatsExport(officialHighwaySession, currentlyOnOfficialHighway)) {
+            THMAddon.LOG.warn("Blocked {} API post: not an official nether-highway session", label);
+            return;
+        }
         if (PrivacyGuard.containsCrackedPassword(message)) {
             THMAddon.LOG.warn("Refusing API {} body that contains the cracked login password", label);
             return;
         }
+        String json = HighwayApiPolicy.jsonContent(message);
+        String token = apiToken();
+        String threadName = "status".equals(label) ? "thm-status" : "thm-statistics";
         new Thread(() -> {
-            boolean ok = TrustedHttp.postJson(url, TrustedHttp.jsonContent(message), TrustedHttp.Kind.API, apiToken());
+            boolean ok = TrustedHttp.postJson(url, json, TrustedHttp.Kind.API, token);
             if (!ok) THMAddon.LOG.warn("Failed to send {} to API", label);
-        }, "thm-api-" + label).start();
+        }, threadName).start();
     }
 
     private static String stringField(JsonObject object, String key) {

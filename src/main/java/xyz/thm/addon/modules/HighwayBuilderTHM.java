@@ -1624,6 +1624,7 @@ public class HighwayBuilderTHM extends Module {
     private long nextStatsCheckpointAtMs;
     private long nextStatsStorageRetryAtMs;
     private boolean statsSessionDirty;
+    private boolean statsSessionOfficialHighway;
     private boolean statsSessionTerminalOrFinalizing;
     private boolean memoryRetryMode;
     private final AtomicLong statsScreenshotSequence = new AtomicLong();
@@ -1824,6 +1825,7 @@ public class HighwayBuilderTHM extends Module {
         boolean printedToChat,
         boolean webhookSendCommitted,
         boolean apiSendCommitted,
+        boolean officialHighwaySession,
         String finalizationReason,
         long reconnectCycleId,
         ReconnectBaselinePayload reconnectBaselinePayload
@@ -1967,7 +1969,7 @@ public class HighwayBuilderTHM extends Module {
             warning("Status not sent. You are not on 6B6T");
             return;
         }
-        if (!isOnMainHighway()) {
+        if (!isOnOfficialHighway()) {
             warning("Status wont get send. You are not on a main highway");
             return;
         }
@@ -1988,7 +1990,7 @@ public class HighwayBuilderTHM extends Module {
             generateTimestamp()
         );
 
-        sendStatus(statusMessage);
+        sendStatus(statusMessage, true);
     }
 
     private ServerState getCommittedServerState() {
@@ -8642,6 +8644,7 @@ public class HighwayBuilderTHM extends Module {
         activeStatsGeneration = 0L;
         lastPrintedStatsSessionId = null;
         statsSessionDirty = false;
+        statsSessionOfficialHighway = false;
         clearPendingForwardBreakCredits();
         nextStatsCheckpointAtMs = 0L;
         loadedStatsArtifactIdentity = null;
@@ -8755,6 +8758,7 @@ public class HighwayBuilderTHM extends Module {
             snapshot.printedToChat(),
             snapshot.webhookSendCommitted(),
             snapshot.apiSendCommitted(),
+            snapshot.officialHighwaySession(),
             snapshot.finalizationReason(),
             0L,
             null
@@ -8803,6 +8807,7 @@ public class HighwayBuilderTHM extends Module {
         activeStatsSessionId = UUID.randomUUID().toString();
         activeStatsGeneration = 0L;
         statsSessionDirty = false;
+        statsSessionOfficialHighway = false;
         clearPendingForwardBreakCredits();
         refreshCachedStatsDistance();
         persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "fresh-activate");
@@ -8821,6 +8826,8 @@ public class HighwayBuilderTHM extends Module {
         activeStatsGeneration = snapshot.generation();
         lastPrintedStatsSessionId = snapshot.printedToChat() ? snapshot.sessionId() : null;
         statsSessionDirty = false;
+        statsSessionOfficialHighway = snapshot.officialHighwaySession();
+        currentOfficialHighwaySession();
         clearPendingForwardBreakCredits();
         refreshCachedStatsDistance();
         nextStatsCheckpointAtMs = snapshot.lastCheckpointAt() <= 0
@@ -8899,10 +8906,19 @@ public class HighwayBuilderTHM extends Module {
             printedAt > 0L,
             false,
             false,
+            currentOfficialHighwaySession(),
             "",
             reconnectCycleId,
             reconnectPayload
         );
+    }
+
+    private boolean currentOfficialHighwaySession() {
+        if (isOnOfficialHighway()) {
+            statsSessionOfficialHighway = true;
+            return true;
+        }
+        return statsSessionOfficialHighway;
     }
 
     private long nextStatsGeneration() {
@@ -8946,6 +8962,7 @@ public class HighwayBuilderTHM extends Module {
             printedToChat,
             webhookSendCommitted,
             apiSendCommitted,
+            snapshot.officialHighwaySession(),
             finalizationReason,
             snapshot.reconnectCycleId(),
             snapshot.reconnectBaselinePayload()
@@ -9181,6 +9198,7 @@ public class HighwayBuilderTHM extends Module {
         out.append("meta|printedToChat|").append(snapshot.printedToChat()).append('\n');
         out.append("meta|webhookSendCommitted|").append(snapshot.webhookSendCommitted()).append('\n');
         out.append("meta|apiSendCommitted|").append(snapshot.apiSendCommitted()).append('\n');
+        out.append("meta|officialHighwaySession|").append(snapshot.officialHighwaySession()).append('\n');
         out.append("meta|finalizationReason|").append(snapshot.finalizationReason() == null ? "" : snapshot.finalizationReason()).append('\n');
         out.append("meta|reconnectCycleId|").append(snapshot.reconnectCycleId()).append('\n');
         ReconnectBaselinePayload reconnectPayload = snapshot.reconnectBaselinePayload();
@@ -9259,6 +9277,7 @@ public class HighwayBuilderTHM extends Module {
             Boolean.parseBoolean(meta.getOrDefault("printedToChat", "false")),
             Boolean.parseBoolean(meta.getOrDefault("webhookSendCommitted", "false")),
             Boolean.parseBoolean(meta.getOrDefault("apiSendCommitted", "false")),
+            Boolean.parseBoolean(meta.getOrDefault("officialHighwaySession", "false")),
             meta.getOrDefault("finalizationReason", ""),
             reconnectCycleId,
             reconnectPayload
@@ -9350,6 +9369,7 @@ public class HighwayBuilderTHM extends Module {
             false,
             false,
             false,
+            currentOfficialHighwaySession(),
             reason == null ? "" : reason,
             reconnectBaselineLease != null && reconnectBaselineLease.state() == ReconnectBaselineLeaseState.CAPTURED ? reconnectBaselineLease.generation() : 0L,
             reconnectBaselineLease != null && reconnectBaselineLease.state() == ReconnectBaselineLeaseState.CAPTURED ? reconnectBaselineLease.payload() : null
@@ -9524,30 +9544,35 @@ public class HighwayBuilderTHM extends Module {
                         warning("API not sent. No valid API token set - get one from the Discord bot's player panel.");
                         logExternalStatsDecision(working, report, reason, "api", "skipped-missing-token", distance);
                     } else {
-                        StatsArtifactSnapshot committed = updateFinalizationRecord(
-                            working,
-                            working.printedAt(),
-                            working.printedToChat(),
-                            working.webhookSendCommitted(),
-                            true,
-                            reason + "-api-commit"
-                        );
-                        if (committed != null) {
-                            String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip : "singleplayer";
-                            String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
-                                THMSystem.get().getApiToken(),
-                                playerName,
-                                server,
-                                distance,
-                                report.blocksBroken(),
-                                report.blocksPlaced(),
-                                dir,
-                                generateTimestamp(),
-                                isOnMainHighway()
+                        if (!working.officialHighwaySession()) {
+                            warning("API not sent. This session was not on the official nether highway.");
+                            logExternalStatsDecision(working, report, reason, "api", "skipped-not-official-highway", distance);
+                        } else {
+                            StatsArtifactSnapshot committed = updateFinalizationRecord(
+                                working,
+                                working.printedAt(),
+                                working.printedToChat(),
+                                working.webhookSendCommitted(),
+                                true,
+                                reason + "-api-commit"
                             );
-                            sendStatistics(statsMessageapi);
-                            working = committed;
-                            logExternalStatsDecision(working, report, reason, "api", "queued", distance);
+                            if (committed != null) {
+                                String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip : "singleplayer";
+                                String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
+                                    THMSystem.get().getApiToken(),
+                                    playerName,
+                                    server,
+                                    distance,
+                                    report.blocksBroken(),
+                                    report.blocksPlaced(),
+                                    dir,
+                                    generateTimestamp(),
+                                    isOnMainHighway()
+                                );
+                                sendStatistics(statsMessageapi, true);
+                                working = committed;
+                                logExternalStatsDecision(working, report, reason, "api", "queued", distance);
+                            }
                         }
                     }
                 } else {
