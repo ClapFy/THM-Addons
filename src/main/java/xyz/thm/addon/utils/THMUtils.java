@@ -557,7 +557,7 @@ public class THMUtils {
     public static boolean isOnOfficialHighway() {
         if (mc.player == null || mc.level == null) return false;
         if (isNot6B6T()) return false;
-        if (mc.level.dimension() != Level.NETHER) return false;
+        if (!Level.NETHER.equals(mc.level.dimension())) return false;
         return isOnMainHighway();
     }
     public static String GetVerbatim(String text)

@@ -55,11 +55,13 @@ class PrivacyTextTest {
     }
 
     @Test
-    void highwayStatsAndKitbotLinesAreNotFalsePositives() {
-        assertFalse(PrivacyText.containsCoordinates("P: 10 | B: 20 | 500m"));
-        assertFalse(PrivacyText.containsCoordinates("Building +X highway"));
-        assertFalse(PrivacyText.containsCoordinates("KitBot1 wants to teleport to you"));
-        assertFalse(PrivacyText.containsCoordinates("Steve123 joined the game"));
+    void highwayStatsPayloadsAreNotTreatedAsCoordinates() {
+        assertFalse(PrivacyText.containsCoordinates(
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Steve:6b6t.org:15000:500:300:East:1710000000:true"));
+        assertFalse(PrivacyText.containsCoordinates(
+            "{\"content\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Steve:+X:500:300:1710000000\"}"));
+        assertFalse(PrivacyText.containsCoordinates(
+            "Player: Steve , Distance: 15000 , Blocks broken: 500 , Blocks placed: 300"));
     }
 
     @Test

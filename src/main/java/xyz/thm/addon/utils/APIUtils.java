@@ -12,6 +12,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import meteordevelopment.meteorclient.MeteorClient;
 import xyz.thm.addon.THMAddon;
+import xyz.thm.addon.system.THMSystem;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -83,6 +84,16 @@ public final class APIUtils {
             byte[] raw = new byte[32];
             new SecureRandom().nextBytes(raw);
             return HexFormat.of().formatHex(raw);
+        }
+    }
+
+    /** Same token the main repo attaches as {@code Authorization: Bearer} on API POSTs. */
+    private static String apiToken() {
+        try {
+            THMSystem system = THMSystem.get();
+            return system == null ? "" : system.getApiToken();
+        } catch (Throwable t) {
+            return "";
         }
     }
 
@@ -286,7 +297,7 @@ public final class APIUtils {
             return;
         }
         new Thread(() -> {
-            boolean ok = TrustedHttp.postJson(url, TrustedHttp.jsonContent(message), TrustedHttp.Kind.API, null);
+            boolean ok = TrustedHttp.postJson(url, TrustedHttp.jsonContent(message), TrustedHttp.Kind.API, apiToken());
             if (!ok) THMAddon.LOG.warn("Failed to send {} to API", label);
         }, "thm-api-" + label).start();
     }
