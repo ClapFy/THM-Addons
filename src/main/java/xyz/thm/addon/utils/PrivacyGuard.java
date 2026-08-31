@@ -7,28 +7,31 @@
 package xyz.thm.addon.utils;
 
 import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
 import xyz.thm.addon.modules.HighwayBuilderTHM;
 import xyz.thm.addon.system.THMSystem;
 
 /**
- * Main-account privacy window: the addon may read chat, export coordinates, post
- * webhooks, or summon KitBot only while Highway Builder is active, and for
- * {@link #GRACE_MS} after it turns off (so disable-time stats can still send).
+ * Main-account privacy: PvP, PvE, HUD, Homes, Stash Mover, and other local combat/farm
+ * modules always run, including at a stash. Chat, coordinates, screenshots, webhooks,
+ * API stats, packet-log positions, and KitBot may leave this client only while Highway
+ * Builder is paving the official 6b6t nether highway, plus {@link #GRACE_MS} after it
+ * turns off (so disable-time stats can still send while you are still on that highway).
  *
- * <p>Remote export additionally requires standing on a main highway so a
- * stash at arbitrary X/Z cannot leak through Discord, the THM API, or KitBot.
- * There is no opt-out; this is always enforced.
+ * <p>Position is read live and fails closed. A sticky "last on highway" flag would keep
+ * exporting after {@code /home} to stash and could summon KitBot there. There is no opt-out.
  */
 public final class PrivacyGuard {
     public static final long GRACE_MS = 5_000L;
 
+    public static final String REMOTE_EXPORT_BLOCKED =
+        "Chat, coordinates, webhooks, API stats, and KitBot only leave this client while Highway Builder is paving the official nether highway, plus 5 seconds after it turns off.";
+
     private static final PrivacyGuard INSTANCE = new PrivacyGuard();
 
     private static volatile long highwayBuilderDisabledAtMs;
-    private static volatile boolean lastOnMainHighway;
     private static volatile boolean subscribed;
 
     private PrivacyGuard() {}
@@ -40,7 +43,6 @@ public final class PrivacyGuard {
     }
 
     public static void onHighwayBuilderDeactivated() {
-        refreshHighwayPosition();
         highwayBuilderDisabledAtMs = System.currentTimeMillis();
     }
 
@@ -50,18 +52,22 @@ public final class PrivacyGuard {
         return disabledAt > 0L && System.currentTimeMillis() - disabledAt < GRACE_MS;
     }
 
+    /**
+     * Local chat processing for PvP, PvE, Homes, HUD, and module logic. Always allowed.
+     * Forwarding that chat off-device still requires {@link #allowsRemoteExport()}.
+     */
     public static boolean allowsChatAccess() {
-        return isPrivacyWindowOpen();
+        return true;
     }
 
     /**
-     * Chat forwarding, webhooks, API stats, screenshots, and KitBot summons.
-     * Requires the privacy window and a main-highway position so a base off
-     * the spawn axes cannot leak.
+     * Chat forwarding, webhooks, API stats, screenshots, KitBot summons, and coordinate
+     * export. Requires the Highway Builder window and a live official-highway position
+     * so a stash in the overworld, end, or off the nether spawn axes cannot leak.
      */
     public static boolean allowsRemoteExport() {
         if (!isPrivacyWindowOpen()) return false;
-        return onMainHighwayNowOrLastKnown();
+        return onOfficialHighwayNow();
     }
 
     public static boolean allowsCoordinateExport() {
@@ -106,22 +112,16 @@ public final class PrivacyGuard {
     }
 
     @EventHandler
-    private void onTick(TickEvent.Post event) {
-        refreshHighwayPosition();
+    private void onGameLeft(GameLeftEvent event) {
+        highwayBuilderDisabledAtMs = 0L;
     }
 
-    private static boolean onMainHighwayNowOrLastKnown() {
-        refreshHighwayPosition();
-        return lastOnMainHighway;
-    }
-
-    private static void refreshHighwayPosition() {
+    private static boolean onOfficialHighwayNow() {
         try {
-            if (MeteorClient.mc != null && MeteorClient.mc.player != null) {
-                lastOnMainHighway = THMUtils.isOnMainHighway();
-            }
-        } catch (Throwable ignored) {
-            // Fail closed: keep the last known highway flag.
+            if (MeteorClient.mc == null) return false;
+            return THMUtils.isOnOfficialHighway();
+        } catch (Throwable t) {
+            return false;
         }
     }
 }

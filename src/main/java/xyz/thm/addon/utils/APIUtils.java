@@ -88,7 +88,7 @@ public final class APIUtils {
 
     public static void sendStatus(String message) {
         if (!PrivacyGuard.allowsRemoteExport()) {
-            THMAddon.LOG.warn("Blocked status API post: Highway Builder is not paving a main highway");
+            THMAddon.LOG.warn("Blocked status API post: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
             return;
         }
         postContent(GeneratedApiEndpoints.statusUrl(), message, "status");
@@ -96,7 +96,7 @@ public final class APIUtils {
 
     public static void sendStatistics(String message) {
         if (!PrivacyGuard.allowsRemoteExport()) {
-            THMAddon.LOG.warn("Blocked statistics API post: Highway Builder is not paving a main highway");
+            THMAddon.LOG.warn("Blocked statistics API post: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
             return;
         }
         postContent(GeneratedApiEndpoints.highwayUrl(), message, "statistics");
@@ -104,7 +104,7 @@ public final class APIUtils {
 
     public static void sendToWebhook(String url, String message) {
         if (!PrivacyGuard.allowsRemoteExport()) {
-            THMAddon.LOG.warn("Blocked webhook: Highway Builder is not paving a main highway");
+            THMAddon.LOG.warn("Blocked webhook: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
             return;
         }
         if (PrivacyGuard.containsSecrets(message)) {

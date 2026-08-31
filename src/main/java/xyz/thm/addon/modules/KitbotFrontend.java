@@ -113,7 +113,7 @@ public class KitbotFrontend extends Module {
     );
 
     public KitbotFrontend() {
-        super(THMAddon.MAIN, "Kitbot-frontend", "Send kitbot commands ($update, $goto, $kit, $send, $token, $claim)");
+        super(THMAddon.MAIN, "Kitbot-frontend", "Send kitbot commands ($update, $goto, $kit, $send, $token, $claim). Summons only run while Highway Builder is paving the official nether highway.");
         RUNTIME.ensureInitialized();
     }
 
@@ -491,7 +491,7 @@ public class KitbotFrontend extends Module {
                 return false;
             }
             if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) {
-                announceWarning("KitBot summons are only allowed while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
+                announceWarning(xyz.thm.addon.utils.PrivacyGuard.REMOTE_EXPORT_BLOCKED);
                 return false;
             }
 
@@ -569,7 +569,6 @@ public class KitbotFrontend extends Module {
 
         @EventHandler
         private void onMessage(ReceiveMessageEvent event) {
-            if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
             String message = event.getMessage().getString();
             if (message == null || message.isBlank()) return;
 
@@ -933,7 +932,7 @@ public class KitbotFrontend extends Module {
             if (actions == null) return;
             if (actions.chatCommand != null) {
                 if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) {
-                    announceWarning("KitBot summons are only allowed while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
+                    announceWarning(xyz.thm.addon.utils.PrivacyGuard.REMOTE_EXPORT_BLOCKED);
                 } else {
                     ChatUtils.sendPlayerMsg(actions.chatCommand);
                 }

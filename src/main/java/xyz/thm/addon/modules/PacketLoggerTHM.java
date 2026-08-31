@@ -41,8 +41,6 @@ import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.game.ClientboundBlockChangedAckPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
-import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
-import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
@@ -198,7 +196,7 @@ public class PacketLoggerTHM extends Module {
     private int fileWriteErrorCount;
 
     public PacketLoggerTHM() {
-        super(THMAddon.MAIN, "packet-logger-thm", "Logs selected packets to replay-grade JSONL files.");
+        super(THMAddon.MAIN, "packet-logger-thm", "Logs selected packets to replay-grade JSONL files. World positions are redacted unless Highway Builder is paving the official nether highway.");
         runInMainMenu = true;
     }
 
@@ -252,7 +250,6 @@ public class PacketLoggerTHM extends Module {
 
     private void logPacket(String dir, String chatDir, Packet<?> packet) {
         if (!logToChat.get() && !logToFile.get()) return;
-        if (isLocationPacket(packet) && !xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport()) return;
 
         PacketType<? extends Packet<?>> packetType = eventPacketType(packet);
         packetCounts.addTo(packetType, 1);
@@ -260,12 +257,6 @@ public class PacketLoggerTHM extends Module {
         long ordinal = ++ordinalCounter;
         if (logToChat.get()) logPacketToChat(chatDir, packetType);
         if (logToFile.get()) writeJsonRecord(buildPacketRecord(dir, ordinal, packet));
-    }
-
-    private static boolean isLocationPacket(Packet<?> packet) {
-        return packet instanceof ServerboundMovePlayerPacket
-            || packet instanceof ClientboundPlayerPositionPacket
-            || packet instanceof ClientboundEntityPositionSyncPacket;
     }
 
     @SuppressWarnings("unchecked")
@@ -348,7 +339,7 @@ public class PacketLoggerTHM extends Module {
             try {
                 String raw = String.valueOf(packet);
                 if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(raw)
-                    || (!xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport() && isLocationPacket(packet))) {
+                    || !xyz.thm.addon.utils.PrivacyGuard.allowsCoordinateExport()) {
                     record.addProperty("raw_to_string", "<redacted>");
                 } else {
                     record.addProperty("raw_to_string", raw);

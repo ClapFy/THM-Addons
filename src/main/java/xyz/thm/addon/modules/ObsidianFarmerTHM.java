@@ -430,7 +430,6 @@ public class ObsidianFarmerTHM extends Module {
     @EventHandler
     private void onReceiveMessage(ReceiveMessageEvent event) {
         if (!isActive()) return;
-        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
         String msg = event.getMessage().getString();
         if (awaitingKitbotTeleport && msg.contains(KitbotFrontend.KITBOT_NAME + " wants to teleport to you")) {
             if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;

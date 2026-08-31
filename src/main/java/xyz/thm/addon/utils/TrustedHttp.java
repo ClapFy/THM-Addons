@@ -99,7 +99,7 @@ public final class TrustedHttp {
 
     private static boolean allowOutboundPost(Kind kind, byte[] body) {
         if (kind == Kind.USER_WEBHOOK && !PrivacyGuard.allowsRemoteExport()) {
-            THMAddon.LOG.warn("Blocked webhook: chat and coordinates only leave this client while Highway Builder is paving a main highway, plus 5s after it turns off");
+            THMAddon.LOG.warn("Blocked webhook: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
             return false;
         }
         if (body == null || body.length == 0) return true;
@@ -122,6 +122,10 @@ public final class TrustedHttp {
             }
         } catch (Throwable ignored) {
             // Settings may not be loaded yet.
+        }
+        if (!PrivacyGuard.allowsCoordinateExport() && PrivacyText.containsCoordinates(text)) {
+            THMAddon.LOG.warn("Refusing HTTP body that contains coordinates while off the official nether highway");
+            return false;
         }
         return true;
     }

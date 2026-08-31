@@ -1379,7 +1379,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> sendStatisticsWebhhok = sgStatistics.add(new BoolSetting.Builder()
         .name("sends-statistics(Webhook)")
-        .description("Sends Highway Builder statistics to a webhook when the module is disabled. Only while paving a main highway, plus 5 seconds after disable. Never includes your cracked password or API token.")
+        .description("Sends Highway Builder statistics to a webhook when the module is disabled. Only while paving the official nether highway, plus 5 seconds after disable if you are still on that highway. Never includes your cracked password or API token.")
         .defaultValue(false)
         .visible(printStatistics::get)
         .build()
@@ -1400,7 +1400,7 @@ public class HighwayBuilderTHM extends Module {
     );
     private final Setting<Boolean> sendStatisticsapi = sgStatistics.add(new BoolSetting.Builder()
         .name("sends-statistics(API)")
-        .description("Sends statistics to the THM API when disabling Highway Builder. Only while paving a main highway, plus 5 seconds after disable. Never includes your cracked password.")
+        .description("Sends statistics to the THM API when disabling Highway Builder. Only while paving the official nether highway, plus 5 seconds after disable if you are still on that highway. Never includes your cracked password.")
         .defaultValue(false)
         .visible(printStatistics::get)
         .build()
@@ -4628,7 +4628,6 @@ public class HighwayBuilderTHM extends Module {
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
-        if (!PrivacyGuard.allowsChatAccess()) return;
         if (!isExecutionAllowedOnCurrentServer(getCommittedServerState())) return;
 
         String msg = event.getMessage().getString();

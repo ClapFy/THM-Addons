@@ -232,6 +232,10 @@ public class THMUtils {
     public static void Notify(String heading, String description) {
         String title = (heading == null || heading.isBlank()) ? "THM Addon" : heading;
         String body = description == null ? "" : description;
+        if (!PrivacyGuard.allowsRemoteExport()) {
+            title = PrivacyText.scrubCoordinates(title);
+            body = PrivacyText.scrubCoordinates(body);
+        }
 
         try {
             initSystemTray();
@@ -546,19 +550,8 @@ public class THMUtils {
         this.canceled = canceled;
     }
     public static boolean isOnMainHighway() {
-        // Get player's current X and Z coordinates
         if (mc.player == null) return false;
-        double playerX = mc.player.getX();
-        double playerZ = mc.player.getZ();
-
-        // Check if player is on X or Z axis highway (within a 5 block tolerance)
-        boolean onXAxis = Math.abs(playerZ) < 5;
-        boolean onZAxis = Math.abs(playerX) < 5;
-
-        // Check if player is on a diagonal highway (within a 5 block tolerance)
-        boolean onDiagonal = Math.abs(Math.abs(playerX) - Math.abs(playerZ)) < 5;
-
-        return onXAxis || onZAxis || onDiagonal;
+        return PrivacyText.isMainHighwayPosition(mc.player.getX(), mc.player.getZ());
     }
 
     public static boolean isOnOfficialHighway() {
@@ -624,7 +617,7 @@ public class THMUtils {
         Thread thread = new Thread(() -> {
             try {
                 if (!PrivacyGuard.allowsRemoteExport()) {
-                    THMAddon.LOG.warn("[THM] Blocked webhook attachment: Highway Builder is not paving a main highway");
+                    THMAddon.LOG.warn("[THM] Blocked webhook attachment: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
                     return;
                 }
                 if (PrivacyGuard.containsSecrets(message)) {
