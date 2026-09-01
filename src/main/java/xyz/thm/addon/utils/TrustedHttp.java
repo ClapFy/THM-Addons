@@ -12,9 +12,7 @@ import xyz.thm.addon.THMAddon;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.InetAddress;
 import java.net.URI;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
@@ -72,8 +70,8 @@ public final class TrustedHttp {
                 THMAddon.LOG.warn("Refusing oversized JSON POST ({} bytes)", body.length);
                 return false;
             }
-            exchange("POST", uri, kind, "application/json", body, MAX_JSON_BYTES, true, bearerToken);
-            return true;
+            byte[] response = exchange("POST", uri, kind, "application/json", body, MAX_JSON_BYTES, true, bearerToken);
+            return response != null;
         } catch (Exception e) {
             THMAddon.LOG.warn("Trusted HTTP POST failed: {}", e.getMessage());
             return false;
@@ -171,11 +169,27 @@ public final class TrustedHttp {
 
         if (uri.getHost() == null || uri.getHost().isBlank()) return null;
         if (uri.getUserInfo() != null) return null;
-        if (!isPublicHostname(uri.getHost())) {
-            THMAddon.LOG.warn("Rejected URL host that resolves to a private or local address");
+        PublicHosts.Status status = PublicHosts.classify(uri.getHost());
+        if (status != PublicHosts.Status.PUBLIC) {
+            logRejectedHost(kind, status);
             return null;
         }
         return uri.normalize();
+    }
+
+    private static void logRejectedHost(Kind kind, PublicHosts.Status status) {
+        switch (status) {
+            case PLACEHOLDER -> {
+                if (kind == Kind.API) {
+                    THMAddon.LOG.warn("Rejected placeholder API endpoint (example.com). This jar cannot talk to the THM API.");
+                } else {
+                    THMAddon.LOG.warn("Rejected URL host in the reserved example.com namespace");
+                }
+            }
+            case UNRESOLVED -> THMAddon.LOG.warn("Rejected URL host: DNS lookup failed");
+            case PRIVATE, INVALID -> THMAddon.LOG.warn("Rejected URL host that resolves to a private or local address");
+            case PUBLIC -> { }
+        }
     }
 
     public static boolean isSafeCapeId(String id) {
@@ -215,54 +229,7 @@ public final class TrustedHttp {
     }
 
     static boolean isPublicHostname(String host) {
-        String h = host.toLowerCase(Locale.ROOT);
-        if (h.endsWith(".")) h = h.substring(0, h.length() - 1);
-        if (h.isEmpty() || h.equals("localhost") || h.endsWith(".localhost")) return false;
-        if (h.equals("metadata.google.internal") || h.endsWith(".internal")) return false;
-
-        InetAddress[] addresses;
-        try {
-            addresses = InetAddress.getAllByName(h);
-        } catch (UnknownHostException e) {
-            return false;
-        }
-        if (addresses.length == 0) return false;
-        for (InetAddress addr : addresses) {
-            if (!isPublicAddress(addr)) return false;
-        }
-        return true;
-    }
-
-    static boolean isPublicAddress(InetAddress addr) {
-        if (addr.isAnyLocalAddress() || addr.isLoopbackAddress() || addr.isLinkLocalAddress()
-            || addr.isSiteLocalAddress() || addr.isMulticastAddress()) {
-            return false;
-        }
-        byte[] raw = addr.getAddress();
-        if (raw.length == 4) {
-            int a = raw[0] & 0xFF;
-            int b = raw[1] & 0xFF;
-            if (a == 0) return false;
-            if (a == 100 && b >= 64 && b <= 127) return false; // 100.64/10 CGNAT
-            if (a == 169 && b == 254) return false;
-            if (a == 192 && b == 0) return false;
-            if (a == 198 && (b == 18 || b == 19)) return false;
-        }
-        if (raw.length == 16) {
-            // Unique local fc00::/7
-            if ((raw[0] & 0xFE) == 0xFC) return false;
-            // IPv4-mapped
-            boolean v4mapped = true;
-            for (int i = 0; i < 10; i++) if (raw[i] != 0) { v4mapped = false; break; }
-            if (v4mapped && raw[10] == (byte) 0xFF && raw[11] == (byte) 0xFF) {
-                try {
-                    return isPublicAddress(InetAddress.getByAddress(new byte[]{raw[12], raw[13], raw[14], raw[15]}));
-                } catch (UnknownHostException e) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        return PublicHosts.classify(host) == PublicHosts.Status.PUBLIC;
     }
 
     private static byte[] exchange(
@@ -277,8 +244,10 @@ public final class TrustedHttp {
     ) throws Exception {
         URI current = start;
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
-            if (current.getHost() == null || !isPublicHostname(current.getHost())) {
-                THMAddon.LOG.warn("Rejected URL host that resolves to a private or local address");
+            if (current.getHost() == null) return null;
+            PublicHosts.Status hopStatus = PublicHosts.classify(current.getHost());
+            if (hopStatus != PublicHosts.Status.PUBLIC) {
+                logRejectedHost(kind, hopStatus);
                 return null;
             }
 
