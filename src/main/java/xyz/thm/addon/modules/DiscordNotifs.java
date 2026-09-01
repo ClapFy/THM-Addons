@@ -116,7 +116,7 @@ public class DiscordNotifs extends Module
 
     public DiscordNotifs()
     {
-        super(THMAddon.MAIN, "discord-notifs", "Sends notifications to a discord webhook. Chat and coordinates are only forwarded while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
+        super(THMAddon.MAIN, "discord-notifs", "Sends notifications to a discord webhook. Chat and coordinates leave this client only while Highway Builder is paving the official nether highway, plus 5 seconds after it turns off. PvP and PvE still work locally at a stash.");
     }
 
     @Override
@@ -199,7 +199,7 @@ public class DiscordNotifs extends Module
     @EventHandler(priority = 999)
     private void onMessageReceive(ReceiveMessageEvent event)
     {
-        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;
         Component message = event.getMessage();
         for (Component sibling : message.getSiblings())
         {
@@ -215,8 +215,7 @@ public class DiscordNotifs extends Module
 
     public void handleMessage(String message, MessageType messageType)
     {
-        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()
-            || !xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;
         if (webhookURL.get().isBlank()) return;
         if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(message)) return;
 
@@ -263,6 +262,7 @@ public class DiscordNotifs extends Module
 
     private void sendWebhookMessage(String message)
     {
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) return;
         if (delayTimer > 0)
         {
             if (queueMessages.get()) messageQueue.offer(message);

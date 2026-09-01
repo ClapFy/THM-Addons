@@ -136,7 +136,7 @@ public class DiscordRPC extends Module {
     }
 
     public DiscordRPC() {
-        super(THMAddon.MAIN, "discord-RPC", "Displays the THM Addon as an activity on discord.");
+        super(THMAddon.MAIN, "discord-RPC", "Displays the THM Addon as an activity on Discord. Coordinate placeholders are stripped, and live highway stats only publish while paving the official nether highway.");
 
         runInMainMenu = true;
     }
@@ -321,20 +321,15 @@ public class DiscordRPC extends Module {
     private static String sanitizeRpcText(String text) {
         if (text == null || text.isBlank()) return null;
         if (xyz.thm.addon.utils.PrivacyGuard.containsSecrets(text)) return null;
+        if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()
+            && xyz.thm.addon.utils.PrivacyText.containsCoordinates(text)) {
+            return null;
+        }
         return text;
     }
 
     private static boolean templateCanLeakCoordinates(String template) {
-        if (template == null) return false;
-        String lower = template.toLowerCase(java.util.Locale.ROOT);
-        return lower.contains("pos")
-            || lower.contains("coord")
-            || lower.contains("{x}")
-            || lower.contains("{y}")
-            || lower.contains("{z}")
-            || lower.contains("player.x")
-            || lower.contains("player.y")
-            || lower.contains("player.z");
+        return xyz.thm.addon.utils.PrivacyText.templateCanLeakCoordinates(template);
     }
 
     public enum SelectMode {

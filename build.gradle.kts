@@ -91,6 +91,8 @@ dependencies {
     implementation("net.fabricmc.fabric-api:fabric-api:${flavor.fabricApi}")
     implementation("meteordevelopment:meteor-client:${flavor.meteor}")
     compileOnly("meteordevelopment:baritone:${flavor.baritone}")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 val generateAPIUtils = tasks.register("generateAPIUtils") {
@@ -290,6 +292,10 @@ tasks {
         options.compilerArgs.add("-Xlint:deprecation")
         options.compilerArgs.add("-Xlint:unchecked")
         dependsOn(generateAPIUtils)
+    }
+
+    test {
+        useJUnitPlatform()
     }
 }
 

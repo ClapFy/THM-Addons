@@ -13,7 +13,6 @@ import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.systems.modules.render.blockesp.ESPBlockData;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.utils.world.Dir;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
@@ -63,7 +62,7 @@ public class RenderUtilsTHM {
                         x + side.getStepX(),
                         y + side.getStepY(),
                         z + side.getStepZ()))) {
-                    excludeDir |= Dir.get(side);
+                    excludeDir |= HighwayPreview.excludeFace(side.getStepX(), side.getStepY(), side.getStepZ());
                 }
             }
             event.renderer.box(x, y, z, x + 1, y + 1, z + 1, sideColor, lineColor, shapeMode, excludeDir);

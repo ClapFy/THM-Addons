@@ -490,7 +490,6 @@ public class HighwayTools extends Module {
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
-        if (!xyz.thm.addon.utils.PrivacyGuard.allowsChatAccess()) return;
         if (mc.player == null) return;
         if (tpaSent) return;
 

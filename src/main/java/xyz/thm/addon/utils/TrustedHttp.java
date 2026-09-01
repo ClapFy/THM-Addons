@@ -38,7 +38,7 @@ public final class TrustedHttp {
     private static final int MAX_REDIRECTS = 3;
 
     public enum Kind {
-        API,           // THM API: HTTPS; Bearer token only on POST
+        API,           // THM API: HTTPS; Bearer token on every request (GET included)
         PUBLIC_HTTPS,  // third-party HTTPS, never sends the API token
         USER_WEBHOOK,  // user-configured Discord webhooks
         IMAGE          // cape / texture download
@@ -99,7 +99,7 @@ public final class TrustedHttp {
 
     private static boolean allowOutboundPost(Kind kind, byte[] body) {
         if (kind == Kind.USER_WEBHOOK && !PrivacyGuard.allowsRemoteExport()) {
-            THMAddon.LOG.warn("Blocked webhook: chat and coordinates only leave this client while Highway Builder is paving a main highway, plus 5s after it turns off");
+            THMAddon.LOG.warn("Blocked webhook: {}", PrivacyGuard.REMOTE_EXPORT_BLOCKED);
             return false;
         }
         if (body == null || body.length == 0) return true;
@@ -122,6 +122,10 @@ public final class TrustedHttp {
             }
         } catch (Throwable ignored) {
             // Settings may not be loaded yet.
+        }
+        if (!PrivacyGuard.allowsCoordinateExport() && PrivacyText.containsCoordinates(text)) {
+            THMAddon.LOG.warn("Refusing HTTP body that contains coordinates while off the official nether highway");
+            return false;
         }
         return true;
     }
@@ -286,7 +290,8 @@ public final class TrustedHttp {
                 cn.setRequestMethod(method);
                 cn.setUseCaches(false);
                 if (contentType != null) cn.setRequestProperty("Content-Type", contentType);
-                if (kind == Kind.API && "POST".equals(method)) {
+                if (kind == Kind.API) {
+                    // Backend requires a valid token on every route, GET included — same as the main repo.
                     String token = bearerToken != null && !bearerToken.isBlank() ? bearerToken : apiToken();
                     if (!token.isEmpty()) cn.setRequestProperty("Authorization", "Bearer " + token);
                 }

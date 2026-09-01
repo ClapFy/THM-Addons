@@ -50,7 +50,7 @@ public final class KitbotChatRouter {
         if (frontend == null) return;
 
         if (!xyz.thm.addon.utils.PrivacyGuard.allowsRemoteExport()) {
-            frontend.warning("KitBot commands are only allowed while Highway Builder is paving a main highway, plus 5 seconds after it turns off.");
+            frontend.warning(xyz.thm.addon.utils.PrivacyGuard.REMOTE_EXPORT_BLOCKED);
             return;
         }
 

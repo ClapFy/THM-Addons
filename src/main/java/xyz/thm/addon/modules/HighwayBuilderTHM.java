@@ -1203,7 +1203,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Integer> minEmpty = sgInventory.add(new IntSetting.Builder()
         .name("minimum-empty-slots")
-        .description("The minimum amount of empty slots you want left after mining obsidian.")
+        .description("Empty slots to keep after mining obsidian so drops can still be picked up. The e-chest farm fills every other free slot.")
         .defaultValue(1)
         .sliderRange(0, 9)
         .min(0)
@@ -1379,7 +1379,7 @@ public class HighwayBuilderTHM extends Module {
 
     private final Setting<Boolean> sendStatisticsWebhhok = sgStatistics.add(new BoolSetting.Builder()
         .name("sends-statistics(Webhook)")
-        .description("Sends Highway Builder statistics to a webhook when the module is disabled. Only while paving a main highway, plus 5 seconds after disable. Never includes your cracked password or API token.")
+        .description("Sends Highway Builder statistics to a webhook when the module is disabled. Only while paving the official nether highway, plus 5 seconds after disable if you are still on that highway. Never includes your cracked password or API token.")
         .defaultValue(false)
         .visible(printStatistics::get)
         .build()
@@ -1400,7 +1400,7 @@ public class HighwayBuilderTHM extends Module {
     );
     private final Setting<Boolean> sendStatisticsapi = sgStatistics.add(new BoolSetting.Builder()
         .name("sends-statistics(API)")
-        .description("Sends statistics to the THM API when disabling Highway Builder. Only while paving a main highway, plus 5 seconds after disable. Never includes your cracked password.")
+        .description("Sends statistics to the THM API when disabling Highway Builder. Only while paving the official nether highway, plus 5 seconds after disable if you are still on that highway. Never includes your cracked password.")
         .defaultValue(false)
         .visible(printStatistics::get)
         .build()
@@ -1624,6 +1624,7 @@ public class HighwayBuilderTHM extends Module {
     private long nextStatsCheckpointAtMs;
     private long nextStatsStorageRetryAtMs;
     private boolean statsSessionDirty;
+    private boolean statsSessionOfficialHighway;
     private boolean statsSessionTerminalOrFinalizing;
     private boolean memoryRetryMode;
     private final AtomicLong statsScreenshotSequence = new AtomicLong();
@@ -1662,6 +1663,7 @@ public class HighwayBuilderTHM extends Module {
     public boolean drawingBow;
     public DoubleMineBlock normalMining, packetMining;
     private final LongOpenHashSet renderPosSet = new LongOpenHashSet();
+    private final LongOpenHashSet placePreviewScratch = new LongOpenHashSet();
     final LongOpenHashSet placeTrail = new LongOpenHashSet();
 
     private int debugStateLastAge = -1;
@@ -1823,6 +1825,7 @@ public class HighwayBuilderTHM extends Module {
         boolean printedToChat,
         boolean webhookSendCommitted,
         boolean apiSendCommitted,
+        boolean officialHighwaySession,
         String finalizationReason,
         long reconnectCycleId,
         ReconnectBaselinePayload reconnectBaselinePayload
@@ -1966,7 +1969,7 @@ public class HighwayBuilderTHM extends Module {
             warning("Status not sent. You are not on 6B6T");
             return;
         }
-        if (!isOnMainHighway()) {
+        if (!isOnOfficialHighway()) {
             warning("Status wont get send. You are not on a main highway");
             return;
         }
@@ -1987,7 +1990,7 @@ public class HighwayBuilderTHM extends Module {
             generateTimestamp()
         );
 
-        sendStatus(statusMessage);
+        sendStatus(statusMessage, true);
     }
 
     private ServerState getCommittedServerState() {
@@ -4628,7 +4631,6 @@ public class HighwayBuilderTHM extends Module {
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
-        if (!PrivacyGuard.allowsChatAccess()) return;
         if (!isExecutionAllowedOnCurrentServer(getCommittedServerState())) return;
 
         String msg = event.getMessage().getString();
@@ -4939,52 +4941,31 @@ public class HighwayBuilderTHM extends Module {
         }
 
         if (renderPlace.get()) {
-            render(event, blockPosProvider.getLiquids(), mBlockPos -> canPlace(mBlockPos, true), false);
+            renderPosSet.clear();
+            collectPlacePreview(blockPosProvider.getLiquids(), true);
 
             if (railings.get()) {
-                render(event, blockPosProvider.getRailings(0), mBlockPos -> canPlace(mBlockPos, false), false);
-
+                collectPlacePreview(blockPosProvider.getRailings(0), false);
                 if (cornerBlock.get()) {
-                    // make sure we only render corner support blocks if we are actually planning to place a block there
-                    render(event, blockPosProvider.getRailings(-1), mBlockPos -> {
-                        boolean valid = false;
-                        for (MBlockPos pos : blockPosProvider.getRailings(0)) {
-                            if (!blocksToPlace.get().contains(pos.getState().getBlock()) && pos.add(0, -1, 0).equals(mBlockPos)) {
-                                valid = true;
-                                break;
-                            }
-                        }
-
-                        return valid && canPlace(mBlockPos, false);
-                    }, false);
+                    collectCornerPlacePreview(blockPosProvider.getRailings(-1), blockPosProvider.getRailings(0));
                 }
             }
 
-            render(event, blockPosProvider.getFloor(), mBlockPos -> canPlace(mBlockPos, false), false);
+            collectPlacePreview(blockPosProvider.getFloor(), false);
             if (checkBehind.get()) {
                 if (railings.get()) {
-                    render(event, blockPosProvider.getBehindRailings(0), mBlockPos -> canPlace(mBlockPos, false), false);
-
+                    collectPlacePreview(blockPosProvider.getBehindRailings(0), false);
                     if (cornerBlock.get()) {
-                        render(event, blockPosProvider.getBehindRailings(-1), mBlockPos -> {
-                            boolean valid = false;
-                            for (MBlockPos pos : blockPosProvider.getBehindRailings(0)) {
-                                if (!blocksToPlace.get().contains(pos.getState().getBlock()) && pos.add(0, -1, 0).equals(mBlockPos)) {
-                                    valid = true;
-                                    break;
-                                }
-                            }
-
-                            return valid && canPlace(mBlockPos, false);
-                        }, false);
+                        collectCornerPlacePreview(blockPosProvider.getBehindRailings(-1), blockPosProvider.getBehindRailings(0));
                     }
                 }
-
-                render(event, blockPosProvider.getBehindFloor(), mBlockPos -> canPlace(mBlockPos, false), false);
+                collectPlacePreview(blockPosProvider.getBehindFloor(), false);
             }
             if (state == State.PlaceShulkerBlockade || state == State.PlaceEChestBlockade) {
-                render(event, blockPosProvider.getBlockade(false, getEffectiveBlockadeType()), mBlockPos -> canPlace(mBlockPos, false), false);
+                collectPlacePreview(blockPosProvider.getBlockade(false, getEffectiveBlockadeType()), false);
             }
+            collectSchedulerPlacePreview();
+            RenderUtilsTHM.renderBlockSet(event, renderPosSet, renderPlaceSideColor.get(), renderPlaceLineColor.get(), renderPlaceShape.get());
             RenderUtilsTHM.renderAndPruneBlockSet(event, placeTrail, renderPlaceSideColor.get(), renderPlaceLineColor.get(), renderPlaceShape.get());
         }
     }
@@ -4997,10 +4978,62 @@ public class HighwayBuilderTHM extends Module {
         // Collect all qualifying positions for O(1) neighbour lookup (avoids O(n²) nested iteration)
         renderPosSet.clear();
         for (MBlockPos pos : it) {
-            if (predicate.test(pos)) renderPosSet.add(BlockPos.asLong(pos.x, pos.y, pos.z));
+            int x = pos.x, y = pos.y, z = pos.z;
+            if (predicate.test(pos)) renderPosSet.add(BlockPos.asLong(x, y, z));
         }
 
         RenderUtilsTHM.renderBlockSet(event, renderPosSet, sideColor, lineColor, shapeMode);
+    }
+
+    private void collectPlacePreview(MBPIterator it, boolean liquids) {
+        if (it == null) return;
+        for (MBlockPos pos : it) {
+            int x = pos.x, y = pos.y, z = pos.z;
+            if (canHighlightPlace(pos, liquids)) renderPosSet.add(BlockPos.asLong(x, y, z));
+        }
+    }
+
+    /**
+     * Corner supports sit one block under a railing that still needs placing. Snapshot the railing
+     * cells first — both iterators share the same mutable {@code MBlockPos}, so nesting them used
+     * to clobber the corner coordinate and skip the overlay.
+     */
+    private void collectCornerPlacePreview(MBPIterator corners, MBPIterator railings) {
+        if (corners == null || railings == null) return;
+
+        placePreviewScratch.clear();
+        for (MBlockPos railing : railings) {
+            if (blocksToPlace.get().contains(railing.getState().getBlock())) continue;
+            placePreviewScratch.add(BlockPos.asLong(railing.x, railing.y - 1, railing.z));
+        }
+
+        for (MBlockPos corner : corners) {
+            int x = corner.x, y = corner.y, z = corner.z;
+            if (!placePreviewScratch.contains(BlockPos.asLong(x, y, z))) continue;
+            if (canHighlightPlace(corner, false)) renderPosSet.add(BlockPos.asLong(x, y, z));
+        }
+    }
+
+    private void collectSchedulerPlacePreview() {
+        if (!useForwardRowSchedulerMode()) return;
+        for (ForwardRowSchedule row : forwardSchedulerRuntime.rows) {
+            addSchedulerPlacePreview(row.placeQueue);
+            addSchedulerPlacePreview(row.conflictQueue);
+        }
+    }
+
+    private void addSchedulerPlacePreview(LinkedHashMap<BlockPos, ForwardTask> queue) {
+        if (queue == null || queue.isEmpty()) return;
+        for (ForwardTask task : queue.values()) {
+            if (task.type.mine) continue;
+            BlockState state = mc.level.getBlockState(task.pos);
+            if (!HighwayPreview.shouldHighlightPlace(
+                task.type.liquids(),
+                state.isAir() || state.canBeReplaced(),
+                !state.getFluidState().isEmpty()
+            )) continue;
+            renderPosSet.add(BlockPos.asLong(task.pos.getX(), task.pos.getY(), task.pos.getZ()));
+        }
     }
 
     private void updateVariables() {
@@ -5908,6 +5941,19 @@ public class HighwayBuilderTHM extends Module {
     private boolean canPlace(MBlockPos pos, boolean liquids) {
         if (!isWithinConfiguredForwardRange(pos.getBlockPos())) return false;
         return liquids ? !pos.getState().getFluidState().isEmpty() : BlockUtils.canPlace(pos.getBlockPos());
+    }
+
+    /**
+     * Overlay check for "blocks that will be placed". Unlike {@link #canPlace}, this ignores
+     * reach and entity collision so the highlighter still shows the planned highway cells.
+     */
+    private boolean canHighlightPlace(MBlockPos pos, boolean liquids) {
+        BlockState state = pos.getState();
+        return HighwayPreview.shouldHighlightPlace(
+            liquids,
+            state.isAir() || state.canBeReplaced(),
+            !state.getFluidState().isEmpty()
+        );
     }
 
     private void resetTpsThrottleRuntime() {
@@ -8598,6 +8644,7 @@ public class HighwayBuilderTHM extends Module {
         activeStatsGeneration = 0L;
         lastPrintedStatsSessionId = null;
         statsSessionDirty = false;
+        statsSessionOfficialHighway = false;
         clearPendingForwardBreakCredits();
         nextStatsCheckpointAtMs = 0L;
         loadedStatsArtifactIdentity = null;
@@ -8711,6 +8758,7 @@ public class HighwayBuilderTHM extends Module {
             snapshot.printedToChat(),
             snapshot.webhookSendCommitted(),
             snapshot.apiSendCommitted(),
+            snapshot.officialHighwaySession(),
             snapshot.finalizationReason(),
             0L,
             null
@@ -8759,6 +8807,7 @@ public class HighwayBuilderTHM extends Module {
         activeStatsSessionId = UUID.randomUUID().toString();
         activeStatsGeneration = 0L;
         statsSessionDirty = false;
+        statsSessionOfficialHighway = false;
         clearPendingForwardBreakCredits();
         refreshCachedStatsDistance();
         persistCurrentStatsSession(StatsSessionState.OPEN, true, 0L, "fresh-activate");
@@ -8777,6 +8826,8 @@ public class HighwayBuilderTHM extends Module {
         activeStatsGeneration = snapshot.generation();
         lastPrintedStatsSessionId = snapshot.printedToChat() ? snapshot.sessionId() : null;
         statsSessionDirty = false;
+        statsSessionOfficialHighway = snapshot.officialHighwaySession();
+        currentOfficialHighwaySession();
         clearPendingForwardBreakCredits();
         refreshCachedStatsDistance();
         nextStatsCheckpointAtMs = snapshot.lastCheckpointAt() <= 0
@@ -8855,10 +8906,19 @@ public class HighwayBuilderTHM extends Module {
             printedAt > 0L,
             false,
             false,
+            currentOfficialHighwaySession(),
             "",
             reconnectCycleId,
             reconnectPayload
         );
+    }
+
+    private boolean currentOfficialHighwaySession() {
+        if (isOnOfficialHighway()) {
+            statsSessionOfficialHighway = true;
+            return true;
+        }
+        return statsSessionOfficialHighway;
     }
 
     private long nextStatsGeneration() {
@@ -8902,6 +8962,7 @@ public class HighwayBuilderTHM extends Module {
             printedToChat,
             webhookSendCommitted,
             apiSendCommitted,
+            snapshot.officialHighwaySession(),
             finalizationReason,
             snapshot.reconnectCycleId(),
             snapshot.reconnectBaselinePayload()
@@ -9137,6 +9198,7 @@ public class HighwayBuilderTHM extends Module {
         out.append("meta|printedToChat|").append(snapshot.printedToChat()).append('\n');
         out.append("meta|webhookSendCommitted|").append(snapshot.webhookSendCommitted()).append('\n');
         out.append("meta|apiSendCommitted|").append(snapshot.apiSendCommitted()).append('\n');
+        out.append("meta|officialHighwaySession|").append(snapshot.officialHighwaySession()).append('\n');
         out.append("meta|finalizationReason|").append(snapshot.finalizationReason() == null ? "" : snapshot.finalizationReason()).append('\n');
         out.append("meta|reconnectCycleId|").append(snapshot.reconnectCycleId()).append('\n');
         ReconnectBaselinePayload reconnectPayload = snapshot.reconnectBaselinePayload();
@@ -9215,6 +9277,7 @@ public class HighwayBuilderTHM extends Module {
             Boolean.parseBoolean(meta.getOrDefault("printedToChat", "false")),
             Boolean.parseBoolean(meta.getOrDefault("webhookSendCommitted", "false")),
             Boolean.parseBoolean(meta.getOrDefault("apiSendCommitted", "false")),
+            Boolean.parseBoolean(meta.getOrDefault("officialHighwaySession", "false")),
             meta.getOrDefault("finalizationReason", ""),
             reconnectCycleId,
             reconnectPayload
@@ -9306,6 +9369,7 @@ public class HighwayBuilderTHM extends Module {
             false,
             false,
             false,
+            currentOfficialHighwaySession(),
             reason == null ? "" : reason,
             reconnectBaselineLease != null && reconnectBaselineLease.state() == ReconnectBaselineLeaseState.CAPTURED ? reconnectBaselineLease.generation() : 0L,
             reconnectBaselineLease != null && reconnectBaselineLease.state() == ReconnectBaselineLeaseState.CAPTURED ? reconnectBaselineLease.payload() : null
@@ -9480,30 +9544,35 @@ public class HighwayBuilderTHM extends Module {
                         warning("API not sent. No valid API token set - get one from the Discord bot's player panel.");
                         logExternalStatsDecision(working, report, reason, "api", "skipped-missing-token", distance);
                     } else {
-                        StatsArtifactSnapshot committed = updateFinalizationRecord(
-                            working,
-                            working.printedAt(),
-                            working.printedToChat(),
-                            working.webhookSendCommitted(),
-                            true,
-                            reason + "-api-commit"
-                        );
-                        if (committed != null) {
-                            String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip : "singleplayer";
-                            String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
-                                THMSystem.get().getApiToken(),
-                                playerName,
-                                server,
-                                distance,
-                                report.blocksBroken(),
-                                report.blocksPlaced(),
-                                dir,
-                                generateTimestamp(),
-                                isOnMainHighway()
+                        if (!working.officialHighwaySession()) {
+                            warning("API not sent. This session was not on the official nether highway.");
+                            logExternalStatsDecision(working, report, reason, "api", "skipped-not-official-highway", distance);
+                        } else {
+                            StatsArtifactSnapshot committed = updateFinalizationRecord(
+                                working,
+                                working.printedAt(),
+                                working.printedToChat(),
+                                working.webhookSendCommitted(),
+                                true,
+                                reason + "-api-commit"
                             );
-                            sendStatistics(statsMessageapi);
-                            working = committed;
-                            logExternalStatsDecision(working, report, reason, "api", "queued", distance);
+                            if (committed != null) {
+                                String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip : "singleplayer";
+                                String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
+                                    THMSystem.get().getApiToken(),
+                                    playerName,
+                                    server,
+                                    distance,
+                                    report.blocksBroken(),
+                                    report.blocksPlaced(),
+                                    dir,
+                                    generateTimestamp(),
+                                    isOnMainHighway()
+                                );
+                                sendStatistics(statsMessageapi, true);
+                                working = committed;
+                                logExternalStatsDecision(working, report, reason, "api", "queued", distance);
+                            }
                         }
                     }
                 } else {
@@ -11060,6 +11129,33 @@ public class HighwayBuilderTHM extends Module {
         }
 
         return count;
+    }
+
+    private int countLooseObsidianTopOffItems() {
+        if (mc.player == null) return 0;
+
+        int topOff = 0;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (stack.getItem() == Items.OBSIDIAN && stack.getCount() > 0 && stack.getCount() < stack.getMaxStackSize()) {
+                topOff += stack.getMaxStackSize() - stack.getCount();
+            }
+        }
+        return topOff;
+    }
+
+    private boolean nextEchestMineFreesAnInventorySlot(int saveEchestReserve) {
+        if (mc.player == null) return false;
+
+        int total = 0;
+        boolean singleton = false;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (stack.getItem() != Items.ENDER_CHEST || stack.getCount() <= 0) continue;
+            total += stack.getCount();
+            if (stack.getCount() == 1) singleton = true;
+        }
+        return singleton && total > saveEchestReserve;
     }
 
     private int countConfiguredFoodMergeCapacityInInventory() {
@@ -13630,6 +13726,7 @@ public class HighwayBuilderTHM extends Module {
                 newBreakingMode = b.newBreaking.get();
                 session.refreshProgress();
                 b.restockTask.clampObsidianTargetToMineableEChests("mine-echests-start");
+                b.restockTask.expandObsidianTargetToEchestFarmFill("mine-echests-start");
                 session.refreshProgress();
                 targetEchestsToBreak = session.getTargetEchestsToBreak();
                 targetObsidianCount = session.getMiningGoalObsidianCount();
@@ -13710,9 +13807,21 @@ public class HighwayBuilderTHM extends Module {
                 }
                 lastObservedObsidianCount = obsidianCount;
 
-                if (obsidianCount >= targetObsidianCount) {
-                    if (b.restockTask.getSession() != null && b.restockTask.getSession().getRemainingObsidianItems() > targetEchestsToBreak * 8) {
-                        b.restockTask.getSession().markGreatestAvailable();
+                RestockTask.RestockSession liveSession = b.restockTask.getSession();
+                int saveReserve = liveSession != null ? liveSession.saveEchestsReserve : b.saveEchests.get();
+                int usableEchests = Math.max(countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) - saveReserve, 0);
+                int reservedEmpty = liveSession != null ? liveSession.getEchestFarmReservedEmptySlots() : 0;
+                boolean keepMining = HighwayEchestFarm.shouldMineAnotherEchest(
+                    b.countEmptyInventorySlotsInMainInventory(),
+                    b.minEmpty.get(),
+                    b.countLooseObsidianTopOffItems(),
+                    usableEchests,
+                    b.nextEchestMineFreesAnInventorySlot(saveReserve),
+                    reservedEmpty
+                );
+                if (!keepMining) {
+                    if (liveSession != null && liveSession.getRemainingObsidianItems() > targetEchestsToBreak * 8) {
+                        liveSession.markGreatestAvailable();
                     }
                     stopTimerEnabled = true;
                     stopTimer = 12;
@@ -18836,14 +18945,15 @@ public class HighwayBuilderTHM extends Module {
             }
 
             private int getLooseObsidianTopOffGoal() {
-                int topOff = 0;
-                for (int i = 0; i < b.mc.player.getInventory().getNonEquipmentItems().size(); i++) {
-                    ItemStack stack = b.mc.player.getInventory().getItem(i);
-                    if (stack.getItem() == Items.OBSIDIAN && stack.getCount() > 0 && stack.getCount() < stack.getMaxStackSize()) {
-                        topOff += stack.getMaxStackSize() - stack.getCount();
-                    }
-                }
-                return topOff;
+                return b.countLooseObsidianTopOffItems();
+            }
+
+            private int getEchestFarmReservedEmptySlots() {
+                int reserved = 0;
+                if (pendingPickaxes) reserved += getLooseInventoryPickaxeReserveSlots();
+                if (pendingFood) reserved += getMissingFoodSupportSlot();
+                if (pendingEnderChests) reserved += getMissingEChestSupportSlot();
+                return reserved;
             }
 
             private int getMissingFoodSupportSlot() {
@@ -19198,6 +19308,43 @@ public class HighwayBuilderTHM extends Module {
                 }
 
                 return true;
+            }
+
+            private boolean expandObsidianTargetToEchestFarmFill(String reason) {
+                if (!isObsidianTask() || !targetFrozen || b.mc.player == null) return false;
+
+                refreshProgress();
+                int fillCapacity = HighwayEchestFarm.fillCapacity(
+                    countEmptyInventorySlots(),
+                    b.minEmpty.get(),
+                    getLooseObsidianTopOffGoal(),
+                    getEchestFarmReservedEmptySlots()
+                );
+                int mineableObsidian = Math.max(usablePulledEchests, 0) * HighwayEchestFarm.OBSIDIAN_PER_ECHEST;
+                int fillRemaining = Math.min(fillCapacity, mineableObsidian);
+                int oldTarget = targetFinal;
+                int oldRemaining = remainingTarget;
+                targetFinal = obsidianItemsAcquired + fillRemaining;
+                targetInitialized = targetFinal > 0;
+                remainingTarget = Math.max(targetFinal - obsidianItemsAcquired, 0);
+
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug(
+                        "RestockSession e-chest farm fill target %s (reason=%s, oldTarget=%d, newTarget=%d, oldRemaining=%d, newRemaining=%d, progress=%d, fillCapacity=%d, usableEchests=%d, reservedEmpty=%d).",
+                        targetFinal > oldTarget ? "expanded" : targetFinal < oldTarget ? "clamped" : "kept",
+                        reason,
+                        oldTarget,
+                        targetFinal,
+                        oldRemaining,
+                        remainingTarget,
+                        obsidianItemsAcquired,
+                        fillCapacity,
+                        usablePulledEchests,
+                        getEchestFarmReservedEmptySlots()
+                    );
+                }
+
+                return remainingTarget > 0;
             }
 
             private int getMiningGoalObsidianCount() {
@@ -19877,6 +20024,10 @@ public class HighwayBuilderTHM extends Module {
 
         public boolean clampObsidianTargetToMineableEChests(String reason) {
             return session != null && session.clampObsidianTargetToMineableEChests(reason);
+        }
+
+        public boolean expandObsidianTargetToEchestFarmFill(String reason) {
+            return session != null && session.expandObsidianTargetToEchestFarmFill(reason);
         }
 
         public boolean needsMoreRawEchestsForSession() {

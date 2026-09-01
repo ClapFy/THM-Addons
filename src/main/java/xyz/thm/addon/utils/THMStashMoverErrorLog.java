@@ -14,29 +14,11 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 import net.minecraft.client.Minecraft;
 
 public final class THMStashMoverErrorLog {
     private static final long MAX_BYTES = 10L * 1024L * 1024L;
     private static final int MAX_LINE_CHARS = 4096;
-    private static final String COORDINATE_NUMBER = "[+-]?\\d+(?:\\.\\d+)?";
-    private static final Pattern LABELED_COORDINATES = Pattern.compile(
-        "(?i)(?:blockpos\\s*\\{\\s*)?x\\s*[=:]\\s*" + COORDINATE_NUMBER
-            + "\\s*[,; ]+\\s*y\\s*[=:]\\s*" + COORDINATE_NUMBER
-            + "\\s*[,; ]+\\s*z\\s*[=:]\\s*" + COORDINATE_NUMBER + "\\s*\\}?"
-    );
-    private static final Pattern DELIMITED_COORDINATE_TRIPLE = Pattern.compile(
-        "(?<![A-Za-z0-9_.])" + COORDINATE_NUMBER
-            + "\\s*[,/]\\s*" + COORDINATE_NUMBER
-            + "\\s*[,/]\\s*" + COORDINATE_NUMBER
-            + "(?![A-Za-z0-9_.])"
-    );
-    private static final Pattern BRACKETED_COORDINATE_TRIPLE = Pattern.compile(
-        "[\\[(]\\s*" + COORDINATE_NUMBER
-            + "\\s+" + COORDINATE_NUMBER
-            + "\\s+" + COORDINATE_NUMBER + "\\s*[\\])]"
-    );
 
     private static boolean sessionDisabled;
 
@@ -57,7 +39,7 @@ public final class THMStashMoverErrorLog {
 
             Files.createDirectories(logPath.getParent());
 
-            String cleanLine = scrubCoordinates(line.replace('\r', ' ').replace('\n', ' '));
+            String cleanLine = PrivacyText.scrubCoordinates(line.replace('\r', ' ').replace('\n', ' '));
             if (cleanLine.length() > MAX_LINE_CHARS) cleanLine = cleanLine.substring(0, MAX_LINE_CHARS) + "...";
 
             String entry = Instant.now() + " ERROR " + cleanLine + System.lineSeparator();
@@ -68,12 +50,6 @@ public final class THMStashMoverErrorLog {
         } catch (IOException | RuntimeException ignored) {
             sessionDisabled = true;
         }
-    }
-
-    private static String scrubCoordinates(String line) {
-        String scrubbed = LABELED_COORDINATES.matcher(line).replaceAll("[coordinates]");
-        scrubbed = DELIMITED_COORDINATE_TRIPLE.matcher(scrubbed).replaceAll("[coordinates]");
-        return BRACKETED_COORDINATE_TRIPLE.matcher(scrubbed).replaceAll("[coordinates]");
     }
 
     private static void trimForAppend(Path logPath, int appendBytes) throws IOException {
