@@ -44,6 +44,16 @@ public final class APIUtils {
     private APIUtils() {}
 
     /**
+     * False when this jar was built with RFC 2606 example.com placeholders.
+     * Does not perform DNS; {@link TrustedHttp} still sandboxes the request.
+     */
+    public static boolean isConfigured() {
+        return PublicHosts.isConfiguredApiUrl(GeneratedApiEndpoints.highwayUrl())
+            && PublicHosts.isConfiguredApiUrl(GeneratedApiEndpoints.memberHudUrl())
+            && PublicHosts.isConfiguredApiUrl(GeneratedApiEndpoints.statusUrl());
+    }
+
+    /**
      * Key for local HighwayBuilder stats-cache encryption. Not sent to the API.
      * Persisted under {@code meteor-client/thm/stats-key} so encrypted caches
      * survive client restarts and addon rebuilds.
@@ -133,6 +143,10 @@ public final class APIUtils {
     }
 
     public static List<ThmMembers.Member> fetchMembersFromApi() {
+        if (!isConfigured()) {
+            THMAddon.LOG.warn("Member list unavailable: this jar has placeholder API endpoints");
+            return null;
+        }
         try {
             String response = TrustedHttp.getString(
                 GeneratedApiEndpoints.memberHudUrl(), TrustedHttp.Kind.API, TrustedHttp.MAX_JSON_BYTES);
@@ -179,6 +193,7 @@ public final class APIUtils {
     }
 
     public static Map<String, String> fetchHighwayStatusFromApi() {
+        if (!isConfigured()) return null;
         try {
             String body = TrustedHttp.getString(
                 GeneratedApiEndpoints.highwayStatusUrl(), TrustedHttp.Kind.API, TrustedHttp.MAX_JSON_BYTES);
@@ -216,6 +231,7 @@ public final class APIUtils {
     }
 
     public static Map<String, String> fetchCapeListFromApi() {
+        if (!isConfigured()) return null;
         try {
             String body = TrustedHttp.getString(
                 GeneratedApiEndpoints.capeListUrl(), TrustedHttp.Kind.API, TrustedHttp.MAX_JSON_BYTES);
@@ -245,6 +261,7 @@ public final class APIUtils {
     }
 
     public static void postCapeSelection(String username, String cape, String token) {
+        if (!isConfigured()) return;
         if (!TrustedHttp.isMinecraftUsername(username) || !TrustedHttp.isSafeCapeId(cape)) return;
         new Thread(() -> {
             JsonObject json = new JsonObject();
@@ -259,6 +276,7 @@ public final class APIUtils {
     }
 
     public static List<CapeManager.CapeEntry> fetchCapeIndexFromApi() {
+        if (!isConfigured()) return null;
         try {
             String body = TrustedHttp.getString(
                 GeneratedApiEndpoints.capeIndexUrl(), TrustedHttp.Kind.API, TrustedHttp.MAX_JSON_BYTES);
@@ -298,6 +316,10 @@ public final class APIUtils {
      * stay blocked in {@link TrustedHttp}.
      */
     private static void postHighwayContent(String url, String message, String label, boolean officialHighwaySession) {
+        if (!PublicHosts.isConfiguredApiUrl(url)) {
+            THMAddon.LOG.warn("Blocked {} API post: this jar has placeholder API endpoints", label);
+            return;
+        }
         boolean currentlyOnOfficialHighway = false;
         try {
             currentlyOnOfficialHighway = PrivacyGuard.allowsRemoteExport();

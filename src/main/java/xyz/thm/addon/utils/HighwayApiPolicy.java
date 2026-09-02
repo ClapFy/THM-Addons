@@ -27,6 +27,16 @@ public final class HighwayApiPolicy {
         return officialHighwaySession || currentlyOnOfficialHighway;
     }
 
+    /** Main-repo quality gate: a 1–2 block poke is a repair, not a highway session. */
+    public static boolean isRepairSession(int blocksPlaced, int blocksBroken) {
+        return blocksPlaced < 300 && blocksBroken < 1000;
+    }
+
+    /** Main-repo quality gate: disable-in-place does not count as distance. */
+    public static boolean isDistanceTooSmall(double distance) {
+        return distance <= 1;
+    }
+
     /**
      * Same wire format as the main repo {@code APIUtils.jsonContent}: a JSON object
      * with a {@code content} string. Quotes and backslashes are escaped so a token or

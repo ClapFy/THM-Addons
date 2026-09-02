@@ -115,6 +115,12 @@ public final class ThmMembers {
     }
 
     private static void runFetchLoop(boolean force) {
+        if (!APIUtils.isConfigured()) {
+            synchronized (ThmMembers.class) {
+                fetchInProgress = false;
+            }
+            return;
+        }
         long delayMs = 2000;
         while (true) {
             List<Member> members = APIUtils.fetchMembersFromApi();

@@ -46,7 +46,7 @@ Or build every target:
 
 Jars are created in `build/libs` as `THM-Addons-<mod-version>+<mc>.jar`. Default `-Pmc` is `26.2`.
 
-Copy `secrets.properties.example` to `secrets.properties` for live THM API URLs. Endpoint URLs stay encrypted at build time; the HTTP client is readable source and rejects SSRF, private-network, and oversized payloads.
+CI and local builds bake the official `highwaymen.cc` API hosts from `secrets.properties.example` (the same endpoints as Leonn170709/THM-Addons jars). Override by copying that file to `secrets.properties`. RFC 2606 `example.com` placeholders fail the generate task so a published jar cannot silently miss the API. Endpoint URLs stay encrypted at build time; the HTTP client is readable source and rejects SSRF, private-network, unresolved, and oversized payloads. Player API tokens still come from the Discord player panel.
 
 ## Features
 A full module-by-module overview is available in `FEATURES.md`.
