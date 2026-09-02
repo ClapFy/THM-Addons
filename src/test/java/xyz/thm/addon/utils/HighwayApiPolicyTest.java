@@ -30,6 +30,22 @@ class HighwayApiPolicyTest {
     }
 
     @Test
+    void oneBrokenTwoPlacedIsARepairNotAStatsSession() {
+        assertTrue(HighwayApiPolicy.isRepairSession(2, 1));
+        assertTrue(HighwayApiPolicy.isRepairSession(299, 999));
+        assertFalse(HighwayApiPolicy.isRepairSession(300, 0));
+        assertFalse(HighwayApiPolicy.isRepairSession(0, 1000));
+    }
+
+    @Test
+    void standingStillIsTooSmallToSend() {
+        assertTrue(HighwayApiPolicy.isDistanceTooSmall(0));
+        assertTrue(HighwayApiPolicy.isDistanceTooSmall(1));
+        assertFalse(HighwayApiPolicy.isDistanceTooSmall(1.1));
+        assertFalse(HighwayApiPolicy.isDistanceTooSmall(50_000));
+    }
+
+    @Test
     void jsonContentMatchesMainRepoContentEnvelope() {
         String body = HighwayApiPolicy.jsonContent(
             "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Steve:6b6t.org:15000:500:300:East:1710000000:true");

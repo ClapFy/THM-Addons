@@ -4,6 +4,7 @@
  * By using this code you agree to the license terms and to keep your repo public.
  */
 
+import java.net.URI
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.Properties
@@ -98,8 +99,9 @@ dependencies {
 val generateAPIUtils = tasks.register("generateAPIUtils") {
     val secretsFile = file("secrets.properties")
     val secretsExampleFile = file("secrets.properties.example")
-    // Falls back to the example (placeholder example.com URLs) so contributors without the
-    // real secrets.properties can still build - real API calls just won't resolve to anything.
+    // Falls back to secrets.properties.example, which ships the official highwaymen.cc
+    // hosts so CI/release jars can talk to the THM API. RFC 2606 example.com placeholders
+    // are rejected so a jar cannot be published that only logs "private or local address".
     val activeSecretsFile = if (secretsFile.exists()) secretsFile else secretsExampleFile
     val outputFile = file("src/main/java/xyz/thm/addon/utils/GeneratedApiEndpoints.java")
 
@@ -112,13 +114,24 @@ val generateAPIUtils = tasks.register("generateAPIUtils") {
             "Neither secrets.properties nor secrets.properties.example found."
         )
         if (activeSecretsFile == secretsExampleFile) {
-            logger.lifecycle("secrets.properties not found - building with placeholder URLs from secrets.properties.example. Copy it to secrets.properties and fill in real URLs for working API calls.")
+            logger.lifecycle("secrets.properties not found - baking official API URLs from secrets.properties.example")
         }
 
         val props = Properties()
         activeSecretsFile.bufferedReader(Charsets.UTF_8).use<java.io.Reader, Unit> { props.load(it) }
 
         fun req(k: String) = props.getProperty(k) ?: error("secrets.properties missing key: $k")
+
+        fun isPlaceholderUrl(url: String): Boolean {
+            val host = try {
+                URI(url).host?.lowercase() ?: return true
+            } catch (_: Exception) {
+                return true
+            }
+            return host == "example.com" || host.endsWith(".example.com")
+                || host == "example.org" || host.endsWith(".example.org")
+                || host == "example.net" || host.endsWith(".example.net")
+        }
 
         val urls = linkedMapOf(
             "memberHud" to req("api.memberHud"),
@@ -132,6 +145,9 @@ val generateAPIUtils = tasks.register("generateAPIUtils") {
         for ((name, url) in urls) {
             if (!url.startsWith("https://")) {
                 error("secrets.properties key api.$name must be an https:// URL")
+            }
+            if (isPlaceholderUrl(url)) {
+                error("secrets.properties key api.$name must not use example.com/org/net placeholders. Use the official highwaymen.cc URLs from secrets.properties.example.")
             }
         }
 

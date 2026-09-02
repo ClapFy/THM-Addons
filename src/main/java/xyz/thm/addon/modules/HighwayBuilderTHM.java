@@ -1977,6 +1977,10 @@ public class HighwayBuilderTHM extends Module {
             warning("Status not sent. No valid API token set - get one from the Discord bot's player panel.");
             return;
         }
+        if (!isConfigured()) {
+            warning("Status not sent. This build has placeholder API endpoints.");
+            return;
+        }
 
         String playerName = mc.player.getName().tryCollapseToString();
         String axis = dir.toString();
@@ -9526,62 +9530,61 @@ public class HighwayBuilderTHM extends Module {
 
         if (sendStatisticsapi.get() && !working.apiSendCommitted()) {
             double distance = PlayerUtils.distanceTo(report.startPos());
-            if (distance > 1) {
+            if (HighwayApiPolicy.isDistanceTooSmall(distance)) {
+                warning("Statistics NOT sent to Api! Distance too small: (highlight)%.0f", distance);
+                logExternalStatsDecision(working, report, reason, "api", "skipped-distance-too-small", distance);
+            } else if (HighwayApiPolicy.isRepairSession(report.blocksPlaced(), report.blocksBroken())) {
+                warning("Repair detected. Use the /calculate repair command to calculate the distance.");
+                logExternalStatsDecision(working, report, reason, "api", "skipped-repair-detected", distance);
+            } else if (mc.player.isCreative()) {
+                // Silent on purpose — see enforceCreativeStatisticsGuard().
+                logExternalStatsDecision(working, report, reason, "api", "skipped-creative", distance);
+            } else if (isNot6B6T()) {
+                warning("API not sent. You are not on 6B6T");
+                logExternalStatsDecision(working, report, reason, "api", "skipped-not-6b6t", distance);
+            } else if (!THMSystem.get().hasApiToken()) {
+                warning("API not sent. No valid API token set - get one from the Discord bot's player panel.");
+                logExternalStatsDecision(working, report, reason, "api", "skipped-missing-token", distance);
+            } else if (!isConfigured()) {
+                warning("API not sent. This build has placeholder API endpoints.");
+                logExternalStatsDecision(working, report, reason, "api", "skipped-placeholder-endpoints", distance);
+            } else if (!working.officialHighwaySession()) {
+                warning("API not sent. This session was not on the official nether highway.");
+                logExternalStatsDecision(working, report, reason, "api", "skipped-not-official-highway", distance);
+            } else {
                 String playerName = mc.player.getName().tryCollapseToString();
                 ThmMembers.Member selfMember = ThmMembers.getMemberByMcName(playerName);
                 double distLimit = ThmMembers.getDistanceLimit(selfMember);
-                if (distance < distLimit) {
-                    if (report.blocksPlaced() < 300 && report.blocksBroken() < 1000) {
-                        warning("Repair detected. Use the /calculate repair command to calculate the distance.");
-                        logExternalStatsDecision(working, report, reason, "api", "skipped-repair-detected", distance);
-                    } else if (mc.player.isCreative()) {
-                        // Silent on purpose — see enforceCreativeStatisticsGuard().
-                        logExternalStatsDecision(working, report, reason, "api", "skipped-creative", distance);
-                    } else if (isNot6B6T()) {
-                        warning("API not sent. You are not on 6B6T");
-                        logExternalStatsDecision(working, report, reason, "api", "skipped-not-6b6t", distance);
-                    } else if (!THMSystem.get().hasApiToken()) {
-                        warning("API not sent. No valid API token set - get one from the Discord bot's player panel.");
-                        logExternalStatsDecision(working, report, reason, "api", "skipped-missing-token", distance);
-                    } else {
-                        if (!working.officialHighwaySession()) {
-                            warning("API not sent. This session was not on the official nether highway.");
-                            logExternalStatsDecision(working, report, reason, "api", "skipped-not-official-highway", distance);
-                        } else {
-                            StatsArtifactSnapshot committed = updateFinalizationRecord(
-                                working,
-                                working.printedAt(),
-                                working.printedToChat(),
-                                working.webhookSendCommitted(),
-                                true,
-                                reason + "-api-commit"
-                            );
-                            if (committed != null) {
-                                String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip : "singleplayer";
-                                String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
-                                    THMSystem.get().getApiToken(),
-                                    playerName,
-                                    server,
-                                    distance,
-                                    report.blocksBroken(),
-                                    report.blocksPlaced(),
-                                    dir,
-                                    generateTimestamp(),
-                                    isOnMainHighway()
-                                );
-                                sendStatistics(statsMessageapi, true);
-                                working = committed;
-                                logExternalStatsDecision(working, report, reason, "api", "queued", distance);
-                            }
-                        }
-                    }
-                } else {
+                if (distance >= distLimit) {
                     warning("Statistics NOT sent to Api! Please Calculate the real Distance using the /calculate command in proof-of-work");
                     logExternalStatsDecision(working, report, reason, "api", "skipped-distance-limit", distance);
+                } else {
+                    StatsArtifactSnapshot committed = updateFinalizationRecord(
+                        working,
+                        working.printedAt(),
+                        working.printedToChat(),
+                        working.webhookSendCommitted(),
+                        true,
+                        reason + "-api-commit"
+                    );
+                    if (committed != null) {
+                        String server = mc.getCurrentServer() != null ? mc.getCurrentServer().ip : "singleplayer";
+                        String statsMessageapi = String.format("%s:%s:%s:%.0f:%s:%s:%s:%s:%s",
+                            THMSystem.get().getApiToken(),
+                            playerName,
+                            server,
+                            distance,
+                            report.blocksBroken(),
+                            report.blocksPlaced(),
+                            dir,
+                            generateTimestamp(),
+                            isOnMainHighway()
+                        );
+                        sendStatistics(statsMessageapi, true);
+                        working = committed;
+                        logExternalStatsDecision(working, report, reason, "api", "queued", distance);
+                    }
                 }
-            } else {
-                warning("Statistics NOT sent to Api! Distance too small: (highlight)%.0f", distance);
-                logExternalStatsDecision(working, report, reason, "api", "skipped-distance-too-small", distance);
             }
         }
 
