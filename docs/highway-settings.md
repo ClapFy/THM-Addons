@@ -100,6 +100,7 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `minimum-empty-slots` | `1`, minimum `0`, slider `0-9` | Empty inventory slots to preserve after mining obsidian. |
 | `mine-ender-chests` | `true` | Mines ender chests to convert them into obsidian. |
 | `save-ender-chests` | `4`, range `4-64` | Loose ender chest reserve to keep in inventory. |
+| `restock-echest-shulkers-from-ender-chest` | `true` | When fewer than 2 full echest shulkers remain, restock swaps trash like netherrack for 3 full ones from your ender chest. |
 | `new-breaking` | `true`; shown when `mine-ender-chests` is on | On uses THM Speedmine with the normal obby-restock target amount while preserving the saved e-chest reserve. Off uses the legacy packet breaker, the selected target, and the saved reserve. |
 | `instantly-rebreak-echests` | `true`; shown when new breaking is off | Repeatedly sends the legacy instant-rebreak packet after replacing an e-chest. |
 | `rebreak-delay` | `0`, slider max `20`; shown when legacy instant rebreak is on | Ticks between legacy instant-rebreak attempts. |
@@ -203,6 +204,7 @@ After that first seed, each profile loads its own saved values rather than reapp
 | `inventory-delay` | `3`, minimum `0` | Always | Delay in ticks between inventory interactions. |
 | `eject-useless-shulkers` | `true` | Always | Drops shulkers that do not contain protected items, place blocks, pickaxes, or food. |
 | `search-ender-chest` | `false` | Always | Searches your ender chest for usable items. |
+| `restock-echest-shulkers-from-ender-chest` | `true` | Always | When fewer than 2 full ender-chest shulkers remain (identified by contents, not name), restock opens your ender chest and swaps trash such as netherrack for 3 full ones. If the ender chest has none, Highway Builder remembers that and stops trying for the rest of this session. |
 | `search-shulkers` | `true` | Always | Searches shulker contents for usable items. |
 | `Manage-hotbar` | `true` | Always | Automatically sorts the hotbar. |
 | `Anti-drop` | `false` | Always | Prevents dropping items the module considers needed. |

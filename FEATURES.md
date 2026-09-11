@@ -9,7 +9,7 @@
 This document lists the modules, HUD widgets, and utilities shipped with THM Addons. Module names match the in-game Meteor module list.
 
 ## Highway and Travel
-- `THM-HighwayBuilder` — Automatically builds highways according to THM standards.
+- `THM-HighwayBuilder` — Automatically builds highways according to THM standards. Restocks full ender-chest shulkers from your ender chest when inventory is running low.
 - `THM Highway Monitor` — Monitors alignment and recovers HighwayBuilder from drift. Requires Baritone.
 - `Highway-Tools` — Highway utilities: axis walker, highway teleporter, boundary finder, and highway checker. Requires Baritone.
 - `axis-viewer` — Displays world axes.

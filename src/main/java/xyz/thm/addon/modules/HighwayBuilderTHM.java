@@ -1169,6 +1169,13 @@ public class HighwayBuilderTHM extends Module {
         .build()
     );
 
+    private final Setting<Boolean> restockEchestShulkersFromEnderChest = sgInventory.add(new BoolSetting.Builder()
+        .name("restock-echest-shulkers-from-ender-chest")
+        .description("When fewer than 2 full ender-chest shulkers remain (identified by contents, not name), restock opens your ender chest and swaps trash like netherrack for 3 full ones. Stops trying for the rest of this session if none are there.")
+        .defaultValue(true)
+        .build()
+    );
+
     public final Setting<Boolean> hotbarmanager = sgInventory.add(new BoolSetting.Builder()
         .name("Manage-hotbar")
         .description("Automatically sorts the Hotbar.")
@@ -1506,6 +1513,8 @@ public class HighwayBuilderTHM extends Module {
     private boolean thmDebugFileErrorLogged;
     private final RestockTask restockTask = new RestockTask(this);
     private final RestockWatchdog restockWatchdog = new RestockWatchdog(this);
+    private boolean enderChestEchestShulkersExhaustedThisSession;
+    private int echestShulkerRestockCooldownUntilAge;
     private final ForwardSchedulerRuntime forwardSchedulerRuntime = new ForwardSchedulerRuntime();
     private int invalidRestockRecoveryRetries;
     private boolean invalidRestockRecoveryPending;
@@ -2301,6 +2310,10 @@ public class HighwayBuilderTHM extends Module {
 
         restockTask.complete();
         restockWatchdog.reset("module-activate");
+        if (!reconnectActivation) {
+            enderChestEchestShulkersExhaustedThisSession = false;
+            echestShulkerRestockCooldownUntilAge = 0;
+        }
 
         if (blocksPerTick.get() > 1 && rotation.get().mine)
             warning("With rotations enabled, you can break at most 1 block per tick.");
@@ -4516,6 +4529,7 @@ public class HighwayBuilderTHM extends Module {
         maybeQueuePickaxeRestock();
         maybeQueueEnderChestReserveRestock();
         maybeQueueFoodRestock();
+        maybeQueueEchestShulkerRestock();
         tickNoSwapLoadout();
         tickPacketBuildMainHandObby();
         boolean restockWatchdogOwnedTick = restockWatchdog.tickBeforeState();
@@ -11258,6 +11272,139 @@ public class HighwayBuilderTHM extends Module {
         restockTask.setEnderChests();
     }
 
+    private boolean isEchestShulkerRestockEnabled() {
+        return restockEchestShulkersFromEnderChest.get();
+    }
+
+    private boolean shouldTriggerEchestShulkerRestock() {
+        if (mc.player == null || !isEchestShulkerRestockEnabled()) return false;
+        if (enderChestEchestShulkersExhaustedThisSession) return false;
+        if (mc.player.tickCount < echestShulkerRestockCooldownUntilAge) return false;
+        if (countLooseInventoryEnderChests() <= 0) return false;
+        return HighwayEchestShulkerRestock.shouldTrigger(
+            countFullEchestShulkersInInventory(),
+            enderChestEchestShulkersExhaustedThisSession,
+            canReceiveEchestShulkerSwap()
+        );
+    }
+
+    private void maybeQueueEchestShulkerRestock() {
+        if (mc.player == null || mc.level == null) return;
+        if (!shouldTriggerEchestShulkerRestock()) return;
+        restockTask.setEchestShulkers();
+    }
+
+    private boolean shouldPreserveTrashForEchestShulkerSwap() {
+        if (!isEchestShulkerRestockEnabled() || enderChestEchestShulkersExhaustedThisSession) return false;
+        return restockTask.echestShulkers
+            || restockTask.hasPendingEchestShulkers()
+            || countFullEchestShulkersInInventory() < HighwayEchestShulkerRestock.MIN_FULL_SHULKERS;
+    }
+
+    private boolean shouldAttemptEchestShulkerSwap() {
+        if (!isEchestShulkerRestockEnabled() || enderChestEchestShulkersExhaustedThisSession) return false;
+        if (restockTask.echestShulkers) return true;
+        return countFullEchestShulkersInInventory() < HighwayEchestShulkerRestock.MIN_FULL_SHULKERS;
+    }
+
+    private void rememberEnderChestHasNoEchestShulkers(String reason) {
+        if (enderChestEchestShulkersExhaustedThisSession) return;
+        enderChestEchestShulkersExhaustedThisSession = true;
+        restockDebug("Ender chest has no full echest shulkers (%s); skipping further echest-shulker restock this session.", reason);
+        info("No full ender-chest shulkers in the ender chest; won't check again this session.");
+    }
+
+    private void deferEchestShulkerRestock(String reason) {
+        if (mc.player == null) return;
+        echestShulkerRestockCooldownUntilAge = mc.player.tickCount + HighwayEchestShulkerRestock.RETRY_COOLDOWN_TICKS;
+        restockDebug("Deferring echest shulker restock for %d ticks (%s).", HighwayEchestShulkerRestock.RETRY_COOLDOWN_TICKS, reason);
+    }
+
+    private boolean isFullEchestShulkerStack(ItemStack itemStack) {
+        if (itemStack == null || itemStack.isEmpty() || !Utils.isShulker(itemStack.getItem())) return false;
+
+        int occupiedSlots = 0;
+        int enderChestSlots = 0;
+        for (ItemStack inner : THMUtils.getContainerContents(itemStack)) {
+            if (inner == null || inner.isEmpty()) continue;
+            occupiedSlots++;
+            if (inner.getItem() == Items.ENDER_CHEST) enderChestSlots++;
+        }
+
+        return HighwayEchestShulkerRestock.isFullEchestShulker(occupiedSlots, enderChestSlots);
+    }
+
+    private int countFullEchestShulkersInInventory() {
+        if (mc.player == null) return 0;
+
+        int count = 0;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            if (isFullEchestShulkerStack(mc.player.getInventory().getItem(i))) count++;
+        }
+
+        return count;
+    }
+
+    private int countFullEchestShulkersInContainer(Container inventory) {
+        if (inventory == null) return 0;
+
+        int count = 0;
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            if (isFullEchestShulkerStack(inventory.getItem(i))) count++;
+        }
+
+        return count;
+    }
+
+    private boolean isEchestShulkerSwapManagedHotbarSlot(int slot) {
+        return slot >= 0 && slot < 9 && isHotbarSlotConfiguredByManager(slot);
+    }
+
+    private boolean canReceiveEchestShulkerSwap() {
+        return findEchestShulkerSwapTrashSlot() != -1 || findEchestShulkerSwapEmptySlot() != -1;
+    }
+
+    private int findEchestShulkerSwapEmptySlot() {
+        if (mc.player == null) return -1;
+
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            if (isEchestShulkerSwapManagedHotbarSlot(i)) continue;
+            if (mc.player.getInventory().getItem(i).isEmpty()) return i;
+        }
+
+        return -1;
+    }
+
+    private int findEchestShulkerSwapTrashSlot() {
+        if (mc.player == null) return -1;
+
+        List<Integer> reserveSlots = new ArrayList<>();
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            if (isEchestShulkerSwapManagedHotbarSlot(i)) continue;
+            if (!isStableFullTrashBlockStack(mc.player.getInventory().getItem(i))) continue;
+            reserveSlots.add(i);
+        }
+
+        reserveSlots.sort(this::compareTrashBlockPreferenceSlots);
+
+        int keepBudget = Math.min(Math.max(keepTrashBlockStacks.get(), 0), reserveSlots.size());
+        Set<Integer> keepSlots = new HashSet<>(reserveSlots.subList(0, keepBudget));
+
+        for (int slot : reserveSlots) {
+            if (!keepSlots.contains(slot)) return slot;
+        }
+
+        int bestOtherTrash = -1;
+        for (int i = 0; i < mc.player.getInventory().getNonEquipmentItems().size(); i++) {
+            if (isEchestShulkerSwapManagedHotbarSlot(i) || keepSlots.contains(i)) continue;
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (!isDroppableTrashStack(stack) || isStableFullTrashBlockStack(stack)) continue;
+            if (bestOtherTrash == -1 || (i > 8 && bestOtherTrash < 9)) bestOtherTrash = i;
+        }
+
+        return bestOtherTrash;
+    }
+
     private int countLooseInventoryPickaxes() {
         if (mc.player == null) return 0;
 
@@ -11485,6 +11632,7 @@ public class HighwayBuilderTHM extends Module {
 
     private boolean isUsefulShulkerStack(ItemStack itemStack) {
         if (isProtectedItemStack(itemStack)) return true;
+        if (isFullEchestShulkerStack(itemStack)) return true;
 
         for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
             if (isProtectedItemStack(stack)) return true;
@@ -13489,6 +13637,9 @@ public class HighwayBuilderTHM extends Module {
                 trashBlockSlots.sort(b::compareTrashBlockPreferenceSlots);
 
                 int keepBudget = Math.max(b.keepTrashBlockStacks.get(), 0);
+                if (b.shouldPreserveTrashForEchestShulkerSwap()) {
+                    keepBudget = HighwayEchestShulkerRestock.trashKeepBudget(keepBudget);
+                }
                 int keepCount = Math.min(keepBudget, trashBlockSlots.size());
                 for (int i = 0; i < keepCount; i++) keepSlots.add(trashBlockSlots.get(i));
             }
@@ -13636,6 +13787,7 @@ public class HighwayBuilderTHM extends Module {
                 if (itemStack == null || itemStack.isEmpty()) return false;
                 if (!Utils.isShulker(itemStack.getItem())) return false;
                 if (b.isProtectedItemStack(itemStack)) return true;
+                if (b.isFullEchestShulkerStack(itemStack)) return true;
 
                 for (ItemStack stack : THMUtils.getContainerContents(itemStack)) {
                     if (b.isProtectedItemStack(stack)) return true;
@@ -14859,6 +15011,7 @@ public class HighwayBuilderTHM extends Module {
             private int enderChestShulkerReturnInventorySlot = -1;
             private int reservedUnitsThisEnderChestPass;
             private String reservedUnitsKindThisEnderChestPass = ECHEST_RESERVE_NONE;
+            private boolean echestShulkerSwapFinished;
             // if this is ever not -1 when we expect it to be, things break a lot
             private int slot = -1;
 
@@ -14890,6 +15043,7 @@ public class HighwayBuilderTHM extends Module {
                 sourceReadyRetries = 0;
                 transitionToMineEnderChests = false;
                 usingPlacedEnderChestSource = false;
+                echestShulkerSwapFinished = false;
                 resetEnderChestExtractionReserve(b, "Restock.start");
                 if (!b.restockTask.food) clearFoodReturnTracking();
                 if (!b.restockTask.enderChests) clearEnderChestShulkerReturnTracking();
@@ -14923,6 +15077,19 @@ public class HighwayBuilderTHM extends Module {
                     }
                     b.completeRestockTaskAndContinue();
                     return;
+                }
+
+                if (b.restockTask.echestShulkers) {
+                    int fullShulkers = b.countFullEchestShulkersInInventory();
+                    if (b.enderChestEchestShulkersExhaustedThisSession
+                        || fullShulkers >= HighwayEchestShulkerRestock.MIN_FULL_SHULKERS) {
+                        b.restockDebug("Restock.start skipping echest shulker restock (exhausted=%s, fullShulkers=%d).",
+                            b.enderChestEchestShulkersExhaustedThisSession,
+                            fullShulkers
+                        );
+                        b.completeRestockTaskAndContinue();
+                        return;
+                    }
                 }
 
                 if (b.restockTask.food) {
@@ -14985,7 +15152,7 @@ public class HighwayBuilderTHM extends Module {
                 refreshStaleSourceExhaustionFlags(b, hasPlacedRestockEnderChest);
 
                 // firstly search your inventory for shulkers that have the items you need
-                if (slot == -1 && b.searchShulkers.get() && (b.restockTask.getSession() == null || !b.restockTask.getSession().isInventoryShulkersExhausted())) {
+                if (slot == -1 && !b.restockTask.echestShulkers && b.searchShulkers.get() && (b.restockTask.getSession() == null || !b.restockTask.getSession().isInventoryShulkersExhausted())) {
                     b.restockTask.notePhase(RestockTask.SourcePhase.InventoryShulkers);
                     sourceItemPredicate = shulkerPredicate;
                     sourceLabel = "shulker";
@@ -15047,7 +15214,7 @@ public class HighwayBuilderTHM extends Module {
 
                 // next search your ender chest for raw items and shulkers containing items
                 if (slot == -1
-                    && b.searchEnderChest.get()
+                    && (b.searchEnderChest.get() || b.restockTask.echestShulkers)
                     && (countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) > 0 || hasPlacedRestockEnderChest)
                     && (b.restockTask.getSession() == null || !b.restockTask.getSession().isEnderChestExhausted())) {
                     if (routeMissingPickaxeBeforeEChestPath(b, "ender chest bank restock")) return;
@@ -15143,7 +15310,10 @@ public class HighwayBuilderTHM extends Module {
                 if (!hasSelectedRestockSource()) {
                     logNoSelectedSourceDecision(b, "Restock.start reached final no-source resolution.");
                     b.restockTask.refreshSessionProgress();
-                    if (b.restockTask.isCurrentTaskSuccessfulAtFinalNoSource()) {
+                    if (b.restockTask.echestShulkers) {
+                        b.deferEchestShulkerRestock("no-ender-chest-source");
+                        b.completeRestockTaskAndContinue();
+                    } else if (b.restockTask.isCurrentTaskSuccessfulAtFinalNoSource()) {
                         b.completeRestockTaskAndContinue();
                     } else {
                         b.restockTask.failActiveTaskHard();
@@ -15418,7 +15588,7 @@ public class HighwayBuilderTHM extends Module {
                             breakContainer = true;
                         }
                         else {
-                            if (!b.searchEnderChest.get()) breakContainer = true;
+                            if (!b.searchEnderChest.get() && !b.restockTask.echestShulkers) breakContainer = true;
                             handleContainerBlock(b, blockPos);
                         }
                     }
@@ -15512,7 +15682,7 @@ public class HighwayBuilderTHM extends Module {
             }
 
             private boolean isEnderChestAccessAvailable(HighwayBuilderTHM b, boolean hasPlacedRestockEnderChest) {
-                return b.searchEnderChest.get()
+                return (b.searchEnderChest.get() || b.restockTask.echestShulkers)
                     && (hasPlacedRestockEnderChest || countItem(b, stack -> stack.getItem().equals(Items.ENDER_CHEST)) > 0);
             }
 
@@ -15599,6 +15769,12 @@ public class HighwayBuilderTHM extends Module {
             }
 
             private boolean handleEnderChestRestockStep(HighwayBuilderTHM b, Container inv) {
+                if (handleEchestShulkerSwapFromOpenEnderChest(b, inv)) return true;
+                if (b.restockTask.echestShulkers && echestShulkerSwapFinished) {
+                    finishDedicatedEchestShulkerRestock(b, inv);
+                    return true;
+                }
+
                 if (b.restockTask.materials && b.restockTask.isObsidianRestockSession()) {
                     if (grabFromInventoryAndRegisterSuccessfulLocalAction(b, inv, itemStack -> itemStack.getItem() == Items.OBSIDIAN, RestockTask.SourcePhase.EnderChest)) {
                         delayTimer = b.inventoryDelay.get();
@@ -15696,6 +15872,127 @@ public class HighwayBuilderTHM extends Module {
                 b.closeHandledScreen();
                 breakContainer = true;
                 return true;
+            }
+
+            private boolean handleEchestShulkerSwapFromOpenEnderChest(HighwayBuilderTHM b, Container inv) {
+                if (echestShulkerSwapFinished) return false;
+                if (!b.shouldAttemptEchestShulkerSwap()) {
+                    echestShulkerSwapFinished = true;
+                    return false;
+                }
+
+                RestockTask.RestockSession session = b.restockTask.getSession();
+                int alreadyPulled = session != null ? session.getEchestShulkersPulledThisTask() : 0;
+                if (HighwayEchestShulkerRestock.remainingPullCount(alreadyPulled) <= 0) {
+                    if (HighwayEchestShulkerRestock.shouldRememberExhausted(b.countFullEchestShulkersInContainer(inv))) {
+                        b.rememberEnderChestHasNoEchestShulkers("pull-limit-reached");
+                    }
+                    echestShulkerSwapFinished = true;
+                    return false;
+                }
+
+                int chestSlot = findFullEchestShulkerSlotInContainer(b, inv);
+                if (chestSlot == -1) {
+                    if (HighwayEchestShulkerRestock.shouldRememberExhausted(b.countFullEchestShulkersInContainer(inv))) {
+                        b.rememberEnderChestHasNoEchestShulkers("live-ender-chest-check");
+                    }
+                    echestShulkerSwapFinished = true;
+                    return false;
+                }
+
+                int trashSlot = b.findEchestShulkerSwapTrashSlot();
+                if (trashSlot != -1 && swapPlayerSlotWithContainerSlot(b, trashSlot, chestSlot)) {
+                    noteSuccessfulEchestShulkerSwap(b, "trash-slot-" + trashSlot);
+                    return true;
+                }
+                if (!b.mc.player.containerMenu.getCarried().isEmpty()) {
+                    delayTimer = b.inventoryDelay.get();
+                    return true;
+                }
+
+                if (b.findEchestShulkerSwapEmptySlot() != -1 && shiftClickInventorySlot(b, inv, chestSlot)) {
+                    noteSuccessfulEchestShulkerSwap(b, "empty-slot");
+                    return true;
+                }
+
+                echestShulkerSwapFinished = true;
+                if (alreadyPulled == 0 && !b.enderChestEchestShulkersExhaustedThisSession) {
+                    b.deferEchestShulkerRestock("no-trash-or-empty-slot");
+                }
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug("Restock.tick could not swap a full echest shulker out of the ender chest (no surplus trash or empty slot).");
+                }
+                return false;
+            }
+
+            private void finishDedicatedEchestShulkerRestock(HighwayBuilderTHM b, Container inv) {
+                RestockTask.RestockSession session = b.restockTask.getSession();
+                int pulled = session != null ? session.getEchestShulkersPulledThisTask() : 0;
+                if (pulled == 0
+                    && !b.enderChestEchestShulkersExhaustedThisSession
+                    && HighwayEchestShulkerRestock.shouldRememberExhausted(b.countFullEchestShulkersInContainer(inv))) {
+                    b.rememberEnderChestHasNoEchestShulkers("dedicated-echest-shulker-pass");
+                }
+                if (pulled == 0 && !b.enderChestEchestShulkersExhaustedThisSession) {
+                    b.deferEchestShulkerRestock("dedicated-echest-shulker-no-pull");
+                }
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug("Restock.tick finishing dedicated echest shulker restock (pulled=%d, exhausted=%s, inventoryFullShulkers=%d).",
+                        pulled,
+                        b.enderChestEchestShulkersExhaustedThisSession,
+                        b.countFullEchestShulkersInInventory()
+                    );
+                }
+                indicateStopping = true;
+                b.closeHandledScreen();
+                breakContainer = true;
+            }
+
+            private int findFullEchestShulkerSlotInContainer(HighwayBuilderTHM b, Container inv) {
+                for (int i = 0; i < inv.getContainerSize(); i++) {
+                    if (b.isFullEchestShulkerStack(inv.getItem(i))) return i;
+                }
+                return -1;
+            }
+
+            private void noteSuccessfulEchestShulkerSwap(HighwayBuilderTHM b, String reason) {
+                RestockTask.RestockSession session = b.restockTask.getSession();
+                if (session != null) session.noteEchestShulkerPulled();
+                b.restockTask.refreshSessionProgress();
+                b.restockTask.noteSuccessfulLocalSourceAction(RestockTask.SourcePhase.EnderChest);
+                b.invalidateEChestMemorySnapshot("echest-shulker-swap");
+                delayTimer = b.inventoryDelay.get();
+                if (b.restockDebugLog.get()) {
+                    b.restockDebug("Restock.tick swapped a full echest shulker from the ender chest (%s, pulled=%d, inventoryFullShulkers=%d).",
+                        reason,
+                        session != null ? session.getEchestShulkersPulledThisTask() : 0,
+                        b.countFullEchestShulkersInInventory()
+                    );
+                }
+            }
+
+            private boolean swapPlayerSlotWithContainerSlot(HighwayBuilderTHM b, int playerInventorySlot, int containerSlot) {
+                if (b.mc.player == null || b.mc.gameMode == null || b.mc.player.containerMenu == null) return false;
+                if (!b.mc.player.containerMenu.getCarried().isEmpty()) return false;
+
+                int before = b.countFullEchestShulkersInInventory();
+                int containerId = b.mc.player.containerMenu.containerId;
+                int playerMenuSlot = SlotUtils.indexToId(playerInventorySlot);
+
+                b.mc.gameMode.handleContainerInput(containerId, playerMenuSlot, 0, ContainerInput.PICKUP, b.mc.player);
+                if (b.mc.player.containerMenu.getCarried().isEmpty()) return false;
+
+                b.mc.gameMode.handleContainerInput(containerId, containerSlot, 0, ContainerInput.PICKUP, b.mc.player);
+                if (b.mc.player.containerMenu.getCarried().isEmpty()) {
+                    return b.countFullEchestShulkersInInventory() > before;
+                }
+
+                b.mc.gameMode.handleContainerInput(containerId, playerMenuSlot, 0, ContainerInput.PICKUP, b.mc.player);
+                if (!b.mc.player.containerMenu.getCarried().isEmpty()) {
+                    tryPlaceCursorInEmptySlot(b);
+                }
+
+                return b.countFullEchestShulkersInInventory() > before;
             }
 
             private boolean restockItems(HighwayBuilderTHM b, Container inv) {
@@ -18744,10 +19041,12 @@ public class HighwayBuilderTHM extends Module {
         public boolean pickaxes;
         public boolean food;
         public boolean enderChests;
+        public boolean echestShulkers;
         private boolean pendingMaterials;
         private boolean pendingPickaxes;
         private boolean pendingFood;
         private boolean pendingEnderChests;
+        private boolean pendingEchestShulkers;
         private boolean sequenceActive;
         private boolean blockadeReady;
         private boolean blockadeTeardownPending;
@@ -18771,7 +19070,8 @@ public class HighwayBuilderTHM extends Module {
             Materials,
             Pickaxes,
             Food,
-            EnderChests
+            EnderChests,
+            EchestShulkers
         }
 
         private enum SourcePhase {
@@ -18912,6 +19212,7 @@ public class HighwayBuilderTHM extends Module {
             private int materialStartStacks;
             private int foodStartItems;
             private int enderChestStartItems;
+            private int echestShulkerStartCount;
             private int obsidianStartItems;
             private int materialStartItems;
             private int pickaxesAcquiredCount;
@@ -18920,6 +19221,8 @@ public class HighwayBuilderTHM extends Module {
             private int materialItemsAcquired;
             private int foodItemsAcquired;
             private int enderChestItemsAcquired;
+            private int echestShulkersAcquiredCount;
+            private int echestShulkersPulledThisTask;
             private int obsidianItemsAcquired;
             private int saveEchestsReserve;
             private int reserveRemaining;
@@ -18943,6 +19246,7 @@ public class HighwayBuilderTHM extends Module {
                 materialStartItems = countInventoryItems(this::isTrackedMaterialStack);
                 foodStartItems = b.countConfiguredFoodItemsInInventory();
                 enderChestStartItems = countInventoryItems(itemStack -> itemStack.getItem() == Items.ENDER_CHEST);
+                echestShulkerStartCount = b.countFullEchestShulkersInInventory();
                 obsidianStartItems = countInventoryItems(itemStack -> itemStack.getItem() == Items.OBSIDIAN);
             }
 
@@ -19012,6 +19316,7 @@ public class HighwayBuilderTHM extends Module {
                     case Materials -> isObsidianTask() ? getObsidianRestockTargetItems() : usableFreeSlots;
                     case Food -> foodTargetIncrease;
                     case EnderChests -> 1;
+                    case EchestShulkers -> HighwayEchestShulkerRestock.PULL_COUNT;
                 };
 
                 if (taskType == Type.Food && (targetFinal <= 0 || foodAdditionalCapacity < targetFinal)) {
@@ -19061,6 +19366,7 @@ public class HighwayBuilderTHM extends Module {
                 materialItemsAcquired = Math.max(countInventoryItems(this::isTrackedMaterialStack) - materialStartItems, 0);
                 foodItemsAcquired = Math.max(b.countConfiguredFoodItemsInInventory() - foodStartItems, 0);
                 enderChestItemsAcquired = Math.max(countInventoryItems(itemStack -> itemStack.getItem() == Items.ENDER_CHEST) - enderChestStartItems, 0);
+                echestShulkersAcquiredCount = Math.max(b.countFullEchestShulkersInInventory() - echestShulkerStartCount, 0);
                 obsidianItemsAcquired = Math.max(countInventoryItems(itemStack -> itemStack.getItem() == Items.OBSIDIAN) - obsidianStartItems, 0);
 
                 int looseEchestsInInventory = countInventoryItems(itemStack -> itemStack.getItem() == Items.ENDER_CHEST);
@@ -19090,6 +19396,7 @@ public class HighwayBuilderTHM extends Module {
                     case Materials -> isObsidianTask() ? getObsidianRestockTargetItems() : usableFreeSlots;
                     case Food -> b.countConfiguredFoodAdditionalCapacityInInventory();
                     case EnderChests -> usableFreeSlots > 0 ? 1 : 0;
+                    case EchestShulkers -> HighwayEchestShulkerRestock.PULL_COUNT;
                 };
 
                 workingStageCapacity = taskType == Type.Food ? currentAdditionalCapacity : usableFreeSlots;
@@ -19165,6 +19472,7 @@ public class HighwayBuilderTHM extends Module {
                     case Materials -> isObsidianTask() ? obsidianItemsAcquired : materialStacksAcquired;
                     case Food -> foodItemsAcquired;
                     case EnderChests -> enderChestItemsAcquired;
+                    case EchestShulkers -> echestShulkersAcquiredCount;
                 };
             }
 
@@ -19201,6 +19509,7 @@ public class HighwayBuilderTHM extends Module {
                     case Materials -> isObsidianTask() ? obsidianItemsAcquired > 0 : materialItemsAcquired > 0;
                     case Food -> foodItemsAcquired > 0;
                     case EnderChests -> enderChestItemsAcquired > 0;
+                    case EchestShulkers -> echestShulkersAcquiredCount > 0 || echestShulkersPulledThisTask > 0;
                 };
             }
 
@@ -19211,11 +19520,19 @@ public class HighwayBuilderTHM extends Module {
                     case Materials -> false;
                     case Food -> b.countConfiguredFoodItemsInInventory() > b.saveFood.get();
                     case EnderChests -> countInventoryItems(itemStack -> itemStack.getItem() == Items.ENDER_CHEST) > b.saveEchests.get() - 1;
+                    case EchestShulkers -> b.enderChestEchestShulkersExhaustedThisSession
+                        || b.countFullEchestShulkersInInventory() >= HighwayEchestShulkerRestock.MIN_FULL_SHULKERS;
                 };
             }
 
             private boolean isTaskSuccessful() {
                 refreshProgress();
+                if (taskType == Type.EchestShulkers) {
+                    return b.enderChestEchestShulkersExhaustedThisSession
+                        || isTargetSatisfied()
+                        || hasUsefulProgress()
+                        || isTriggerThresholdCleared();
+                }
                 if (isObsidianPickaxePreflightTopoffTask()) return isTargetSatisfied();
                 if (isObsidianTask()) {
                     if (canKeepFarmingEnderChests()) return false;
@@ -19226,6 +19543,7 @@ public class HighwayBuilderTHM extends Module {
 
             private boolean isTaskSuccessfulAtFinalNoSource() {
                 refreshProgress();
+                if (taskType == Type.EchestShulkers) return true;
                 if (isObsidianPickaxePreflightTopoffTask()) return isTaskSuccessful();
                 if (isObsidianTask()) return isTargetSatisfied() || obsidianItemsAcquired > 0 || isTriggerThresholdCleared();
                 return isTaskSuccessful();
@@ -19510,6 +19828,15 @@ public class HighwayBuilderTHM extends Module {
                 return getRemainingRawEchestsNeeded() > 0;
             }
 
+            private int getEchestShulkersPulledThisTask() {
+                return echestShulkersPulledThisTask;
+            }
+
+            private void noteEchestShulkerPulled() {
+                echestShulkersPulledThisTask++;
+                noteSuccessfulLocalSourceAction(SourcePhase.EnderChest);
+            }
+
             private boolean isTrackedMaterialStack(ItemStack stack) {
                 if (!(stack.getItem() instanceof BlockItem bi)) return false;
                 if (isObsidianTask()) return bi.getBlock() == Blocks.OBSIDIAN;
@@ -19536,6 +19863,10 @@ public class HighwayBuilderTHM extends Module {
 
         public void setEnderChests() {
             setTask(Type.EnderChests);
+        }
+
+        public void setEchestShulkers() {
+            setTask(Type.EchestShulkers);
         }
 
         private void setTask(Type type) {
@@ -19575,6 +19906,7 @@ public class HighwayBuilderTHM extends Module {
             pickaxes = false;
             food = false;
             enderChests = false;
+            echestShulkers = false;
             clearPending();
             sequenceActive = false;
             blockadeReady = false;
@@ -19603,10 +19935,11 @@ public class HighwayBuilderTHM extends Module {
             pickaxes = false;
             food = false;
             enderChests = false;
+            echestShulkers = false;
         }
 
         public boolean tasksInactive() {
-            return !materials && !pickaxes && !food && !enderChests;
+            return !materials && !pickaxes && !food && !enderChests && !echestShulkers;
         }
 
         public boolean isSequenceActive() {
@@ -19713,6 +20046,7 @@ public class HighwayBuilderTHM extends Module {
             if (pickaxes) return "pickaxes";
             if (food) return "food";
             if (enderChests) return "ender chests";
+            if (echestShulkers) return "ender-chest shulkers";
             if (blockadeTeardownPending) return "restock blockade teardown";
             return "unknown";
         }
@@ -19723,6 +20057,7 @@ public class HighwayBuilderTHM extends Module {
             if (pickaxes) active.add("pickaxes");
             if (food) active.add("food");
             if (enderChests) active.add("ender_chests");
+            if (echestShulkers) active.add("echest_shulkers");
             return active.isEmpty() ? "none" : String.join(",", active);
         }
 
@@ -19732,6 +20067,7 @@ public class HighwayBuilderTHM extends Module {
             if (pendingPickaxes) pending.add("pickaxes");
             if (pendingFood) pending.add("food");
             if (pendingEnderChests) pending.add("ender_chests");
+            if (pendingEchestShulkers) pending.add("echest_shulkers");
             return pending.isEmpty() ? "none" : String.join(",", pending);
         }
 
@@ -19768,6 +20104,7 @@ public class HighwayBuilderTHM extends Module {
                 case Pickaxes -> pickaxes = true;
                 case Food -> food = true;
                 case EnderChests -> enderChests = true;
+                case EchestShulkers -> echestShulkers = true;
             }
         }
 
@@ -19797,6 +20134,12 @@ public class HighwayBuilderTHM extends Module {
                     pendingQueue.addLast(type);
                     yield true;
                 }
+                case EchestShulkers -> {
+                    if (pendingEchestShulkers) yield false;
+                    pendingEchestShulkers = true;
+                    pendingQueue.addLast(type);
+                    yield true;
+                }
             };
         }
 
@@ -19806,11 +20149,12 @@ public class HighwayBuilderTHM extends Module {
                 case Pickaxes -> pickaxes;
                 case Food -> food;
                 case EnderChests -> enderChests;
+                case EchestShulkers -> echestShulkers;
             };
         }
 
         private boolean hasPendingTasks() {
-            return pendingMaterials || pendingPickaxes || pendingFood || pendingEnderChests;
+            return pendingMaterials || pendingPickaxes || pendingFood || pendingEnderChests || pendingEchestShulkers;
         }
 
         public boolean hasPendingRestockTasks() {
@@ -19906,6 +20250,12 @@ public class HighwayBuilderTHM extends Module {
                     b.restockDebug("Food restock target was unusable because inventory capacity could not exceed the configured threshold.");
                 }
                 failActiveTaskHard();
+                return;
+            }
+
+            if (echestShulkers) {
+                b.deferEchestShulkerRestock("unusable-session-target");
+                b.completeRestockTaskAndContinue();
                 return;
             }
 
@@ -20089,6 +20439,7 @@ public class HighwayBuilderTHM extends Module {
             if (pickaxes) return Type.Pickaxes;
             if (food) return Type.Food;
             if (enderChests) return Type.EnderChests;
+            if (echestShulkers) return Type.EchestShulkers;
             return null;
         }
 
@@ -20101,6 +20452,7 @@ public class HighwayBuilderTHM extends Module {
                     case Materials -> pendingMaterials = true;
                     case Food -> pendingFood = true;
                     case EnderChests -> pendingEnderChests = true;
+                    case EchestShulkers -> pendingEchestShulkers = true;
                     case Pickaxes -> { }
                 }
             }
@@ -20132,6 +20484,7 @@ public class HighwayBuilderTHM extends Module {
             pendingPickaxes = false;
             pendingFood = false;
             pendingEnderChests = false;
+            pendingEchestShulkers = false;
             pendingQueue.clear();
         }
 
@@ -20141,6 +20494,7 @@ public class HighwayBuilderTHM extends Module {
                 case Pickaxes -> pendingPickaxes = false;
                 case Food -> pendingFood = false;
                 case EnderChests -> pendingEnderChests = false;
+                case EchestShulkers -> pendingEchestShulkers = false;
             }
             pendingQueue.removeFirstOccurrence(type);
         }
@@ -20151,7 +20505,12 @@ public class HighwayBuilderTHM extends Module {
                 case Pickaxes -> pendingPickaxes;
                 case Food -> pendingFood;
                 case EnderChests -> pendingEnderChests;
+                case EchestShulkers -> pendingEchestShulkers;
             };
+        }
+
+        public boolean hasPendingEchestShulkers() {
+            return pendingEchestShulkers;
         }
 
         private String item(Type type) {
@@ -20160,6 +20519,7 @@ public class HighwayBuilderTHM extends Module {
                 case Pickaxes -> "pickaxes";
                 case Food -> "food";
                 case EnderChests -> "ender chests";
+                case EchestShulkers -> "ender-chest shulkers";
             };
         }
 
